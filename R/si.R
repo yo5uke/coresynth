@@ -1,4 +1,4 @@
-# ── Internal: multi-arm SI for K>1 treatment arms (Agarwal et al. 2025) ───────
+# -- Internal: multi-arm SI for K>1 treatment arms (Agarwal et al. 2025) -----
 # Latent unit factors v_il are arm-invariant, so the SVD basis from control arm
 # (d=0) is reused for all K treatment arms. si_pcr_cpp is called once per arm.
 .fit_si_multi <- function(Y, idx_by_arm, arm_levels, T_pre, k, times) {
@@ -11,11 +11,11 @@
 
   N_co <- length(idx_co)
   if (N_co < 2L)
-    stop("SI multi-arm: コントロールユニットが 2 個未満です。", call. = FALSE)
+    stop("SI multi-arm: at least 2 control units required.", call. = FALSE)
   if (T_pre < 1L)
-    stop("SI multi-arm: 事前期間が 0 です。", call. = FALSE)
+    stop("SI multi-arm: T_pre must be > 0.", call. = FALSE)
   if (T_post < 1L)
-    stop("SI multi-arm: 事後期間が 0 です。", call. = FALSE)
+    stop("SI multi-arm: T_post must be > 0.", call. = FALSE)
 
   # Common donor matrices shared across all arms (unit factors are arm-invariant)
   Y_pre_co  <- Y[pre_rows,  idx_co, drop = FALSE]  # T_pre  x N_co
@@ -88,9 +88,9 @@
   )
 }
 
-# ── Internal: cohort-by-cohort SI for staggered adoption ─────────────────────
-# Clarke et al. (2023); Arkhangelsky et al. (2021) Appendix §8.
-# SVD uses only Y_pre_co_g (T_pre_g × N_co_g): future-treated units in the
+# -- Internal: cohort-by-cohort SI for staggered adoption --------------------
+# Clarke et al. (2023); Arkhangelsky et al. (2021) Appendix S.8.
+# SVD uses only Y_pre_co_g (T_pre_g x N_co_g): future-treated units in the
 # "clean" control group are all pre-treatment during periods 1..T_pre_g, so
 # there is no contamination from treatment in this window.
 .fit_si_staggered <- function(pan, Y, k = NULL, control_group = "clean") {
@@ -190,11 +190,11 @@
   list(estimate = att, cohort_estimates = cohort_df, cohort_fits = r_list, k = k)
 }
 
-# ── Internal: staggered + multi-arm SI (K>1 arms, staggered adoption) ────────
+# -- Internal: staggered + multi-arm SI (K>1 arms, staggered adoption) -------
 # Combines Phase 16b (staggered) and Phase 21 (multi-arm).
 # Within each cohort g, the SVD basis (from Y_pre_co_g) is shared across all
-# arms because unit factors v_il are arm-invariant (Agarwal et al. 2025 §2).
-# cohort_fits is a flat list of (cohort, arm) cells — each compatible with
+# arms because unit factors v_il are arm-invariant (Agarwal et al. 2025 S.2).
+# cohort_fits is a flat list of (cohort, arm) cells -- each compatible with
 # .refit_si_cohort() since they carry T_pre, idx_co, idx_tr, k.
 .fit_si_staggered_multi <- function(tensor, k = NULL, control_group = "clean") {
   Y          <- tensor$Y
@@ -369,7 +369,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
                        control_group = c("clean", "never_treated"), ...) {
   control_group <- match.arg(control_group)
 
-  # ── Multi-arm detection: max(d) > 1 means K≥2 treatment arms ────────────
+  # -- Multi-arm detection: max(d) > 1 means K>=2 treatment arms -------------
   d_int <- as.integer(d)
   if (max(d_int, na.rm = TRUE) > 1L) {
     tensor <- panel_to_tensor(y, d_int, id, time)
@@ -383,7 +383,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
 
   pan    <- panel_to_matrices(y, d_int, id, time)
 
-  # ── Staggered adoption path ──────────────────────────────────────────────
+  # -- Staggered adoption path -------------------------------------------------
   if (!pan$is_sharp) {
     res_st <- .fit_si_staggered(pan, pan$Y, k, control_group)
     res_st$method       <- "si"
@@ -394,7 +394,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
     res_st$Y_synth      <- NULL
     res_st$gap          <- NULL
     res_st$unit_weights <- NULL
-    res_st$Y_all        <- pan$Y             # T × N — needed by si_inference()
+    res_st$Y_all        <- pan$Y             # T x N -- needed by si_inference()
     res_st$idx_co       <- pan$idx_control
     res_st$idx_tr       <- pan$idx_treat
     return(res_st)
@@ -458,12 +458,12 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
     times        = pan$times,
     T_pre        = T_pre,
     estimate     = att,
-    Y_pre_co     = Y_pre_co,    # T_pre  × N_co — needed by si_inference()
-    Y_post_co    = Y_post_co    # T_post × N_co — needed by si_inference()
+    Y_pre_co     = Y_pre_co,    # T_pre  x N_co -- needed by si_inference()
+    Y_post_co    = Y_post_co    # T_post x N_co -- needed by si_inference()
   )
 }
 
-# ── Internal helper: re-estimate one SI cohort with given control indices ──────
+# -- Internal helper: re-estimate one SI cohort with given control indices ----
 .refit_si_cohort <- function(Y_all, cf) {
   TT        <- nrow(Y_all)
   T_pre_g   <- cf$T_pre
@@ -484,8 +484,8 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
   mean(Y_treat_post - res$Y_hat)
 }
 
-# ── Internal: inference for staggered + multi-arm SI (Phase 23) ──────────────
-# Bootstrap: per-cohort resampling — same resampled controls applied to all arms
+# -- Internal: inference for staggered + multi-arm SI (Phase 23) -------------
+# Bootstrap: per-cohort resampling -- same resampled controls applied to all arms
 #   within a cohort (shared SVD basis requires shared donor bootstrap indices).
 # Jackknife: per-cohort LOO refitting all arms simultaneously + delta-method.
 # jackknife_global: drop one unique control from ALL cohorts and ALL arms.
@@ -615,7 +615,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
   ), class = "coresynth_inference")
 }
 
-# ── Internal: inference for multi-arm SI ──────────────────────────────────────
+# -- Internal: inference for multi-arm SI -------------------------------------
 # Bootstrap: resample control columns (shared across all arms, since arms share
 #   the same donor pool). Jackknife: LOO over control columns.
 .si_inference_multi <- function(fit, method, n_boot, level, alternative, seed) {
@@ -733,20 +733,20 @@ si_inference <- function(
   alpha     <- 1 - level
   staggered <- isTRUE(fit$staggered)
 
-  # ── Multi-arm path ────────────────────────────────────────────────────────
+  # -- Multi-arm path ----------------------------------------------------------
   if (isTRUE(fit$multi_arm)) {
     if (isTRUE(fit$staggered)) {
       return(.si_inference_staggered_multi(fit, method, n_boot, level, alternative, seed))
     }
     if (method == "jackknife_global")
-      stop("jackknife_global は multi-arm fit には未対応。jackknife を使用してください。",
+      stop("jackknife_global is not supported for sharp multi-arm fits; use jackknife instead.",
            call. = FALSE)
     return(.si_inference_multi(fit, method, n_boot, level, alternative, seed))
   }
 
   if (!is.null(seed)) set.seed(seed)
 
-  # ── Sharp path ──────────────────────────────────────────────────────────────
+  # -- Sharp path --------------------------------------------------------------
   if (!staggered) {
     if (method == "jackknife_global")
       stop("si_inference() method='jackknife_global' requires a staggered fit.",
@@ -820,7 +820,7 @@ si_inference <- function(
     ), class = "coresynth_inference"))
   }
 
-  # ── Staggered path ──────────────────────────────────────────────────────────
+  # -- Staggered path ----------------------------------------------------------
   if (is.null(fit$Y_all))
     stop("fit does not contain Y_all. Re-estimate with the current version.",
          call. = FALSE)

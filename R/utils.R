@@ -253,8 +253,8 @@ build_predictor_matrices <- function(
 
 #' Build a time-varying covariate array for GSC
 #'
-#' Constructs a T × N × p 3D R array suitable for passing to gsc_ife_cpp as an
-#' arma::cube. arr[t, i, j] is the value of the j-th covariate for unit i at
+#' Constructs a T x N x p 3D R array suitable for passing to gsc_ife_cpp as an
+#' arma::cube. `arr[t, i, j]` is the value of the j-th covariate for unit i at
 #' time t.
 #'
 #' @param data            Long-format data frame.
@@ -263,7 +263,7 @@ build_predictor_matrices <- function(
 #' @param covariate_names Character vector of covariate column names (length p).
 #' @param units           Character vector of unit IDs (length N).
 #' @param times           Vector of time values (length T).
-#' @return A T × N × p numeric array.
+#' @return A T x N x p numeric array.
 #' @noRd
 build_covariate_array <- function(
   data,
@@ -294,7 +294,7 @@ build_covariate_array <- function(
 
 #' Panel Data Helper: Reshape long-format multi-arm data to tensor structure
 #'
-#' Extends [panel_to_matrices()] for the multi-arm Synthetic Interventions
+#' Extends `panel_to_matrices()` for the multi-arm Synthetic Interventions
 #' setting (Agarwal et al. 2025). Each unit belongs to exactly one treatment
 #' arm (d = 0 for control, d = 1,...,K for treatment arms). Before the
 #' treatment date, all treatment-arm units have d = 0; at the treatment date
@@ -304,7 +304,7 @@ build_covariate_array <- function(
 #' @param d    Treatment arm indicator (integer, 0 = control, 1,...,K = arms)
 #' @param id   Unit identifier (long format)
 #' @param time Time identifier (long format)
-#' @return All fields returned by [panel_to_matrices()] plus:
+#' @return All fields returned by `panel_to_matrices()` plus:
 #'   * `arm_levels`: sorted integer vector of unique arm values (`c(0L, 1L, ..., KL)`)
 #'   * `idx_by_arm`: named list of column indices, one entry per arm level
 #' @noRd
@@ -317,9 +317,9 @@ panel_to_tensor <- function(y, d, id, time) {
   arm_levels  <- sort(unique(arm_of_unit))
 
   if (!0L %in% arm_levels)
-    stop("panel_to_tensor: arm 0 (control) が存在しません。", call. = FALSE)
+    stop("panel_to_tensor: arm 0 (control) not found.", call. = FALSE)
   if (any(arm_levels < 0L))
-    stop("panel_to_tensor: arm は非負整数である必要があります。", call. = FALSE)
+    stop("panel_to_tensor: arm values must be non-negative integers.", call. = FALSE)
 
   idx_by_arm <- setNames(
     lapply(arm_levels, function(a) which(arm_of_unit == a)),

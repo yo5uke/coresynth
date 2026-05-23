@@ -13,9 +13,9 @@
 #' @param v_selection How to select the V metric matrix. `"insample"` (default)
 #'   minimises in-sample pre-treatment MSPE following Abadie et al. (2010).
 #'   `"oos"` uses the out-of-sample validation procedure recommended by
-#'   Abadie (2021) §3.2.
+#'   Abadie (2021) S.3.2.
 #' @param donor_mspe_threshold Numeric threshold for donor pool filtering
-#'   (Abadie 2021 §4). Each donor's individual pre-treatment MSPE is compared
+#'   (Abadie 2021 S.4). Each donor's individual pre-treatment MSPE is compared
 #'   to the best donor's MSPE: donors with ratio > threshold are excluded before
 #'   estimation. `Inf` (default) disables filtering.
 #' @param lambda_pen Penalty for penalised SCM (Abadie & L'Hour 2021). `NULL`
@@ -47,19 +47,19 @@ fit_scm_cpp <- function(
   control_group <- match.arg(control_group)
   pan <- panel_to_matrices(y, d, id, time)
 
-  # ── Staggered path (cohort-by-cohort SCM) ────────────────────────────────
+  # -- Staggered path (cohort-by-cohort SCM) -----------------------------------
   if (!pan$is_sharp) {
     if (!is.null(predictors) && length(predictors) > 0L)
       stop(
         "SCM staggered adoption does not support 'predictors'.\n",
         "Alternatives:\n",
-        "  * Use 'covariates' (time-varying) instead — these are partialled out before per-cohort SCM.\n",
+        "  * Use 'covariates' (time-varying) instead -- these are partialled out before per-cohort SCM.\n",
         "  * Fit each cohort separately as sharp SCM (subset data by adoption time).\n",
         "  * Switch to method = 'sdid', 'gsc', 'mc', or 'tasc', which all support staggered + covariates.",
         call. = FALSE
       )
 
-    # Covariate partial-out for staggered SCM (Clarke et al. 2023 §2.2)
+    # Covariate partial-out for staggered SCM (Clarke et al. 2023 S.2.2)
     use_cov  <- !is.null(covariates) && length(covariates) > 0L && !is.null(data)
     Y_work   <- pan$Y
     beta_hat <- numeric(0)
@@ -119,7 +119,7 @@ fit_scm_cpp <- function(
   Y_tr_pre <- Y[seq_len(T_pre), idx_tr]
   Y_tr_all <- Y[, idx_tr]
 
-  # ── Phase 11a: Donor pool filtering (Abadie 2021 §4) ────────────────────────
+  # -- Phase 11a: Donor pool filtering (Abadie 2021 S.4) -----------------------
   excluded_donors <- character(0L)
   if (!is.null(donor_mspe_threshold) && is.finite(donor_mspe_threshold)) {
     ind_mspe <- colMeans((as.vector(Y_tr_pre) - Y_co_pre)^2)
@@ -138,7 +138,7 @@ fit_scm_cpp <- function(
     }
   }
 
-  # ── Validate lambda_pen ──────────────────────────────────────────────────────
+  # -- Validate lambda_pen ------------------------------------------------------
   if (!is.null(lambda_pen)) {
     if (!(identical(lambda_pen, "auto") ||
           (is.numeric(lambda_pen) && length(lambda_pen) == 1L &&
@@ -200,7 +200,7 @@ fit_scm_cpp <- function(
     "coord_descent" = "coord_descent"
   )
 
-  # ── Phase 11b: Standard or penalised SCM ────────────────────────────────────
+  # -- Phase 11b: Standard or penalised SCM -------------------------------------
   if (is.null(lambda_pen)) {
     # Standard SCM
     res <- if (effective_outer == "bfgs") {
@@ -291,7 +291,7 @@ fit_scm_cpp <- function(
   k     <- nrow(X0)
   T_pre <- nrow(Z0)
 
-  # OOS evaluation window — same split as scm_weights_cpp
+  # OOS evaluation window -- same split as scm_weights_cpp
   do_oos <- (t_train > 0L && t_train < T_pre)
   if (do_oos) {
     idx     <- (t_train + 1L):T_pre
@@ -376,9 +376,9 @@ fit_scm_cpp <- function(
   best_lam
 }
 
-# ── Internal: cohort-by-cohort SCM for staggered adoption ────────────────────
+# -- Internal: cohort-by-cohort SCM for staggered adoption -------------------
 # Cohort g ATT is averaged with weight N_treat_g * T_post_g, following the
-# same aggregation used in Arkhangelsky et al. (2021) Appendix §8.
+# same aggregation used in Arkhangelsky et al. (2021) Appendix S.8.
 # Treated units within a cohort are averaged into a single pseudo-unit.
 # Only predictors = NULL is supported (all pre-treatment outcomes used as X).
 .fit_scm_staggered <- function(pan,
@@ -539,7 +539,7 @@ fit_scm_cpp <- function(
 #' post/pre MSPE ratio, following Abadie et al. (2010). When
 #' `alternative = "greater"` or `"less"`, the test statistic is the signed
 #' average post-treatment gap (ATT), giving a one-sided permutation test as
-#' recommended by Abadie (2021) §3.5 for improved power when the direction
+#' recommended by Abadie (2021) S.3.5 for improved power when the direction
 #' of the treatment effect is known.
 #'
 #' @param fit A `coresynth` object from [scm_fit()] with `method = "scm"`.
@@ -690,7 +690,7 @@ mspe_ratio_pval <- function(
   )
 }
 
-# ── Phase 11c: Augmented SCM (Ben-Michael, Feller & Rothstein 2021) ──────────
+# -- Phase 11c: Augmented SCM (Ben-Michael, Feller & Rothstein 2021) ---------
 
 # Internal helper: select ridge lambda via LOO-CV on control units.
 .cv_ridge_scm <- function(A, b, T_pre,

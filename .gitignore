@@ -1,0 +1,9 @@
+papers/
+plan/
+.Rhistory
+.gemini/
+.Rproj.user/
+.positai
+sandbox/
+CLAUDE.md
+.claude/

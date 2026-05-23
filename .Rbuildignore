@@ -1,0 +1,10 @@
+^papers$
+^plan$
+^\.gemini$
+^\.Rproj\.user$
+^.*\.Rproj$
+^\.positai$
+^\.claude$
+^CLAUDE\.md$
+^README\.Rmd$
+^sandbox$

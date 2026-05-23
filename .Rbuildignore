@@ -1,5 +1,7 @@
 ^papers$
 ^plan$
+^\.github$
+^LICENSE\.md$
 ^\.gemini$
 ^\.Rproj\.user$
 ^.*\.Rproj$

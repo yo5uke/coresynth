@@ -8,7 +8,7 @@ arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter 
 //' Calculate SDID Unit Weights (omega)
 //'
 //' Solves the regularized QP:
-//' min_{omega in Delta} sum_t (sum_i omega_i Y_it - Y_tr_t)^2 + zeta^2 * T_pre * ||omega||^2
+//' min over omega in Delta: sum_t (sum_i omega_i Y_it - Y_tr_t)^2 + zeta^2 * T_pre * ||omega||^2
 //'
 //' This corresponds to equation (5) in Arkhangelsky et al. (2021).
 //'
@@ -34,7 +34,7 @@ arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pr
 //'
 //' Solves the time-weight QP (with implicit intercept lambda_0 concentrated out):
 //'
-//' min_{lambda in Delta_pre} ||Y_post_target - Y_pre_co^T lambda||^2 + zeta_t^2 * N_co * ||lambda||^2
+//' min over lambda in Delta_pre: ||Y_post_target - Y_pre_co^T lambda||^2 + zeta_t^2 * N_co * ||lambda||^2
 //'
 //' The caller is responsible for pre-demeaning Y_pre_co (row-wise) and
 //' Y_post_target (subtract the cross-unit mean) to concentrate out lambda_0,
@@ -42,7 +42,7 @@ arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pr
 //'
 //' @param Y_pre_co  Pre-treatment outcomes for control units, row-demeaned (T_pre x N_co)
 //' @param Y_post_target Post-treatment mean per control unit, demeaned (N_co x 1)
-//' @param zeta_t    Ridge penalty for time weights (paper: 10^{-6} * sigma_hat)
+//' @param zeta_t    Ridge penalty for time weights (paper: 1e-6 * sigma_hat)
 //' @export
 // [[Rcpp::export]]
 arma::vec sdid_time_weights_cpp(const arma::mat& Y_pre_co,

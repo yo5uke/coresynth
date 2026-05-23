@@ -105,7 +105,7 @@ arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
 //' @param tol     Convergence tolerance on MSPE improvement (default 1e-4)
 //' @param t_train Training window length for out-of-sample V selection.
 //'   -1 (default): in-sample V selection (original behaviour).
-//'   >0: use rows 0..(t_train-1) of Z for fitting W, rows t_train..(T_pre-1)
+//'   Positive: use rows 0..(t_train-1) of Z for fitting W, rows t_train..(T_pre-1)
 //'   as the validation window for V selection, then refit W on full data.
 //' @return A list with:
 //'   * `W`: Donor weight vector (N_co x 1) on the unit simplex

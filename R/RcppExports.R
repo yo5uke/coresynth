@@ -63,8 +63,9 @@ scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4) {
 
 #' Fast Matrix Completion using Soft-Impute Algorithm
 #'
-#' Solves: min_{L: rank<=r} (1/|O|) sum_{(i,t) in O} (Y_it - L_it)^2 + lambda * ||L||_*
+#' Solves: min_L (1/2) ||O o (Y - L)||_F^2 + lambda * ||L||_*
 #' via iterative SVD soft-thresholding (Mazumder, Hastie, Tibshirani 2010).
+#' Note: lambda is NOT normalized by |O|. Default lambda = 0.01 * sigma_max(Y).
 #'
 #' @param Y       Observed outcome matrix (N x T). Unobserved entries should be 0.
 #' @param O       Binary mask matrix (N x T): 1 = observed, 0 = missing (treated post).
@@ -104,16 +105,26 @@ scm_inner_weights_cpp <- function(X0, X1, V_diag) {
 #' metric matrix V via coordinate descent on the pre-treatment prediction
 #' MSPE, following Abadie, Diamond & Hainmueller (2010).
 #'
+#' When `t_train > 0`, uses out-of-sample V selection per Abadie (2021)
+#' §3.2: V is selected by minimising MSPE on a validation window
+#' (rows t_train..T_pre-1 of Z), while W is fitted on the training window
+#' (rows 0..t_train-1 of X when X and Z have the same row count, i.e. the
+#' outcomes-only case). After selecting V*, W is refit on the full data.
+#'
 #' @param X0      Covariate matrix for control units (k x N_co, typically pre-treatment outcomes)
 #' @param X1      Covariate vector for the treated unit (k x 1)
 #' @param Z0      Outcome matrix for control units in the pre-treatment window (T_pre x N_co)
 #' @param Z1      Outcome vector for the treated unit in the pre-treatment window (T_pre x 1)
 #' @param max_iter Maximum coordinate-descent iterations (default 100)
 #' @param tol     Convergence tolerance on MSPE improvement (default 1e-4)
+#' @param t_train Training window length for out-of-sample V selection.
+#'   -1 (default): in-sample V selection (original behaviour).
+#'   Positive: use rows 0..(t_train-1) of Z for fitting W, rows t_train..(T_pre-1)
+#'   as the validation window for V selection, then refit W on full data.
 #' @return A list with:
 #'   * `W`: Donor weight vector (N_co x 1) on the unit simplex
 #'   * `V`: Optimal metric diagonal (k x 1, normalised to sum to 1)
-#'   * `loss`: Final pre-treatment prediction loss
+#'   * `loss`: Final pre-treatment prediction loss (full pre-treatment window)
 #' @export
 scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train = -1L) {
     .Call(`_coresynth_scm_weights_cpp`, X0, X1, Z0, Z1, max_iter, tol, t_train)
@@ -122,7 +133,7 @@ scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train
 #' Calculate SDID Unit Weights (omega)
 #'
 #' Solves the regularized QP:
-#' min_{omega in Delta} sum_t (sum_i omega_i Y_it - Y_tr_t)^2 + zeta^2 * T_pre * ||omega||^2
+#' min over omega in Delta: sum_t (sum_i omega_i Y_it - Y_tr_t)^2 + zeta^2 * T_pre * ||omega||^2
 #'
 #' This corresponds to equation (5) in Arkhangelsky et al. (2021).
 #'
@@ -138,7 +149,7 @@ sdid_unit_weights_cpp <- function(Y_pre, Y_tr_pre, zeta2) {
 #'
 #' Solves the time-weight QP (with implicit intercept lambda_0 concentrated out):
 #'
-#' min_{lambda in Delta_pre} ||Y_post_target - Y_pre_co^T lambda||^2 + zeta_t^2 * N_co * ||lambda||^2
+#' min over lambda in Delta_pre: ||Y_post_target - Y_pre_co^T lambda||^2 + zeta_t^2 * N_co * ||lambda||^2
 #'
 #' The caller is responsible for pre-demeaning Y_pre_co (row-wise) and
 #' Y_post_target (subtract the cross-unit mean) to concentrate out lambda_0,
@@ -146,7 +157,7 @@ sdid_unit_weights_cpp <- function(Y_pre, Y_tr_pre, zeta2) {
 #'
 #' @param Y_pre_co  Pre-treatment outcomes for control units, row-demeaned (T_pre x N_co)
 #' @param Y_post_target Post-treatment mean per control unit, demeaned (N_co x 1)
-#' @param zeta_t    Ridge penalty for time weights (paper: 10^{-6} * sigma_hat)
+#' @param zeta_t    Ridge penalty for time weights (paper: 1e-6 * sigma_hat)
 #' @export
 sdid_time_weights_cpp <- function(Y_pre_co, Y_post_target, zeta_t) {
     .Call(`_coresynth_sdid_time_weights_cpp`, Y_pre_co, Y_post_target, zeta_t)
@@ -203,14 +214,14 @@ si_pcr_cpp <- function(Y_pre_co, Y_post_co, Y_pre_tr, k) {
 #' Implements the Kalman filter (forward pass) and Rauch-Tung-Striebel smoother
 #' (backward pass) for the state-space model in Rho et al. (2026):
 #'
-#'   State:       z_{t+1} = A z_t + C + eta_t,  eta_t ~ N(0, Q)
-#'   Observation: y_t     = W z_t + eps_t,       eps_t ~ N(0, R)
+#'   State:       z(t+1) = A z(t) + C + eta(t),  eta(t) ~ N(0, Q)
+#'   Observation: y_t    = W z_t + eps_t,        eps_t  ~ N(0, R)
 #'
 #' Observation rows with NA (treated post-intervention) are automatically
 #' dropped at each time step so only control-unit rows update the filter.
 #'
 #' The P update uses the numerically stable Joseph form:
-#'   P_{t|t} = (I - K W_obs) P_{t|t-1} (I - K W_obs)^T + K R_obs K^T
+#'   P(t|t) = (I - K W_obs) P(t|t-1) (I - K W_obs)^T + K R_obs K^T
 #'
 #' @param Y  Observed data matrix (N x T). Use NA for unobserved entries.
 #' @param W  Observation / loading matrix (N x r)
@@ -222,8 +233,8 @@ si_pcr_cpp <- function(Y_pre_co, Y_post_co, Y_pre_tr, k) {
 #' @param P0 Initial state covariance (r x r)
 #' @return A list with z_smooth, P_smooth, P_cross, z_pred, z_upd.
 #'   P_cross is an r x r x (T-1) cube. Slice t (C++ 0-indexed, t=0,...,T-2)
-#'   stores P_{t+1, t | T} (0-indexed), i.e. P_{t+2, t+1 | T} in 1-indexed
-#'   Shumway-Stoffer notation. Formula: P_{t+1|T} * J_t^T (eq. 6.68-6.69).
+#'   stores P(t+1, t | T) (0-indexed), i.e. P(t+2, t+1 | T) in 1-indexed
+#'   Shumway-Stoffer notation. Formula: P(t+1|T) * J_t^T (eq. 6.68-6.69).
 #' @export
 kalman_smoother_cpp <- function(Y, W, A, C, Q, R, z0, P0) {
     .Call(`_coresynth_kalman_smoother_cpp`, Y, W, A, C, Q, R, z0, P0)

@@ -18,6 +18,7 @@ soft_impute_cpp(Y, O, lambda, max_iter = 1000L, tol = 1e-05)
 \item{tol}{Convergence tolerance (relative Frobenius norm change).}
 }
 \description{
-Solves: min_{L: rank<=r} (1/|O|) sum_{(i,t) in O} (Y_it - L_it)^2 + lambda * ||L||_*
+Solves: min_L (1/2) ||O o (Y - L)||\emph{F^2 + lambda * ||L||}*
 via iterative SVD soft-thresholding (Mazumder, Hastie, Tibshirani 2010).
+Note: lambda is NOT normalized by |O|. Default lambda = 0.01 * sigma_max(Y).
 }

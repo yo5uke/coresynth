@@ -10,6 +10,14 @@
 
 High-performance Synthetic Control Method (SCM) and related causal inference estimators (SDID, GSC, MC, TASC, SI) with a unified Formula interface. All computational bottlenecks (QP solving, SVD-based matrix completion, Kalman filtering) are implemented in C++ via RcppArmadillo, providing 10x-50x speed improvements over pure-R alternatives.
 }
+\seealso{
+Useful links:
+\itemize{
+  \item \url{https://github.com/yo5uke/coresynth}
+  \item Report bugs at \url{https://github.com/yo5uke/coresynth/issues}
+}
+
+}
 \author{
 \strong{Maintainer}: Yosuke Abe \email{yo5uke@duck.com}
 

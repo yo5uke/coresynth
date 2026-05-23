@@ -18,17 +18,29 @@ scm_weights_cpp(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-04, t_train = -1L)
 \item{max_iter}{Maximum coordinate-descent iterations (default 100)}
 
 \item{tol}{Convergence tolerance on MSPE improvement (default 1e-4)}
+
+\item{t_train}{Training window length for out-of-sample V selection.
+-1 (default): in-sample V selection (original behaviour).
+Positive: use rows 0..(t_train-1) of Z for fitting W, rows t_train..(T_pre-1)
+as the validation window for V selection, then refit W on full data.}
 }
 \value{
 A list with:
 \itemize{
 \item \code{W}: Donor weight vector (N_co x 1) on the unit simplex
 \item \code{V}: Optimal metric diagonal (k x 1, normalised to sum to 1)
-\item \code{loss}: Final pre-treatment prediction loss
+\item \code{loss}: Final pre-treatment prediction loss (full pre-treatment window)
 }
 }
 \description{
 Jointly optimises donor weights W (on the simplex) and the diagonal
 metric matrix V via coordinate descent on the pre-treatment prediction
 MSPE, following Abadie, Diamond & Hainmueller (2010).
+}
+\details{
+When \code{t_train > 0}, uses out-of-sample V selection per Abadie (2021)
+§3.2: V is selected by minimising MSPE on a validation window
+(rows t_train..T_pre-1 of Z), while W is fitted on the training window
+(rows 0..t_train-1 of X when X and Z have the same row count, i.e. the
+outcomes-only case). After selecting V*, W is refit on the full data.
 }

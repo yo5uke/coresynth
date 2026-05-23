@@ -54,6 +54,6 @@ When \code{alternative = "two.sided"} (default), the test statistic is the
 post/pre MSPE ratio, following Abadie et al. (2010). When
 \code{alternative = "greater"} or \code{"less"}, the test statistic is the signed
 average post-treatment gap (ATT), giving a one-sided permutation test as
-recommended by Abadie (2021) §3.5 for improved power when the direction
+recommended by Abadie (2021) S.3.5 for improved power when the direction
 of the treatment effect is known.
 }

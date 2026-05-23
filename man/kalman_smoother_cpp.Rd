@@ -26,20 +26,20 @@ kalman_smoother_cpp(Y, W, A, C, Q, R, z0, P0)
 \value{
 A list with z_smooth, P_smooth, P_cross, z_pred, z_upd.
 P_cross is an r x r x (T-1) cube. Slice t (C++ 0-indexed, t=0,...,T-2)
-stores P_{t+1, t | T} (0-indexed), i.e. P_{t+2, t+1 | T} in 1-indexed
-Shumway-Stoffer notation. Formula: P_{t+1|T} * J_t^T (eq. 6.68-6.69).
+stores P(t+1, t | T) (0-indexed), i.e. P(t+2, t+1 | T) in 1-indexed
+Shumway-Stoffer notation. Formula: P(t+1|T) * J_t^T (eq. 6.68-6.69).
 }
 \description{
 Implements the Kalman filter (forward pass) and Rauch-Tung-Striebel smoother
 (backward pass) for the state-space model in Rho et al. (2026):
 }
 \details{
-State:       z_{t+1} = A z_t + C + eta_t,  eta_t ~ N(0, Q)
-Observation: y_t     = W z_t + eps_t,       eps_t ~ N(0, R)
+State:       z(t+1) = A z(t) + C + eta(t),  eta(t) ~ N(0, Q)
+Observation: y_t    = W z_t + eps_t,        eps_t  ~ N(0, R)
 
 Observation rows with NA (treated post-intervention) are automatically
 dropped at each time step so only control-unit rows update the filter.
 
 The P update uses the numerically stable Joseph form:
-P_{t|t} = (I - K W_obs) P_{t|t-1} (I - K W_obs)^T + K R_obs K^T
+P(t|t) = (I - K W_obs) P(t|t-1) (I - K W_obs)^T + K R_obs K^T
 }

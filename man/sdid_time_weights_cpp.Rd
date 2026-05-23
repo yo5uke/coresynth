@@ -11,13 +11,13 @@ sdid_time_weights_cpp(Y_pre_co, Y_post_target, zeta_t)
 
 \item{Y_post_target}{Post-treatment mean per control unit, demeaned (N_co x 1)}
 
-\item{zeta_t}{Ridge penalty for time weights (paper: 10^{-6} * sigma_hat)}
+\item{zeta_t}{Ridge penalty for time weights (paper: 1e-6 * sigma_hat)}
 }
 \description{
 Solves the time-weight QP (with implicit intercept lambda_0 concentrated out):
 }
 \details{
-min_{lambda in Delta_pre} ||Y_post_target - Y_pre_co^T lambda||^2 + zeta_t^2 * N_co * ||lambda||^2
+min over lambda in Delta_pre: ||Y_post_target - Y_pre_co^T lambda||^2 + zeta_t^2 * N_co * ||lambda||^2
 
 The caller is responsible for pre-demeaning Y_pre_co (row-wise) and
 Y_post_target (subtract the cross-unit mean) to concentrate out lambda_0,

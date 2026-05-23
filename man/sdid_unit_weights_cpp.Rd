@@ -15,7 +15,7 @@ sdid_unit_weights_cpp(Y_pre, Y_tr_pre, zeta2)
 }
 \description{
 Solves the regularized QP:
-min_{omega in Delta} sum_t (sum_i omega_i Y_it - Y_tr_t)^2 + zeta^2 * T_pre * ||omega||^2
+min over omega in Delta: sum_t (sum_i omega_i Y_it - Y_tr_t)^2 + zeta^2 * T_pre * ||omega||^2
 }
 \details{
 This corresponds to equation (5) in Arkhangelsky et al. (2021).

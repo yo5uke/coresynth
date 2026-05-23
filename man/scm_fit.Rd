@@ -25,18 +25,23 @@ scm_fit(
 \item{method}{One of \code{"scm"}, \code{"sdid"}, \code{"gsc"}, \code{"mc"}, \code{"tasc"}, \code{"si"}.}
 
 \item{predictors}{A \code{list()} of \code{\link[=pred]{pred()}} specifications that define the
-predictor matrix for SCM (see Abadie et al. 2010, §2.3). Each \code{\link[=pred]{pred()}}
+predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each \code{\link[=pred]{pred()}}
 entry aggregates one or more variables over a time window. Pass \code{NULL}
 (default) to use all pre-treatment outcome periods as predictors.
 Applies to \code{method = "scm"} only.}
 
+\item{covariates}{An optional named \code{list} of additional time-varying
+covariates to partial out before estimation. Each element is a character
+string naming a column in \code{data}. Supported for \code{method = "sdid"},
+\code{"scm"}, and \code{"gsc"}.}
+
 \item{v_selection}{V matrix selection method for \code{method = "scm"}.
 \code{"insample"} (default) follows Abadie et al. (2010): V is chosen by
 minimising in-sample pre-treatment MSPE. \code{"oos"} follows Abadie (2021)
-§3.2: the pre-treatment window is split in half; V is selected to minimise
+S.3.2: the pre-treatment window is split in half; V is selected to minimise
 MSPE on the validation half, then W is refit on the full window.}
 
-\item{donor_mspe_threshold}{Donor pool filtering threshold (Abadie 2021 §4).
+\item{donor_mspe_threshold}{Donor pool filtering threshold (Abadie 2021 S.4).
 For \code{method = "scm"} only. Each donor's individual pre-treatment MSPE
 (using that donor alone as the counterfactual) is divided by the minimum
 such MSPE across all donors. Donors whose ratio exceeds this threshold are
@@ -50,10 +55,10 @@ uses that value directly.}
 
 \item{v_optim}{Outer V-optimisation method for \code{method = "scm"}.
 \code{"coord_descent"} (default) uses the existing C++ coordinate descent with
-11-point grid search — fastest when \code{k = T_pre} is large (outcomes-only).
-\code{"bfgs"} uses R's L-BFGS-B, which requires only O(k²) inner QP calls and
-is faster when \code{k} is small (e.g. external predictors with k ≤ 15).
-\code{"auto"} selects \code{"bfgs"} when \verb{k ≤ 15}, otherwise \code{"coord_descent"}.}
+11-point grid search -- fastest when \code{k = T_pre} is large (outcomes-only).
+\code{"bfgs"} uses R's L-BFGS-B, which requires only O(k^2) inner QP calls and
+is faster when \code{k} is small (e.g. external predictors with k <= 15).
+\code{"auto"} selects \code{"bfgs"} when \code{k <= 15}, otherwise \code{"coord_descent"}.}
 
 \item{...}{Additional arguments forwarded to the specific method
 (e.g. \code{r}, \code{lambda}, \code{zeta2}).}

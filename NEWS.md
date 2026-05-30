@@ -1,3 +1,27 @@
+# coresynth 0.2.0
+
+## New features
+
+- **Conformal inference** (`conformal_inference()`): permutation-based p-values and
+  confidence intervals following Chernozhukov, Wüthrich & Zhu (2021).
+  Works with sharp fits across all supported estimation methods
+  (`scm`, `sdid`, `gsc`, `mc`, `si`).  The counterfactual proxy is re-estimated
+  under the null on all *T* periods (essential for finite-sample validity per
+  CWZ §2.2), and p-values are obtained via moving-block (cyclic-shift) permutation
+  of the estimated residuals.  Confidence intervals are constructed by test
+  inversion over a user-supplied or automatically chosen grid.
+  Returns a `coresynth_inference` subclass compatible with `tidy()` and `glance()`.
+
+## Minor improvements
+
+- `panel_to_matrices()`: fill loop replaced by vectorised `match()` + matrix-index
+  assignment; removes an O(n × (T + N)) bottleneck in the shared data-prep path.
+- `tasc.cpp`: `safe_inv_sympd()` helper added so the Kalman filter degrades to
+  `pinv` instead of aborting when the innovation covariance is not numerically PD.
+- `%||%` null-coalescing helper centralised in `utils.R`; duplicate definitions in
+  `broom.R` and `plot.R` removed.
+- `check_sharp_adoption()` (unused internal function) removed.
+
 # coresynth 0.1.0
 
 First public release.

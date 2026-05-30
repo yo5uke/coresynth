@@ -43,12 +43,10 @@ panel_to_matrices <- function(y, d, id, time) {
     dimnames = list(as.character(times), as.character(units))
   )
 
-  for (i in seq_along(id)) {
-    ri <- which(times == time[i])
-    ci <- which(units == id[i])
-    Y[ri, ci] <- y[i]
-    D[ri, ci] <- d[i]
-  }
+  # Vectorised fill (avoids O(n * (T + N)) which() lookups inside a loop)
+  idx_mat <- cbind(match(time, times), match(id, units))
+  Y[idx_mat] <- y
+  D[idx_mat] <- d
 
   # Determine treated units: any unit that is ever treated
   ever_treated <- which(colSums(D) > 0)
@@ -78,21 +76,12 @@ panel_to_matrices <- function(y, d, id, time) {
   )
 }
 
-check_sharp_adoption <- function(pan, method) {
-  if (!isTRUE(pan$is_sharp)) {
-    stop(
-      sprintf(
-        paste0(
-          "'%s' does not support staggered adoption ",
-          "(units with different treatment timing detected). ",
-          "Use method = 'mc', 'tasc', or 'sdid' instead."
-        ),
-        method
-      ),
-      call. = FALSE
-    )
-  }
-}
+#' NULL-coalescing helper
+#'
+#' Returns `l` unless it is `NULL`, in which case `r` is returned. Shared
+#' across the package (broom, plot, fit helpers).
+#' @noRd
+`%||%` <- function(l, r) if (is.null(l)) r else l
 
 #' Predictor Specification for SCM
 #'

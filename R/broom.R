@@ -360,6 +360,3 @@ augment.coresynth <- function(x, include_donors = FALSE, ...) {
   if (!is_multi) out$.arm <- NULL
   out
 }
-
-# Helper
-`%||%` <- function(l, r) if (is.null(l)) r else l

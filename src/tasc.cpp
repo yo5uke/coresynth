@@ -2,6 +2,16 @@
 
 // [[Rcpp::depends(RcppArmadillo)]]
 
+// Symmetric-positive-definite inverse with a graceful fallback.
+// inv_sympd throws when its argument is not numerically PD (e.g. a degenerate
+// innovation covariance during early EM iterations); fall back to the general
+// pseudo-inverse so the filter keeps running instead of aborting.
+static arma::mat safe_inv_sympd(const arma::mat& M) {
+  arma::mat out;
+  if (arma::inv_sympd(out, M)) return out;
+  return arma::pinv(M);
+}
+
 //' Kalman Filter and RTS Smoother (TASC)
 //'
 //' Implements the Kalman filter (forward pass) and Rauch-Tung-Striebel smoother
@@ -69,7 +79,7 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
 
       // Innovation covariance S and Kalman gain K
       arma::mat S = W_obs * P_p * W_obs.t() + R_obs;
-      arma::mat K = P_p * W_obs.t() * arma::inv_sympd(S);
+      arma::mat K = P_p * W_obs.t() * safe_inv_sympd(S);
 
       // State update
       z_curr = z_p + K * (y_obs - W_obs * z_p);
@@ -100,7 +110,7 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
   for(int t = T - 2; t >= 0; t--) {
     arma::mat P_pred_next = P_pred.slice(t + 1);
     // Smoother gain J_t = P_{t|t} * A^T * P_{t+1|t}^{-1}
-    arma::mat J = P_upd.slice(t) * A.t() * arma::inv_sympd(P_pred_next);
+    arma::mat J = P_upd.slice(t) * A.t() * safe_inv_sympd(P_pred_next);
 
     z_smooth.col(t) = z_upd.col(t)
                     + J * (z_smooth.col(t + 1) - z_pred.col(t + 1));

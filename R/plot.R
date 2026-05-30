@@ -77,6 +77,3 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"), ...) {
     return(p)
   }
 }
-
-# Internal helper (already in broom.R but repeated here for safety)
-`%||%` <- function(l, r) if(is.null(l)) r else l

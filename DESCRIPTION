@@ -1,14 +1,15 @@
 Package: coresynth
 Title: Fast and Unified Synthetic Control Methods
-Version: 0.1.0
+Version: 0.2.0
 Authors@R:
     person("Yosuke Abe", role = c("aut", "cre"),
-           email = "yo5uke@duck.com")
+           email = "yosuke.abe0507@gmail.com")
 Description: High-performance Synthetic Control Method (SCM) and related causal
-    inference estimators (SDID, GSC, MC, TASC, SI) with a unified Formula
-    interface. All computational bottlenecks (QP solving, SVD-based matrix
-    completion, Kalman filtering) are implemented in C++ via RcppArmadillo,
-    providing 10x-50x speed improvements over pure-R alternatives.
+    inference estimators (SDID, GSC, MC, TASC, SI, plus an experimental-design
+    variant) with a unified Formula interface. All computational bottlenecks
+    (QP solving, SVD-based matrix completion, Kalman filtering) are implemented
+    in C++ via RcppArmadillo, providing up to ~55x speed improvements over
+    pure-R alternatives on typical problem sizes.
 License: MIT + file LICENSE
 URL: https://github.com/yo5uke/coresynth
 BugReports: https://github.com/yo5uke/coresynth/issues

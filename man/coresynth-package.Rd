@@ -8,7 +8,7 @@
 \description{
 \if{html}{\figure{logo.png}{options: style='float: right' alt='logo' width='120'}}
 
-High-performance Synthetic Control Method (SCM) and related causal inference estimators (SDID, GSC, MC, TASC, SI) with a unified Formula interface. All computational bottlenecks (QP solving, SVD-based matrix completion, Kalman filtering) are implemented in C++ via RcppArmadillo, providing 10x-50x speed improvements over pure-R alternatives.
+High-performance Synthetic Control Method (SCM) and related causal inference estimators (SDID, GSC, MC, TASC, SI, plus an experimental-design variant) with a unified Formula interface. All computational bottlenecks (QP solving, SVD-based matrix completion, Kalman filtering) are implemented in C++ via RcppArmadillo, providing up to ~55x speed improvements over pure-R alternatives on typical problem sizes.
 }
 \seealso{
 Useful links:
@@ -19,11 +19,11 @@ Useful links:
 
 }
 \author{
-\strong{Maintainer}: Yosuke Abe \email{yo5uke@duck.com}
+\strong{Maintainer}: Yosuke Abe \email{yosuke.abe0507@gmail.com}
 
 Authors:
 \itemize{
-  \item Yosuke Abe \email{yo5uke@duck.com}
+  \item Yosuke Abe \email{yosuke.abe0507@gmail.com}
 }
 
 }

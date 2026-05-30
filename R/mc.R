@@ -60,6 +60,7 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL, ...) {
     T_pre        = T_pre,
     idx_co       = idx_co,
     idx_tr       = idx_tr,
+    Y_co_all     = Y[, idx_co, drop = FALSE],  # T x N_co -- needed by conformal_inference()
     unit_weights = NULL,
     estimate     = att
   )

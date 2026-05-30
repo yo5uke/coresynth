@@ -15,8 +15,9 @@ experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](h
 **coresynth** is a high-performance R package that provides six causal
 inference methods for panel data through a unified formula interface.
 All core optimizations (QP solving, SVD, Kalman filtering) are
-implemented in C++ via RcppArmadillo, achieving **10–70x speedups** over
-pure-R implementations.
+implemented in C++ via RcppArmadillo, achieving **up to ~56x speedups**
+over pure-R implementations on typical problem sizes (see the
+Performance section).
 
 ## Installation
 
@@ -87,12 +88,16 @@ plot(fits$scm, type = "weights")
 
 | Method | Reference | Treatment | Covariates | Inference |
 |----|----|----|:--:|----|
-| `scm` | Abadie, Diamond & Hainmueller (2010) | Sharp & Staggered | `pred()` list | `mspe_ratio_pval()` |
-| `sdid` | Arkhangelsky et al. (2021) | Sharp & Staggered | `covariates=` | `sdid_inference()` |
-| `gsc` | Xu (2017) | Sharp & Staggered | `covariates=` time-varying | `gsc_boot()`, `gsc_inference()` |
-| `mc` | Athey et al. (2021) | Sharp & Staggered | — | — |
+| `scm` | Abadie, Diamond & Hainmueller (2010) | Sharp & Staggered | `pred()` list | `mspe_ratio_pval()`, `conformal_inference()` |
+| `sdid` | Arkhangelsky et al. (2021) | Sharp & Staggered | `covariates=` | `sdid_inference()`, `conformal_inference()` |
+| `gsc` | Xu (2017) | Sharp & Staggered | `covariates=` time-varying | `gsc_boot()`, `gsc_inference()`, `conformal_inference()` |
+| `mc` | Athey et al. (2021) | Sharp & Staggered | — | `conformal_inference()` |
 | `tasc` | Rho et al. (2026) | Sharp & Staggered | — | — |
-| `si` | Agarwal et al. (2025) | Sharp, Staggered & Multi-arm | — | `si_inference()` |
+| `si` | Agarwal et al. (2025) | Sharp, Staggered & Multi-arm | — | `si_inference()`, `conformal_inference()` |
+
+`conformal_inference()` (Chernozhukov, Wüthrich & Zhu 2021) provides
+permutation-based p-values and confidence intervals for **sharp** fits
+across `scm`/`sdid`/`gsc`/`mc`/`si`.
 
 ## Staggered Adoption
 
@@ -204,6 +209,12 @@ gsc_inf <- gsc_inference(fits$gsc, method = "jackknife")
 si_inf  <- si_inference(fits$si,  method = "bootstrap", n_boot = 200, seed = 1)
 tidy(gsc_inf)
 tidy(si_inf)
+
+# Conformal inference (Chernozhukov, Wüthrich & Zhu 2021) — sharp fits for
+# scm / sdid / gsc / mc / si. Re-estimates the counterfactual under the null
+# and inverts a moving-block permutation test for a p-value and CI.
+conf <- conformal_inference(fits$scm, tau0 = 0, level = 0.95)
+tidy(conf)
 ```
 
 ## tidyverse / broom Integration
@@ -245,6 +256,9 @@ SCM benchmark vs. the **Synth** package (Windows 11 / R 4.6.0 / GCC
 - Athey, S., Bayati, M., Doudchenko, N., Imbens, G., & Khosravi, K.
   (2021). Matrix completion methods for causal panel data models.
   *JASA*, 116(536), 1716–1730.
+- Chernozhukov, V., Wüthrich, K., & Zhu, Y. (2021). An exact and robust
+  conformal inference method for counterfactual and synthetic controls.
+  *JASA*, 116(536), 1849–1864.
 - Rho, H., et al. (2026). Time-aware synthetic control. *Working paper*.
 - Xu, Y. (2017). Generalized synthetic control method. *Political
   Analysis*, 25(1), 57–76.

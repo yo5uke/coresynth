@@ -3012,3 +3012,61 @@ test_that("Phase 24: sdid_inference object inherits coresynth_inference", {
   expect_s3_class(inf, "sdid_inference")
   expect_s3_class(inf, "coresynth_inference")
 })
+
+# ── Conformal inference (Chernozhukov, Wuthrich & Zhu 2021) ───────────────────
+test_that("conformal_inference works across supported sharp methods", {
+  for (m in c("scm", "sdid", "gsc", "mc", "si")) {
+    fit <- scm_fit(y ~ d | id + time, data = panel, method = m)
+    ci  <- conformal_inference(fit, n_grid = 60L)
+    expect_s3_class(ci, "conformal_inference")
+    expect_s3_class(ci, "coresynth_inference")
+    expect_equal(ci$method, "conformal")
+    expect_true(ci$p_value >= 0 && ci$p_value <= 1)
+    expect_true(is.finite(ci$estimate))
+    expect_true(ci$n_controls == 9L)
+  }
+})
+
+test_that("conformal p-value for true effect exceeds p-value for tau0 = 0", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  p_null   <- conformal_inference(fit, tau0 = 0, ci = FALSE)$p_value
+  p_truth  <- conformal_inference(fit, tau0 = fit$estimate, ci = FALSE)$p_value
+  # The estimate itself should not be rejected; tau0 = 0 (no effect) should be
+  # less compatible than the point estimate.
+  expect_true(p_truth >= p_null)
+})
+
+test_that("conformal CI contains the point estimate", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  ci  <- conformal_inference(fit, n_grid = 120L)
+  if (!is.na(ci$ci_lower)) {
+    expect_true(ci$ci_lower <= fit$estimate && fit$estimate <= ci$ci_upper)
+  }
+  expect_true(is.numeric(ci$grid) && length(ci$grid) == 120L)
+})
+
+test_that("conformal one-sided alternatives run and tidy()/glance() work", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "si")
+  ci_g <- conformal_inference(fit, alternative = "greater", ci = FALSE)
+  ci_l <- conformal_inference(fit, alternative = "less", ci = FALSE)
+  expect_true(ci_g$p_value >= 0 && ci_g$p_value <= 1)
+  expect_true(ci_l$p_value >= 0 && ci_l$p_value <= 1)
+  td <- broom::tidy(conformal_inference(fit, n_grid = 40L))
+  expect_equal(td$term, "ATT")
+  expect_equal(td$method, "conformal")
+  gl <- broom::glance(conformal_inference(fit, n_grid = 40L))
+  expect_equal(gl$method, "conformal")
+})
+
+test_that("conformal_inference rejects staggered and tasc fits", {
+  stag <- make_panel()
+  stag$d <- 0L
+  stag$d[stag$id == "u1" & stag$time > 10] <- 1L
+  stag$d[stag$id == "u2" & stag$time > 15] <- 1L
+  stag$y[stag$d == 1] <- stag$y[stag$d == 1] + 2.0
+  fit_stag <- scm_fit(y ~ d | id + time, data = stag, method = "sdid")
+  expect_error(conformal_inference(fit_stag), "sharp")
+
+  fit_tasc <- scm_fit(y ~ d | id + time, data = panel, method = "tasc")
+  expect_error(conformal_inference(fit_tasc), "tasc")
+})

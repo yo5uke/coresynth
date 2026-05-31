@@ -1,0 +1,106 @@
+---
+title: "Staggered adoption"
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  fig.width = 7,
+  fig.height = 4,
+  dpi = 96
+)
+```
+
+```{r setup}
+library(coresynth)
+```
+
+When units adopt treatment at different times, coresynth fits each adoption
+**cohort** separately and aggregates the cohort ATTs with weights proportional
+to `N_treated × T_post` (Clarke et al. 2023):
+
+$$\hat\tau = \frac{\sum_g N_{tr,g}\, T_{post,g}\, \hat\tau_g}{\sum_g N_{tr,g}\, T_{post,g}}.$$
+
+All six estimators support this; staggered timing is **detected automatically**
+from the treatment column — no extra flag is needed.
+
+## A staggered panel
+
+Here `u1` is treated from period 11 and `u2` from period 16.
+
+```{r dgp}
+set.seed(42)
+N <- 12; TT <- 20
+f   <- cumsum(rnorm(TT, 0, 0.5))
+lam <- rnorm(N, 1, 0.3)
+dat <- expand.grid(time = seq_len(TT), id = paste0("u", seq_len(N)))
+dat$y <- as.vector(outer(f, lam)) + rnorm(nrow(dat), 0, 0.3)
+
+dat$d <- 0L
+dat$d[dat$id == "u1" & dat$time > 10] <- 1L
+dat$d[dat$id == "u2" & dat$time > 15] <- 1L
+dat$y[dat$d == 1] <- dat$y[dat$d == 1] + 2.0   # true ATT = 2.0
+```
+
+## Fitting
+
+```{r fit}
+fit <- scm_fit(y ~ d | id + time, data = dat, method = "sdid")
+fit$estimate          # aggregate ATT
+fit$staggered         # TRUE
+```
+
+Per-cohort detail is in `cohort_estimates`:
+
+```{r cohorts}
+fit$cohort_estimates
+```
+
+## Choosing the control group
+
+`control_group` controls which units serve as donors for each cohort:
+
+- `"clean"` (default) — never-treated units **plus** not-yet-treated units
+  (those adopting later than the current cohort).
+- `"never_treated"` — never-treated units only.
+
+```{r control-group}
+fit_clean <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
+                     control_group = "clean")
+fit_nt    <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
+                     control_group = "never_treated")
+c(clean = fit_clean$estimate, never_treated = fit_nt$estimate)
+```
+
+## Across estimators
+
+The same call works for every method:
+
+```{r all-methods}
+methods <- c("scm", "sdid", "gsc", "mc", "tasc", "si")
+sapply(methods, function(m)
+  scm_fit(y ~ d | id + time, data = dat, method = m)$estimate)
+```
+
+## Inference under staggered adoption
+
+`sdid_inference()`, `gsc_inference()`, and `si_inference()` all extend to
+staggered fits. `jackknife_global` is the staggered-specific variant that
+removes each unique control unit across **all** cohorts at once, correctly
+capturing cross-cohort correlation.
+
+```{r stag-inf}
+library(broom)
+tidy(sdid_inference(fit, method = "bootstrap", n_boot = 100, seed = 1))
+tidy(sdid_inference(fit, method = "jackknife_global"))
+```
+
+## Notes
+
+- `plot()` and `augment()` for staggered fits operate per cohort; the aggregate
+  synthetic series is not defined (`Y_synth = NULL`).
+- SCM staggered adoption supports `covariates =` (partial-out) but not the
+  `predictors = pred(...)` interface.
+- SI additionally supports staggered **and** multi-arm simultaneously — see
+  [Estimators](estimators.html#multi-arm-si).

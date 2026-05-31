@@ -1,0 +1,140 @@
+---
+title: "Get started with coresynth"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Get started with coresynth}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  fig.width = 7,
+  fig.height = 4,
+  dpi = 96
+)
+```
+
+**coresynth** provides six causal-inference estimators for panel data behind a
+single formula interface, with the computational core (QP solving, SVD, Kalman
+filtering) written in C++ via RcppArmadillo. This vignette walks through the
+basics: fitting a model, comparing methods, and pulling results out with
+`broom` and `plot()`.
+
+```{r setup}
+library(coresynth)
+```
+
+## The unified formula
+
+Every estimator is reached through `scm_fit()` with the same formula syntax:
+
+```
+outcome ~ treatment | unit_id + time_id
+```
+
+The data must be a **long-format** balanced panel (one row per unit–time), and
+`treatment` is a 0/1 indicator that switches on for treated units in
+post-treatment periods. `method =` selects the estimator.
+
+## A toy panel
+
+We simulate a balanced panel of 10 units over 20 periods. Unit `u1` is treated
+from period 11 onward with a true ATT of 2.0.
+
+```{r dgp}
+set.seed(42)
+N <- 10; TT <- 20; T_pre <- 10
+f   <- cumsum(rnorm(TT, 0, 0.5))     # common factor
+lam <- rnorm(N, 1, 0.3)              # unit loadings
+dat <- expand.grid(time = seq_len(TT), id = paste0("u", seq_len(N)))
+dat$y <- as.vector(outer(f, lam)) + rnorm(nrow(dat), 0, 0.3)
+dat$d <- as.integer(dat$id == "u1" & dat$time > T_pre)
+dat$y[dat$d == 1] <- dat$y[dat$d == 1] + 2.0   # inject the treatment effect
+
+head(dat)
+```
+
+## Fitting one method
+
+```{r fit-one}
+fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
+fit
+```
+
+The estimated ATT lives in `fit$estimate`:
+
+```{r estimate}
+fit$estimate
+```
+
+## Comparing all six methods
+
+Because the interface is shared, swapping estimators is a one-word change. Here
+we run all six on the same data (true ATT = 2.0).
+
+```{r compare}
+methods <- c("scm", "sdid", "gsc", "mc", "tasc", "si")
+fits    <- lapply(methods, function(m) scm_fit(y ~ d | id + time, data = dat, method = m))
+names(fits) <- methods
+
+data.frame(
+  method   = methods,
+  estimate = round(sapply(fits, `[[`, "estimate"), 3)
+)
+```
+
+| Method | Reference |
+|----|----|
+| `scm`  | Abadie, Diamond & Hainmueller (2010) |
+| `sdid` | Arkhangelsky et al. (2021) |
+| `gsc`  | Xu (2017) |
+| `mc`   | Athey et al. (2021) |
+| `tasc` | Rho et al. (2026) |
+| `si`   | Agarwal et al. (2025) |
+
+## Visualizing a fit
+
+`plot.coresynth()` offers three views via `type =`.
+
+```{r plot-trend}
+plot(fits$sdid, type = "trend")   # observed vs. synthetic
+```
+
+```{r plot-gap}
+plot(fits$scm, type = "gap")      # treatment effect over time
+```
+
+```{r plot-weights}
+plot(fits$scm, type = "weights")  # donor weights
+```
+
+## tidy / glance / augment
+
+coresynth integrates with `broom`, so results drop straight into tidy
+workflows and paper tables.
+
+```{r broom}
+library(broom)
+
+tidy(fits$scm)     # donor weights as a data frame
+glance(fits$scm)   # one-row model summary
+```
+
+`export_json()` writes a fit to disk as JSON for reproducibility or downstream
+(e.g. AI) workflows:
+
+```{r export, eval = FALSE}
+export_json(fits$scm, file = "scm_result.json")
+```
+
+## Where to next
+
+- **[Estimators](estimators.html)** — covariates, predictors, and method-specific
+  options for all six estimators plus the experimental-design variant.
+- **[Inference](inference.html)** — placebo, bootstrap, jackknife, parametric, and
+  conformal inference.
+- **[Staggered adoption](staggered.html)** — cohort-based estimation when units
+  adopt treatment at different times.

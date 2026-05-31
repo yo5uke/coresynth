@@ -1,0 +1,12 @@
+pandoc: 3.8.3
+pkgdown: 2.2.0
+pkgdown_sha: ~
+articles:
+  coresynth: coresynth.html
+  articles/estimators: estimators.html
+  articles/inference: inference.html
+  articles/staggered: staggered.html
+last_built: 2026-05-31T03:25Z
+urls:
+  reference: https://yo5uke.com/coresynth/reference
+  article: https://yo5uke.com/coresynth/articles

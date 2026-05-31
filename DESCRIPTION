@@ -11,7 +11,7 @@ Description: High-performance Synthetic Control Method (SCM) and related causal
     in C++ via RcppArmadillo, providing up to ~55x speed improvements over
     pure-R alternatives on typical problem sizes.
 License: MIT + file LICENSE
-URL: https://github.com/yo5uke/coresynth
+URL: https://github.com/yo5uke/coresynth, https://yo5uke.com/coresynth/
 BugReports: https://github.com/yo5uke/coresynth/issues
 Encoding: UTF-8
 Config/roxygen2/markdown: TRUE
@@ -28,5 +28,8 @@ Imports:
     broom,
     jsonlite
 Suggests:
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
 Config/testthat/edition: 3

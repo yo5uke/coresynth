@@ -14,6 +14,7 @@ High-performance Synthetic Control Method (SCM) and related causal inference est
 Useful links:
 \itemize{
   \item \url{https://github.com/yo5uke/coresynth}
+  \item \url{https://yo5uke.com/coresynth/}
   \item Report bugs at \url{https://github.com/yo5uke/coresynth/issues}
 }
 

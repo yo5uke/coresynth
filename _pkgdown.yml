@@ -1,0 +1,88 @@
+url: https://yo5uke.com/coresynth
+
+template:
+  bootstrap: 5
+  light-switch: true
+
+development:
+  mode: auto
+
+navbar:
+  structure:
+    left:  [intro, articles, reference, news]
+    right: [search, lightswitch, github]
+  components:
+    articles:
+      text: Articles
+      menu:
+      - text: Estimators
+        href: articles/estimators.html
+      - text: Inference
+        href: articles/inference.html
+      - text: Staggered adoption
+        href: articles/staggered.html
+
+articles:
+- title: Articles
+  navbar: ~
+  contents:
+  - articles/estimators
+  - articles/inference
+  - articles/staggered
+
+reference:
+- title: Model fitting
+  desc: >
+    The unified formula interface and the experimental-design variant.
+  contents:
+  - scm_fit
+  - pred
+  - scm_design
+
+- title: Inference
+  desc: >
+    Permutation, bootstrap, jackknife, parametric, and conformal inference
+    for the supported estimators.
+  contents:
+  - conformal_inference
+  - mspe_ratio_pval
+  - sdid_inference
+  - gsc_boot
+  - gsc_inference
+  - si_inference
+
+- title: Augmentation & broom tidiers
+  desc: >
+    Augmented SCM and one-row tidiers for inference objects.
+  contents:
+  - augment_scm
+  - tidy.coresynth_inference
+  - glance.coresynth_inference
+
+- title: Visualization & export
+  contents:
+  - plot.coresynth
+  - plot.scm_design
+  - export_json
+
+- title: Package overview
+  contents:
+  - coresynth-package
+
+- title: Low-level C++ routines
+  desc: >
+    Exported RcppArmadillo workhorses called internally by the wrappers.
+    Most users do not need these directly.
+  contents:
+  - scm_weights_cpp
+  - scm_inner_weights_cpp
+  - scm_placebo_cpp
+  - sdid_unit_weights_cpp
+  - sdid_time_weights_cpp
+  - sdid_estimate_cpp
+  - sdid_placebo_cpp
+  - gsc_ife_cpp
+  - si_pcr_cpp
+  - tensor_unfold_cpp
+  - soft_impute_cpp
+  - kalman_smoother_cpp

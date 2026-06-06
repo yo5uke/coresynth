@@ -6,6 +6,9 @@
 //'
 //' @param T_cube A 3D array (cube) of dimensions (n1, n2, n3)
 //' @param mode The mode to unfold along (1, 2, or 3)
+//' @return A numeric matrix: the mode-`mode` unfolding (matricization) of
+//'   `T_cube`, with dimensions `n1 x (n2 * n3)`, `n2 x (n1 * n3)`, or
+//'   `n3 x (n1 * n2)` for `mode` 1, 2, or 3 respectively.
 //' @export
 // [[Rcpp::export]]
 arma::mat tensor_unfold_cpp(const arma::cube& T_cube, int mode) {

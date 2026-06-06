@@ -447,6 +447,11 @@ summary.scm_design <- function(object, ...) {
 #'   outcome series over all periods. `"gap"`: estimated treatment effect in the
 #'   experimental periods, with split-conformal confidence intervals.
 #' @param ...  Currently ignored.
+#' @return A `ggplot` object: for `type = "outcome"`, the synthetic treated and
+#'   synthetic control outcome series; for `type = "gap"`, the estimated
+#'   treatment effect over the experimental periods with split-conformal
+#'   confidence intervals. The object is returned for printing or further
+#'   customisation.
 #' @export
 plot.scm_design <- function(x, type = c("outcome", "gap"), ...) {
   type <- match.arg(type)

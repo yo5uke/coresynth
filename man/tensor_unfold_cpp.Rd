@@ -11,6 +11,11 @@ tensor_unfold_cpp(T_cube, mode)
 
 \item{mode}{The mode to unfold along (1, 2, or 3)}
 }
+\value{
+A numeric matrix: the mode-\code{mode} unfolding (matricization) of
+\code{T_cube}, with dimensions \verb{n1 x (n2 * n3)}, \verb{n2 x (n1 * n3)}, or
+\verb{n3 x (n1 * n2)} for \code{mode} 1, 2, or 3 respectively.
+}
 \description{
 Tensor Unfolding (Matricization) for Synthetic Interventions
 }

@@ -19,6 +19,10 @@ sdid_estimate_cpp(Y_pre_co, Y_post_co, Y_pre_tr, Y_post_tr, omega, lambda)
 
 \item{lambda}{Time weights (T_pre x 1)}
 }
+\value{
+A single numeric value: the SDID treatment-effect estimate
+\code{tau_sdid}.
+}
 \description{
 Given unit weights omega and time weights lambda, computes the SDID
 estimator as a weighted two-way difference:

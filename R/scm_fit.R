@@ -53,9 +53,19 @@
 #' @export
 #'
 #' @examples
-#' \dontrun{
-#' fit <- scm_fit(gdp ~ treated | country + year, data = panel_data, method = "sdid")
+#' # Synthetic balanced panel: 10 units over 20 periods, unit 1 treated
+#' # after period 15.
+#' set.seed(1)
+#' panel <- expand.grid(unit = 1:10, year = 1:20)
+#' panel$treated <- as.integer(panel$unit == 1 & panel$year > 15)
+#' panel$gdp <- panel$unit + 0.5 * panel$year +
+#'   rnorm(nrow(panel)) + 3 * panel$treated
+#'
+#' fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "sdid")
 #' summary(fit)
+#'
+#' \donttest{
+#' # Visualise the estimated gap (requires ggplot2)
 #' plot(fit, type = "gap")
 #' }
 scm_fit <- function(

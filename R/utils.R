@@ -113,10 +113,10 @@ panel_to_matrices <- function(y, d, id, time) {
 #' # Single variable averaged over a range
 #' pred("beer", 1984:1988)
 #'
-#' # Abadie, Diamond & Hainmueller (2010) California Prop 99 style:
-#' # combine several covariates aggregated over different windows plus
-#' # three outcome lags at specific years. Pass the list to scm_fit(..., predictors = ...).
-#' \dontrun{
+#' # Abadie, Diamond & Hainmueller (2010) California Prop 99 style: combine
+#' # several covariates aggregated over different windows plus three outcome
+#' # lags at specific years. The resulting list is passed to
+#' # scm_fit(..., predictors = predictors).
 #' predictors <- list(
 #'   pred(c("lnincome", "retprice", "age15to24"), 1980:1988),
 #'   pred("beer",    1984:1988),
@@ -124,10 +124,7 @@ panel_to_matrices <- function(y, d, id, time) {
 #'   pred("cigsale", 1980),
 #'   pred("cigsale", 1975)
 #' )
-#' fit <- scm_fit(cigsale ~ treated | state + year,
-#'                data = prop99, method = "scm",
-#'                predictors = predictors)
-#' }
+#' predictors
 pred <- function(vars, times, op = "mean") {
   if (!is.character(vars) || length(vars) == 0L) {
     stop("'vars' must be a non-empty character vector.", call. = FALSE)

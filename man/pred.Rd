@@ -34,10 +34,10 @@ pred("cigsale", 1975)
 # Single variable averaged over a range
 pred("beer", 1984:1988)
 
-# Abadie, Diamond & Hainmueller (2010) California Prop 99 style:
-# combine several covariates aggregated over different windows plus
-# three outcome lags at specific years. Pass the list to scm_fit(..., predictors = ...).
-\dontrun{
+# Abadie, Diamond & Hainmueller (2010) California Prop 99 style: combine
+# several covariates aggregated over different windows plus three outcome
+# lags at specific years. The resulting list is passed to
+# scm_fit(..., predictors = predictors).
 predictors <- list(
   pred(c("lnincome", "retprice", "age15to24"), 1980:1988),
   pred("beer",    1984:1988),
@@ -45,10 +45,7 @@ predictors <- list(
   pred("cigsale", 1980),
   pred("cigsale", 1975)
 )
-fit <- scm_fit(cigsale ~ treated | state + year,
-               data = prop99, method = "scm",
-               predictors = predictors)
-}
+predictors
 }
 \seealso{
 \code{\link[=scm_fit]{scm_fit()}} for the \code{predictors} argument that consumes a \code{list()}

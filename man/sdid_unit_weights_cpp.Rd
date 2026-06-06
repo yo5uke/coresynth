@@ -13,6 +13,10 @@ sdid_unit_weights_cpp(Y_pre, Y_tr_pre, zeta2)
 
 \item{zeta2}{Ridge penalty parameter (zeta^2). The code internally multiplies by T_pre per the paper.}
 }
+\value{
+A numeric vector of length \code{N_co} holding the SDID unit weights
+\code{omega} (non-negative and summing to one).
+}
 \description{
 Solves the regularized QP:
 min over omega in Delta: sum_t (sum_i omega_i Y_it - Y_tr_t)^2 + zeta^2 * T_pre * ||omega||^2

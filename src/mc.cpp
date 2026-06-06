@@ -13,6 +13,9 @@
 //' @param lambda  Nuclear norm penalty (soft-threshold on singular values).
 //' @param max_iter Maximum iterations.
 //' @param tol     Convergence tolerance (relative Frobenius norm change).
+//' @return A numeric matrix of the same dimension as `Y` (N x T): the
+//'   completed low-rank matrix `L` that minimises the soft-thresholded
+//'   nuclear-norm objective.
 //' @export
 // [[Rcpp::export]]
 arma::mat soft_impute_cpp(const arma::mat& Y, const arma::mat& O,

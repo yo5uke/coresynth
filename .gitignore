@@ -7,4 +7,5 @@ plan/
 sandbox/
 CLAUDE.md
 .claude/
+.vscode/
 docs/

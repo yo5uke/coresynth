@@ -13,6 +13,10 @@ sdid_time_weights_cpp(Y_pre_co, Y_post_target, zeta_t)
 
 \item{zeta_t}{Ridge penalty for time weights (paper: 1e-6 * sigma_hat)}
 }
+\value{
+A numeric vector of length \code{T_pre} holding the SDID time weights
+\code{lambda} (non-negative and summing to one).
+}
 \description{
 Solves the time-weight QP (with implicit intercept lambda_0 concentrated out):
 }

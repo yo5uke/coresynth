@@ -15,6 +15,13 @@ experimental periods, with split-conformal confidence intervals.}
 
 \item{...}{Currently ignored.}
 }
+\value{
+A \code{ggplot} object: for \code{type = "outcome"}, the synthetic treated and
+synthetic control outcome series; for \code{type = "gap"}, the estimated
+treatment effect over the experimental periods with split-conformal
+confidence intervals. The object is returned for printing or further
+customisation.
+}
 \description{
 Plot an scm_design object
 }

@@ -15,6 +15,8 @@ arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter 
 //' @param Y_pre Pre-treatment outcome matrix for control units (T_pre x N_co)
 //' @param Y_tr_pre Pre-treatment outcome vector for treated unit (T_pre x 1), averaged if multiple
 //' @param zeta2 Ridge penalty parameter (zeta^2). The code internally multiplies by T_pre per the paper.
+//' @return A numeric vector of length `N_co` holding the SDID unit weights
+//'   `omega` (non-negative and summing to one).
 //' @export
 // [[Rcpp::export]]
 arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pre, double zeta2) {
@@ -43,6 +45,8 @@ arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pr
 //' @param Y_pre_co  Pre-treatment outcomes for control units, row-demeaned (T_pre x N_co)
 //' @param Y_post_target Post-treatment mean per control unit, demeaned (N_co x 1)
 //' @param zeta_t    Ridge penalty for time weights (paper: 1e-6 * sigma_hat)
+//' @return A numeric vector of length `T_pre` holding the SDID time weights
+//'   `lambda` (non-negative and summing to one).
 //' @export
 // [[Rcpp::export]]
 arma::vec sdid_time_weights_cpp(const arma::mat& Y_pre_co,
@@ -73,6 +77,8 @@ arma::vec sdid_time_weights_cpp(const arma::mat& Y_pre_co,
 //' @param Y_post_tr  Treated post-treatment outcomes (T_post x 1)
 //' @param omega      Unit weights (N_co x 1)
 //' @param lambda     Time weights (T_pre x 1)
+//' @return A single numeric value: the SDID treatment-effect estimate
+//'   `tau_sdid`.
 //' @export
 // [[Rcpp::export]]
 double sdid_estimate_cpp(

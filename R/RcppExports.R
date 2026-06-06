@@ -22,6 +22,14 @@
 #'                 (backward-compatible, but biased when beta != 0).
 #' @param max_iter Maximum EM iterations (default 50)
 #' @param tol      Convergence tolerance on relative beta change (default 1e-6)
+#' @return A list with components:
+#'   * `F`: estimated time factors (T x r).
+#'   * `L_co`: control-unit factor loadings (N_co x r).
+#'   * `L_tr`: treated-unit factor loadings (N_tr x r).
+#'   * `Y_tr_hat`: estimated treated-unit counterfactual outcomes (T x N_tr).
+#'   * `singular_values`: singular values from the final truncated SVD.
+#'   * `beta`: estimated covariate coefficients (p x 1), empty when no
+#'     covariates are supplied.
 #' @export
 gsc_ife_cpp <- function(Y_co, Y_tr_pre, r, X_co, X_tr_pre, max_iter = 50L, tol = 1e-6) {
     .Call(`_coresynth_gsc_ife_cpp`, Y_co, Y_tr_pre, r, X_co, X_tr_pre, max_iter, tol)
@@ -37,6 +45,10 @@ gsc_ife_cpp <- function(Y_co, Y_tr_pre, r, X_co, X_tr_pre, max_iter = 50L, tol =
 #' @param Y_post    Control units post-treatment outcomes (T_post x N_co)
 #' @param time_weights Lambda weights for pre-treatment periods (T_pre x 1)
 #' @param zeta2     Ridge penalty (same as used in the main estimate)
+#' @return A numeric vector of length `N_co`. Each element is the
+#'   leave-one-out placebo SDID effect obtained by treating that control unit
+#'   as the pseudo-treated unit; the vector serves as a permutation-based null
+#'   distribution for inference.
 #' @export
 sdid_placebo_cpp <- function(Y_pre, Y_post, time_weights, zeta2) {
     .Call(`_coresynth_sdid_placebo_cpp`, Y_pre, Y_post, time_weights, zeta2)
@@ -72,6 +84,9 @@ scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4) {
 #' @param lambda  Nuclear norm penalty (soft-threshold on singular values).
 #' @param max_iter Maximum iterations.
 #' @param tol     Convergence tolerance (relative Frobenius norm change).
+#' @return A numeric matrix of the same dimension as `Y` (N x T): the
+#'   completed low-rank matrix `L` that minimises the soft-thresholded
+#'   nuclear-norm objective.
 #' @export
 soft_impute_cpp <- function(Y, O, lambda, max_iter = 1000L, tol = 1e-5) {
     .Call(`_coresynth_soft_impute_cpp`, Y, O, lambda, max_iter, tol)
@@ -140,6 +155,8 @@ scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train
 #' @param Y_pre Pre-treatment outcome matrix for control units (T_pre x N_co)
 #' @param Y_tr_pre Pre-treatment outcome vector for treated unit (T_pre x 1), averaged if multiple
 #' @param zeta2 Ridge penalty parameter (zeta^2). The code internally multiplies by T_pre per the paper.
+#' @return A numeric vector of length `N_co` holding the SDID unit weights
+#'   `omega` (non-negative and summing to one).
 #' @export
 sdid_unit_weights_cpp <- function(Y_pre, Y_tr_pre, zeta2) {
     .Call(`_coresynth_sdid_unit_weights_cpp`, Y_pre, Y_tr_pre, zeta2)
@@ -158,6 +175,8 @@ sdid_unit_weights_cpp <- function(Y_pre, Y_tr_pre, zeta2) {
 #' @param Y_pre_co  Pre-treatment outcomes for control units, row-demeaned (T_pre x N_co)
 #' @param Y_post_target Post-treatment mean per control unit, demeaned (N_co x 1)
 #' @param zeta_t    Ridge penalty for time weights (paper: 1e-6 * sigma_hat)
+#' @return A numeric vector of length `T_pre` holding the SDID time weights
+#'   `lambda` (non-negative and summing to one).
 #' @export
 sdid_time_weights_cpp <- function(Y_pre_co, Y_post_target, zeta_t) {
     .Call(`_coresynth_sdid_time_weights_cpp`, Y_pre_co, Y_post_target, zeta_t)
@@ -176,6 +195,8 @@ sdid_time_weights_cpp <- function(Y_pre_co, Y_post_target, zeta_t) {
 #' @param Y_post_tr  Treated post-treatment outcomes (T_post x 1)
 #' @param omega      Unit weights (N_co x 1)
 #' @param lambda     Time weights (T_pre x 1)
+#' @return A single numeric value: the SDID treatment-effect estimate
+#'   `tau_sdid`.
 #' @export
 sdid_estimate_cpp <- function(Y_pre_co, Y_post_co, Y_pre_tr, Y_post_tr, omega, lambda) {
     .Call(`_coresynth_sdid_estimate_cpp`, Y_pre_co, Y_post_co, Y_pre_tr, Y_post_tr, omega, lambda)
@@ -185,6 +206,9 @@ sdid_estimate_cpp <- function(Y_pre_co, Y_post_co, Y_pre_tr, Y_post_tr, omega, l
 #'
 #' @param T_cube A 3D array (cube) of dimensions (n1, n2, n3)
 #' @param mode The mode to unfold along (1, 2, or 3)
+#' @return A numeric matrix: the mode-`mode` unfolding (matricization) of
+#'   `T_cube`, with dimensions `n1 x (n2 * n3)`, `n2 x (n1 * n3)`, or
+#'   `n3 x (n1 * n2)` for `mode` 1, 2, or 3 respectively.
 #' @export
 tensor_unfold_cpp <- function(T_cube, mode) {
     .Call(`_coresynth_tensor_unfold_cpp`, T_cube, mode)

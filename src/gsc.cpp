@@ -23,6 +23,14 @@
 //'                 (backward-compatible, but biased when beta != 0).
 //' @param max_iter Maximum EM iterations (default 50)
 //' @param tol      Convergence tolerance on relative beta change (default 1e-6)
+//' @return A list with components:
+//'   * `F`: estimated time factors (T x r).
+//'   * `L_co`: control-unit factor loadings (N_co x r).
+//'   * `L_tr`: treated-unit factor loadings (N_tr x r).
+//'   * `Y_tr_hat`: estimated treated-unit counterfactual outcomes (T x N_tr).
+//'   * `singular_values`: singular values from the final truncated SVD.
+//'   * `beta`: estimated covariate coefficients (p x 1), empty when no
+//'     covariates are supplied.
 //' @export
 // [[Rcpp::export]]
 Rcpp::List gsc_ife_cpp(const arma::mat& Y_co,

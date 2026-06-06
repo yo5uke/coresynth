@@ -27,6 +27,18 @@ demeaned). Pass an empty cube (0 slices) to skip demeaning
 
 \item{tol}{Convergence tolerance on relative beta change (default 1e-6)}
 }
+\value{
+A list with components:
+\itemize{
+\item \code{F}: estimated time factors (T x r).
+\item \code{L_co}: control-unit factor loadings (N_co x r).
+\item \code{L_tr}: treated-unit factor loadings (N_tr x r).
+\item \code{Y_tr_hat}: estimated treated-unit counterfactual outcomes (T x N_tr).
+\item \code{singular_values}: singular values from the final truncated SVD.
+\item \code{beta}: estimated covariate coefficients (p x 1), empty when no
+covariates are supplied.
+}
+}
 \description{
 Implements Xu (2017) IFE model with optional covariate adjustment.
 When X_co has p > 0 slices, runs an EM loop alternating between:

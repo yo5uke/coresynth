@@ -15,6 +15,12 @@ sdid_placebo_cpp(Y_pre, Y_post, time_weights, zeta2)
 
 \item{zeta2}{Ridge penalty (same as used in the main estimate)}
 }
+\value{
+A numeric vector of length \code{N_co}. Each element is the
+leave-one-out placebo SDID effect obtained by treating that control unit
+as the pseudo-treated unit; the vector serves as a permutation-based null
+distribution for inference.
+}
 \description{
 For each control unit, treats it as the "pseudo-treated" unit and
 estimates the leave-one-out SDID effect. The distribution of these

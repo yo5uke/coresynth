@@ -17,6 +17,11 @@ soft_impute_cpp(Y, O, lambda, max_iter = 1000L, tol = 1e-05)
 
 \item{tol}{Convergence tolerance (relative Frobenius norm change).}
 }
+\value{
+A numeric matrix of the same dimension as \code{Y} (N x T): the
+completed low-rank matrix \code{L} that minimises the soft-thresholded
+nuclear-norm objective.
+}
 \description{
 Solves: min_L (1/2) ||O o (Y - L)||\emph{F^2 + lambda * ||L||}*
 via iterative SVD soft-thresholding (Mazumder, Hastie, Tibshirani 2010).

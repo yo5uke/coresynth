@@ -9,6 +9,7 @@
 ^\.claude$
 ^\.vscode$
 ^CLAUDE\.md$
+^cran-comments\.md$
 ^README\.Rmd$
 ^sandbox$
 ^_pkgdown\.yml$

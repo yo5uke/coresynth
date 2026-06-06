@@ -13,6 +13,9 @@
 * The package contains compiled C++ code (via Rcpp / RcppArmadillo) and uses
   OpenMP for parallelism where available; this is declared through
   `SHLIB_OPENMP_*FLAGS` in `src/Makevars`.
+* The "Possibly misspelled words in DESCRIPTION" reported by the incoming
+  feasibility check are author surnames (e.g. Abadie, Arkhangelsky, Hainmueller)
+  and standard method acronyms (SCM, SDID, GSC, TASC). These are correct.
 
 ## Downstream dependencies
 

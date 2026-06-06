@@ -24,3 +24,11 @@ plot(x, type = c("outcome", "gap"), ...)
 - ...:
 
   Currently ignored.
+
+## Value
+
+A `ggplot` object: for `type = "outcome"`, the synthetic treated and
+synthetic control outcome series; for `type = "gap"`, the estimated
+treatment effect over the experimental periods with split-conformal
+confidence intervals. The object is returned for printing or further
+customisation.

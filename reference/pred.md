@@ -54,10 +54,10 @@ pred("cigsale", 1975)
 pred("beer", 1984:1988)
 #> pred(beer, 1984:1988, op = "mean")
 
-# Abadie, Diamond & Hainmueller (2010) California Prop 99 style:
-# combine several covariates aggregated over different windows plus
-# three outcome lags at specific years. Pass the list to scm_fit(..., predictors = ...).
-if (FALSE) { # \dontrun{
+# Abadie, Diamond & Hainmueller (2010) California Prop 99 style: combine
+# several covariates aggregated over different windows plus three outcome
+# lags at specific years. The resulting list is passed to
+# scm_fit(..., predictors = predictors).
 predictors <- list(
   pred(c("lnincome", "retprice", "age15to24"), 1980:1988),
   pred("beer",    1984:1988),
@@ -65,8 +65,20 @@ predictors <- list(
   pred("cigsale", 1980),
   pred("cigsale", 1975)
 )
-fit <- scm_fit(cigsale ~ treated | state + year,
-               data = prop99, method = "scm",
-               predictors = predictors)
-} # }
+predictors
+#> [[1]]
+#> pred(lnincome, retprice, age15to24, 1980:1988, op = "mean")
+#> 
+#> [[2]]
+#> pred(beer, 1984:1988, op = "mean")
+#> 
+#> [[3]]
+#> pred(cigsale, 1988, op = "mean")
+#> 
+#> [[4]]
+#> pred(cigsale, 1980, op = "mean")
+#> 
+#> [[5]]
+#> pred(cigsale, 1975, op = "mean")
+#> 
 ```

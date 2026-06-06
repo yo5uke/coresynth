@@ -32,3 +32,9 @@ soft_impute_cpp(Y, O, lambda, max_iter = 1000L, tol = 1e-05)
 - tol:
 
   Convergence tolerance (relative Frobenius norm change).
+
+## Value
+
+A numeric matrix of the same dimension as `Y` (N x T): the completed
+low-rank matrix `L` that minimises the soft-thresholded nuclear-norm
+objective.

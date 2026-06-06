@@ -46,3 +46,20 @@ gsc_ife_cpp(Y_co, Y_tr_pre, r, X_co, X_tr_pre, max_iter = 50L, tol = 1e-06)
 - tol:
 
   Convergence tolerance on relative beta change (default 1e-6)
+
+## Value
+
+A list with components:
+
+- `F`: estimated time factors (T x r).
+
+- `L_co`: control-unit factor loadings (N_co x r).
+
+- `L_tr`: treated-unit factor loadings (N_tr x r).
+
+- `Y_tr_hat`: estimated treated-unit counterfactual outcomes (T x N_tr).
+
+- `singular_values`: singular values from the final truncated SVD.
+
+- `beta`: estimated covariate coefficients (p x 1), empty when no
+  covariates are supplied.

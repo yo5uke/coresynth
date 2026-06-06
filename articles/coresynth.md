@@ -166,11 +166,11 @@ export_json(fits$scm, file = "scm_result.json")
 
 ## Where to next
 
-- **[Estimators](https://yo5uke.com/coresynth/articles/estimators.md)**
+- **[Estimators](https://yo5uke.com/coresynth/articles/estimators.html)**
   — covariates, predictors, and method-specific options for all six
   estimators plus the experimental-design variant.
-- **[Inference](https://yo5uke.com/coresynth/articles/inference.md)** —
-  placebo, bootstrap, jackknife, parametric, and conformal inference.
+- **[Inference](https://yo5uke.com/coresynth/articles/inference.html)**
+  — placebo, bootstrap, jackknife, parametric, and conformal inference.
 - **[Staggered
-  adoption](https://yo5uke.com/coresynth/articles/staggered.md)** —
+  adoption](https://yo5uke.com/coresynth/articles/staggered.html)** —
   cohort-based estimation when units adopt treatment at different times.

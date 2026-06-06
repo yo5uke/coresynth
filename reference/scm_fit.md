@@ -114,9 +114,27 @@ return at minimum:
 ## Examples
 
 ``` r
-if (FALSE) { # \dontrun{
-fit <- scm_fit(gdp ~ treated | country + year, data = panel_data, method = "sdid")
+# Synthetic balanced panel: 10 units over 20 periods, unit 1 treated
+# after period 15.
+set.seed(1)
+panel <- expand.grid(unit = 1:10, year = 1:20)
+panel$treated <- as.integer(panel$unit == 1 & panel$year > 15)
+panel$gdp <- panel$unit + 0.5 * panel$year +
+  rnorm(nrow(panel)) + 3 * panel$treated
+
+fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "sdid")
 summary(fit)
+#> === coresynth summary ===
+#> Method : SDID 
+#> Periods : T_pre = 15 | T_post = 5 
+#> ATT estimate: 3.499896 
+#> Unit weights (non-zero donors):
+#>      2      3      4      5      6      8      9     10 
+#> 0.0886 0.1557 0.0275 0.1072 0.0966 0.1351 0.1746 0.2147 
+
+# \donttest{
+# Visualise the estimated gap (requires ggplot2)
 plot(fit, type = "gap")
-} # }
+
+# }
 ```

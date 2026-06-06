@@ -25,6 +25,11 @@ sdid_unit_weights_cpp(Y_pre, Y_tr_pre, zeta2)
   Ridge penalty parameter (zeta^2). The code internally multiplies by
   T_pre per the paper.
 
+## Value
+
+A numeric vector of length `N_co` holding the SDID unit weights `omega`
+(non-negative and summing to one).
+
 ## Details
 
 This corresponds to equation (5) in Arkhangelsky et al. (2021).

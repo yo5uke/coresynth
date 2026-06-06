@@ -71,6 +71,11 @@
 
 </dl></div>
     <div class="section level2">
+    <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
+    <p>A numeric vector of length <code>T_pre</code> holding the SDID time weights
+<code>lambda</code> (non-negative and summing to one).</p>
+    </div>
+    <div class="section level2">
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
     <p>min over lambda in Delta_pre: ||Y_post_target - Y_pre_co^T lambda||^2 + zeta_t^2 * N_co * ||lambda||^2</p>
 <p>The caller is responsible for pre-demeaning Y_pre_co (row-wise) and

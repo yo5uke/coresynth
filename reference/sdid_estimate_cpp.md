@@ -35,6 +35,10 @@ sdid_estimate_cpp(Y_pre_co, Y_post_co, Y_pre_tr, Y_post_tr, omega, lambda)
 
   Time weights (T_pre x 1)
 
+## Value
+
+A single numeric value: the SDID treatment-effect estimate `tau_sdid`.
+
 ## Details
 
 tau_sdid = (Y_tr_post_mean - Y_tr_pre_wt) - (Y_co_post_wt - Y_co_pre_wt)

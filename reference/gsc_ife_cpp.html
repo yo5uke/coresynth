@@ -104,6 +104,16 @@ demeaned). Pass an empty cube (0 slices) to skip demeaning
 <dd><p>Convergence tolerance on relative beta change (default 1e-6)</p></dd>
 
 </dl></div>
+    <div class="section level2">
+    <h2 id="value">Value<a class="anchor" aria-label="anchor" href="#value"></a></h2>
+    <p>A list with components:</p><ul><li><p><code>F</code>: estimated time factors (T x r).</p></li>
+<li><p><code>L_co</code>: control-unit factor loadings (N_co x r).</p></li>
+<li><p><code>L_tr</code>: treated-unit factor loadings (N_tr x r).</p></li>
+<li><p><code>Y_tr_hat</code>: estimated treated-unit counterfactual outcomes (T x N_tr).</p></li>
+<li><p><code>singular_values</code>: singular values from the final truncated SVD.</p></li>
+<li><p><code>beta</code>: estimated covariate coefficients (p x 1), empty when no
+covariates are supplied.</p></li>
+</ul></div>
 
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside></div>

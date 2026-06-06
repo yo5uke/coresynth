@@ -16,8 +16,8 @@
 <script src="deps/bootstrap-5.3.8/bootstrap.bundle.min.js"></script><link href="deps/font-awesome-6.5.2/css/all.min.css" rel="stylesheet">
 <link href="deps/font-awesome-6.5.2/css/v4-shims.min.css" rel="stylesheet">
 <script src="deps/headroom-0.11.0/headroom.min.js"></script><script src="deps/headroom-0.11.0/jQuery.headroom.min.js"></script><script src="deps/bootstrap-toc-1.0.1/bootstrap-toc.min.js"></script><script src="deps/clipboard.js-2.0.11/clipboard.min.js"></script><script src="deps/search-1.0.0/autocomplete.jquery.min.js"></script><script src="deps/search-1.0.0/fuse.min.js"></script><script src="deps/search-1.0.0/mark.min.js"></script><!-- pkgdown --><script src="pkgdown.js"></script><meta property="og:title" content="Fast and Unified Synthetic Control Methods">
-<meta name="description" content="High-performance Synthetic Control Method (SCM) and related causal inference estimators (SDID, GSC, MC, TASC, SI, plus an experimental-design variant) with a unified Formula interface. All computational bottlenecks (QP solving, SVD-based matrix completion, Kalman filtering) are implemented in C++ via RcppArmadillo, providing up to ~55x speed improvements over pure-R alternatives on typical problem sizes.">
-<meta property="og:description" content="High-performance Synthetic Control Method (SCM) and related causal inference estimators (SDID, GSC, MC, TASC, SI, plus an experimental-design variant) with a unified Formula interface. All computational bottlenecks (QP solving, SVD-based matrix completion, Kalman filtering) are implemented in C++ via RcppArmadillo, providing up to ~55x speed improvements over pure-R alternatives on typical problem sizes.">
+<meta name="description" content="A unified Formula interface to the Synthetic Control Method (SCM) and related panel-data causal inference estimators: Synthetic Difference-in-Differences (SDID), Generalized Synthetic Control (GSC), Matrix Completion (MC), Time-Aware Synthetic Control (TASC), and Synthetic Interventions (SI), together with an experimental-design variant. Computational bottlenecks (quadratic programming, singular value decomposition, and Kalman filtering) are implemented in C++ via RcppArmadillo. Methods are described in Abadie, Diamond and Hainmueller (2010) &lt;doi:10.1198/jasa.2009.ap08746&gt;, Arkhangelsky, Athey, Hirshberg, Imbens and Wager (2021) &lt;doi:10.1257/aer.20190159&gt;, Xu (2017) &lt;doi:10.1017/pan.2016.2&gt;, Athey, Bayati, Doudchenko, Imbens and Khosravi (2021) &lt;doi:10.1080/01621459.2021.1891924&gt;, and Agarwal, Shah and Shen (2025) &lt;doi:10.1287/opre.2025.1590&gt;.">
+<meta property="og:description" content="A unified Formula interface to the Synthetic Control Method (SCM) and related panel-data causal inference estimators: Synthetic Difference-in-Differences (SDID), Generalized Synthetic Control (GSC), Matrix Completion (MC), Time-Aware Synthetic Control (TASC), and Synthetic Interventions (SI), together with an experimental-design variant. Computational bottlenecks (quadratic programming, singular value decomposition, and Kalman filtering) are implemented in C++ via RcppArmadillo. Methods are described in Abadie, Diamond and Hainmueller (2010) &lt;doi:10.1198/jasa.2009.ap08746&gt;, Arkhangelsky, Athey, Hirshberg, Imbens and Wager (2021) &lt;doi:10.1257/aer.20190159&gt;, Xu (2017) &lt;doi:10.1017/pan.2016.2&gt;, Athey, Bayati, Doudchenko, Imbens and Khosravi (2021) &lt;doi:10.1080/01621459.2021.1891924&gt;, and Agarwal, Shah and Shen (2025) &lt;doi:10.1287/opre.2025.1590&gt;.">
 <meta property="og:image" content="https://yo5uke.com/coresynth/logo.png">
 </head>
 <body>
@@ -76,7 +76,7 @@
 </div>
 <!-- badges: start -->
 
-<p><strong>coresynth</strong> is a high-performance R package that provides six causal inference methods for panel data through a unified formula interface. All core optimizations (QP solving, SVD, Kalman filtering) are implemented in C++ via RcppArmadillo, achieving <strong>up to ~56x speedups</strong> over pure-R implementations on typical problem sizes (see the Performance section).</p>
+<p><strong>coresynth</strong> is a high-performance R package that provides six causal inference methods for panel data through a unified formula interface. All core optimizations (QP solving, SVD, Kalman filtering) are implemented in C++ via RcppArmadillo, so estimation stays fast even on larger donor pools (see the <a href="#performance">Performance</a> section for timings).</p>
 <div class="section level2">
 <h2 id="installation">Installation<a class="anchor" aria-label="anchor" href="#installation"></a>
 </h2>
@@ -335,53 +335,45 @@
 <div class="section level2">
 <h2 id="performance">Performance<a class="anchor" aria-label="anchor" href="#performance"></a>
 </h2>
-<p>SCM benchmark vs. the <strong>Synth</strong> package (Windows 11 / R 4.6.0 / GCC 14.2.0):</p>
+<p>Estimation stays fast even as the donor pool grows. SCM fit times (Windows 11 / R 4.6.0 / GCC 14.2.0):</p>
 <table class="table">
 <thead><tr>
 <th align="right">N_co</th>
 <th align="right">T_pre</th>
-<th align="right">Synth</th>
 <th align="right">coresynth</th>
-<th align="right">Speedup</th>
 </tr></thead>
 <tbody>
 <tr>
 <td align="right">16</td>
 <td align="right">10</td>
-<td align="right">5,905 ms</td>
 <td align="right">105 ms</td>
-<td align="right"><strong>56x</strong></td>
 </tr>
 <tr>
 <td align="right">20</td>
 <td align="right">20</td>
-<td align="right">4,116 ms</td>
 <td align="right">72 ms</td>
-<td align="right"><strong>57x</strong></td>
 </tr>
 <tr>
 <td align="right">50</td>
 <td align="right">30</td>
-<td align="right">6,906 ms</td>
 <td align="right">916 ms</td>
-<td align="right"><strong>8x</strong></td>
 </tr>
 <tr>
 <td align="right">100</td>
 <td align="right">40</td>
-<td align="right">22,337 ms</td>
 <td align="right">6,300 ms</td>
-<td align="right"><strong>4x</strong></td>
 </tr>
 </tbody>
 </table>
+<p>A full SCM fit on a 100-donor pool completes in a few seconds.</p>
 </div>
 <div class="section level2">
 <h2 id="references">References<a class="anchor" aria-label="anchor" href="#references"></a>
 </h2>
 <ul>
 <li>Abadie, A., Diamond, A., &amp; Hainmueller, J. (2010). Synthetic control methods for comparative case studies. <em>JASA</em>, 105(490), 493–505.</li>
-<li>Agarwal, A., Shi, C., &amp; Wager, S. (2025). Synthetic interventions. <em>arXiv:2006.07691</em>.</li>
+<li>Agarwal, A., Shah, D., &amp; Shen, D. (2025). Synthetic interventions: extending synthetic controls to multiple treatments. <em>Operations Research</em>. <a href="doi:10.1287/opre.2025.1590" class="uri">doi:10.1287/opre.2025.1590</a>
+</li>
 <li>Arkhangelsky, D., Athey, S., Hirshberg, D. A., Imbens, G. W., &amp; Wager, S. (2021). Synthetic difference-in-differences. <em>AER</em>, 111(12), 4088–4118.</li>
 <li>Athey, S., Bayati, M., Doudchenko, N., Imbens, G., &amp; Khosravi, K. (2021). Matrix completion methods for causal panel data models. <em>JASA</em>, 116(536), 1716–1730.</li>
 <li>Chernozhukov, V., Wüthrich, K., &amp; Zhu, Y. (2021). An exact and robust conformal inference method for counterfactual and synthetic controls. <em>JASA</em>, 116(536), 1849–1864.</li>

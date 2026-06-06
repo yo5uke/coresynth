@@ -103,10 +103,10 @@ of <code>pred_spec</code> objects.</p></div>
 <span class="r-in"><span><span class="fu">pred</span><span class="op">(</span><span class="st">"beer"</span>, <span class="fl">1984</span><span class="op">:</span><span class="fl">1988</span><span class="op">)</span></span></span>
 <span class="r-out co"><span class="r-pr">#&gt;</span> pred(beer, 1984:1988, op = "mean")</span>
 <span class="r-in"><span></span></span>
-<span class="r-in"><span><span class="co"># Abadie, Diamond &amp; Hainmueller (2010) California Prop 99 style:</span></span></span>
-<span class="r-in"><span><span class="co"># combine several covariates aggregated over different windows plus</span></span></span>
-<span class="r-in"><span><span class="co"># three outcome lags at specific years. Pass the list to scm_fit(..., predictors = ...).</span></span></span>
-<span class="r-in"><span><span class="kw">if</span> <span class="op">(</span><span class="cn">FALSE</span><span class="op">)</span> <span class="op">{</span> <span class="co"># \dontrun{</span></span></span>
+<span class="r-in"><span><span class="co"># Abadie, Diamond &amp; Hainmueller (2010) California Prop 99 style: combine</span></span></span>
+<span class="r-in"><span><span class="co"># several covariates aggregated over different windows plus three outcome</span></span></span>
+<span class="r-in"><span><span class="co"># lags at specific years. The resulting list is passed to</span></span></span>
+<span class="r-in"><span><span class="co"># scm_fit(..., predictors = predictors).</span></span></span>
 <span class="r-in"><span><span class="va">predictors</span> <span class="op">&lt;-</span> <span class="fu"><a href="https://rdrr.io/r/base/list.html" class="external-link">list</a></span><span class="op">(</span></span></span>
 <span class="r-in"><span>  <span class="fu">pred</span><span class="op">(</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"lnincome"</span>, <span class="st">"retprice"</span>, <span class="st">"age15to24"</span><span class="op">)</span>, <span class="fl">1980</span><span class="op">:</span><span class="fl">1988</span><span class="op">)</span>,</span></span>
 <span class="r-in"><span>  <span class="fu">pred</span><span class="op">(</span><span class="st">"beer"</span>,    <span class="fl">1984</span><span class="op">:</span><span class="fl">1988</span><span class="op">)</span>,</span></span>
@@ -114,10 +114,22 @@ of <code>pred_spec</code> objects.</p></div>
 <span class="r-in"><span>  <span class="fu">pred</span><span class="op">(</span><span class="st">"cigsale"</span>, <span class="fl">1980</span><span class="op">)</span>,</span></span>
 <span class="r-in"><span>  <span class="fu">pred</span><span class="op">(</span><span class="st">"cigsale"</span>, <span class="fl">1975</span><span class="op">)</span></span></span>
 <span class="r-in"><span><span class="op">)</span></span></span>
-<span class="r-in"><span><span class="va">fit</span> <span class="op">&lt;-</span> <span class="fu"><a href="scm_fit.html">scm_fit</a></span><span class="op">(</span><span class="va">cigsale</span> <span class="op">~</span> <span class="va">treated</span> <span class="op">|</span> <span class="va">state</span> <span class="op">+</span> <span class="va">year</span>,</span></span>
-<span class="r-in"><span>               data <span class="op">=</span> <span class="va">prop99</span>, method <span class="op">=</span> <span class="st">"scm"</span>,</span></span>
-<span class="r-in"><span>               predictors <span class="op">=</span> <span class="va">predictors</span><span class="op">)</span></span></span>
-<span class="r-in"><span><span class="op">}</span> <span class="co"># }</span></span></span>
+<span class="r-in"><span><span class="va">predictors</span></span></span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [[1]]</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> pred(lnincome, retprice, age15to24, 1980:1988, op = "mean")</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [[2]]</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> pred(beer, 1984:1988, op = "mean")</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [[3]]</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> pred(cigsale, 1988, op = "mean")</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [[4]]</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> pred(cigsale, 1980, op = "mean")</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> [[5]]</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> pred(cigsale, 1975, op = "mean")</span>
+<span class="r-out co"><span class="r-pr">#&gt;</span> </span>
 </code></pre></div>
     </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

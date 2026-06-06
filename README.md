@@ -15,9 +15,9 @@ experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](h
 **coresynth** is a high-performance R package that provides six causal
 inference methods for panel data through a unified formula interface.
 All core optimizations (QP solving, SVD, Kalman filtering) are
-implemented in C++ via RcppArmadillo, achieving **up to ~56x speedups**
-over pure-R implementations on typical problem sizes (see the
-Performance section).
+implemented in C++ via RcppArmadillo, so estimation stays fast even on
+larger donor pools (see the [Performance](#performance) section for
+timings).
 
 ## Installation
 
@@ -234,22 +234,25 @@ export_json(fits$scm, file = "scm_result.json")
 
 ## Performance
 
-SCM benchmark vs. the **Synth** package (Windows 11 / R 4.6.0 / GCC
-14.2.0):
+Estimation stays fast even as the donor pool grows. SCM fit times
+(Windows 11 / R 4.6.0 / GCC 14.2.0):
 
-| N_co | T_pre |     Synth | coresynth | Speedup |
-|-----:|------:|----------:|----------:|--------:|
-|   16 |    10 |  5,905 ms |    105 ms | **56x** |
-|   20 |    20 |  4,116 ms |     72 ms | **57x** |
-|   50 |    30 |  6,906 ms |    916 ms |  **8x** |
-|  100 |    40 | 22,337 ms |  6,300 ms |  **4x** |
+| N_co | T_pre | coresynth |
+|-----:|------:|----------:|
+|   16 |    10 |    105 ms |
+|   20 |    20 |     72 ms |
+|   50 |    30 |    916 ms |
+|  100 |    40 |  6,300 ms |
+
+A full SCM fit on a 100-donor pool completes in a few seconds.
 
 ## References
 
 - Abadie, A., Diamond, A., & Hainmueller, J. (2010). Synthetic control
   methods for comparative case studies. *JASA*, 105(490), 493–505.
-- Agarwal, A., Shi, C., & Wager, S. (2025). Synthetic interventions.
-  *arXiv:2006.07691*.
+- Agarwal, A., Shah, D., & Shen, D. (2025). Synthetic interventions:
+  extending synthetic controls to multiple treatments. *Operations
+  Research*. <doi:10.1287/opre.2025.1590>
 - Arkhangelsky, D., Athey, S., Hirshberg, D. A., Imbens, G. W., &
   Wager, S. (2021). Synthetic difference-in-differences. *AER*, 111(12),
   4088–4118.

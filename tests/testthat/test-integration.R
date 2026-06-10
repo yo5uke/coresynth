@@ -913,12 +913,17 @@ test_that("SCM v_selection='oos' estimate is in reasonable range", {
   expect_true(abs(fit$estimate - 2.0) < 3.0)
 })
 
-test_that("SCM v_selection='insample' and 'oos' give different (but valid) V weights", {
+test_that("SCM v_selection='insample' and 'oos' give valid V weights", {
   fit_is  <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
                      v_selection = "insample")
   fit_oos <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
                      v_selection = "oos")
-  expect_equal(length(fit_is$v_weights), length(fit_oos$v_weights))
+  # In-sample: V spans all T_pre outcome rows. OOS (Abadie 2021 §3.2 / Phase
+  # 26): V is selected on the training half and applied to the last
+  # floor(T_pre/2) rows, so it has floor(T_pre/2) entries.
+  expect_equal(length(fit_is$v_weights),  10L)
+  expect_equal(length(fit_oos$v_weights), 5L)
+  expect_equal(fit_oos$v_rows, 6:10)
   # Both should be valid simplex weights for V
   expect_equal(sum(fit_is$v_weights),  1, tolerance = 1e-4)
   expect_equal(sum(fit_oos$v_weights), 1, tolerance = 1e-4)
@@ -3069,4 +3074,108 @@ test_that("conformal_inference rejects staggered and tasc fits", {
 
   fit_tasc <- scm_fit(y ~ d | id + time, data = panel, method = "tasc")
   expect_error(conformal_inference(fit_tasc), "tasc")
+})
+
+# ── Phase 26: Abadie 理論照合 — predictor scaling・OOS CV・ADH 2015 検証ツール ─
+
+test_that("Phase 26: predictor scaling makes W invariant to predictor units", {
+  pan_sc <- panel_cov
+  pan_sc$cov1 <- pan_sc$cov1 * 1000  # same information, different units
+  fit_base <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                      predictors = list(pred(c("cov1", "cov2"), 1:10)))
+  fit_resc <- scm_fit(y ~ d | id + time, data = pan_sc, method = "scm",
+                      predictors = list(pred(c("cov1", "cov2"), 1:10)))
+  expect_equal(fit_base$unit_weights, fit_resc$unit_weights, tolerance = 1e-6)
+  expect_equal(fit_base$estimate, fit_resc$estimate, tolerance = 1e-6)
+})
+
+test_that("Phase 26: scale_predictors = FALSE disables Synth-style scaling", {
+  fit_off <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                     predictors = list(pred(c("cov1", "cov2"), 1:10)),
+                     scale_predictors = FALSE)
+  expect_s3_class(fit_off, "coresynth")
+  expect_equal(sum(fit_off$unit_weights), 1, tolerance = 1e-4)
+})
+
+test_that("Phase 26: predictor_table reports original (unscaled) values", {
+  fit <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                 predictors = list(pred(c("cov1", "cov2"), 1:10)))
+  tr_cov1 <- mean(panel_cov$cov1[panel_cov$id == "u1" & panel_cov$time %in% 1:10])
+  expect_equal(fit$predictor_table$treated[1], tr_cov1, tolerance = 1e-8)
+})
+
+test_that("Phase 26: build_predictor_matrices rejects non-finite predictors", {
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+            predictors = list(pred("cov1", 100:110))),
+    regexp = "non-finite"
+  )
+})
+
+test_that("Phase 26: OOS V selection uses train/validation split (no leakage)", {
+  fit_oos <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                     v_selection = "oos")
+  # V applies to the last floor(T_pre/2) outcome rows (Abadie 2021 §3.2 step 4)
+  expect_equal(names(fit_oos$v_weights), paste0("V", 6:10))
+  expect_equal(fit_oos$v_rows, 6:10)
+  expect_equal(sum(fit_oos$unit_weights), 1, tolerance = 1e-4)
+  expect_true(all(is.finite(fit_oos$Y_synth)))
+})
+
+test_that("Phase 26: OOS + bfgs uses the same train/validation split", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                 v_selection = "oos", v_optim = "bfgs")
+  expect_equal(length(fit$v_weights), 5L)
+  expect_true(all(is.finite(fit$Y_synth)))
+})
+
+test_that("Phase 26: OOS + lambda_pen builds the QP on the last-half window", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                 v_selection = "oos", lambda_pen = 0.1)
+  expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-4)
+  expect_true(is.finite(fit$estimate))
+})
+
+test_that("Phase 26: placebo_in_time shows no effect when backdated (ADH 2015)", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  pit <- placebo_in_time(fit, t0_placebo = 5L)
+  expect_equal(pit$t0_placebo, 5L)
+  expect_equal(length(pit$gap), 10L)
+  expect_true(is.finite(pit$placebo_att))
+  # no treatment occurs in the pre-period, so the placebo ATT should be
+  # small relative to the true post-period effect (2.0)
+  expect_lt(abs(pit$placebo_att), 1.5)
+})
+
+test_that("Phase 26: placebo_in_time validates inputs", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(placebo_in_time(fit, t0_placebo = 1L), "t0_placebo")
+  expect_error(placebo_in_time(fit, t0_placebo = 10L), "t0_placebo")
+  stag_fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
+  expect_error(placebo_in_time(stag_fit), "sharp")
+})
+
+test_that("Phase 26: loo_donors returns one row per contributing donor", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  loo <- loo_donors(fit)
+  expect_gte(nrow(loo$results), 1L)
+  expect_true(all(is.finite(loo$results$att_loo)))
+  expect_true(all(loo$results$weight > 1e-6))
+  expect_equal(loo$att_original, fit$estimate)
+  expect_true(all(c("donor", "weight", "att_loo") %in% names(loo$results)))
+})
+
+test_that("Phase 26: loo_donors works for OOS and predictor fits", {
+  fit_oos <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                     v_selection = "oos")
+  loo_oos <- loo_donors(fit_oos)
+  expect_true(all(is.finite(loo_oos$results$att_loo)))
+
+  fit_cov <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                     predictors = list(pred(c("cov1", "cov2"), 1:10)))
+  loo_cov <- loo_donors(fit_cov)
+  expect_true(all(is.finite(loo_cov$results$att_loo)))
+
+  stag_fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
+  expect_error(loo_donors(stag_fit), "sharp")
 })

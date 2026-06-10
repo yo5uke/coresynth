@@ -12,7 +12,10 @@
 #'   predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each [pred()]
 #'   entry aggregates one or more variables over a time window. Pass `NULL`
 #'   (default) to use all pre-treatment outcome periods as predictors.
-#'   Applies to `method = "scm"` only.
+#'   Applies to `method = "scm"` only. Predictor rows are scaled by their
+#'   standard deviation across all units before optimisation, matching the
+#'   Synth reference implementation (ADH 2011, JSS); pass
+#'   `scale_predictors = FALSE` to disable.
 #' @param covariates An optional named `list` of additional time-varying
 #'   covariates to partial out before estimation. Each element is a character
 #'   string naming a column in `data`. Supported for `method = "sdid"`,
@@ -20,8 +23,15 @@
 #' @param v_selection V matrix selection method for `method = "scm"`.
 #'   `"insample"` (default) follows Abadie et al. (2010): V is chosen by
 #'   minimising in-sample pre-treatment MSPE. `"oos"` follows Abadie (2021)
-#'   S.3.2: the pre-treatment window is split in half; V is selected to minimise
-#'   MSPE on the validation half, then W is refit on the full window.
+#'   S.3.2 / ADH (2015): the pre-treatment window is split into a training
+#'   half and a validation half. In the default outcomes-as-predictors case,
+#'   candidate W(V) are fitted on training-half outcomes only, V* minimises
+#'   the validation-half MSPE, and the final W* is refit with V* on the
+#'   outcomes of the last `floor(T_pre/2)` pre-treatment periods (so
+#'   `v_weights` has `floor(T_pre/2)` entries). With user-supplied
+#'   `predictors`, the predictor matrix is fixed and only the MSPE evaluation
+#'   window is restricted to the validation half; lag your [pred()] windows
+#'   to the training period for a fully out-of-sample exercise.
 #' @param donor_mspe_threshold Donor pool filtering threshold (Abadie 2021 S.4).
 #'   For `method = "scm"` only. Each donor's individual pre-treatment MSPE
 #'   (using that donor alone as the counterfactual) is divided by the minimum

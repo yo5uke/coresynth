@@ -234,6 +234,18 @@ build_predictor_matrices <- function(
   colnames(X0) <- as.character(co_units)
   rownames(X0) <- pred_names
 
+  # Non-finite predictor values (e.g. a pred() window with no data for some
+  # unit) would silently corrupt the downstream QP -- fail loudly instead.
+  bad <- (rowSums(!is.finite(X0)) > 0L) | !is.finite(X1)
+  if (any(bad)) {
+    stop(
+      "Predictor rows contain missing or non-finite values: ",
+      paste(pred_names[bad], collapse = ", "),
+      ". Check the pred() time windows against the available data.",
+      call. = FALSE
+    )
+  }
+
   list(X0 = X0, X1 = X1, pred_names = pred_names)
 }
 

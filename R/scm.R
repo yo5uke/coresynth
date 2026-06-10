@@ -12,8 +12,15 @@
 #' @param time Time identifier (long format)
 #' @param v_selection How to select the V metric matrix. `"insample"` (default)
 #'   minimises in-sample pre-treatment MSPE following Abadie et al. (2010).
-#'   `"oos"` uses the out-of-sample validation procedure recommended by
-#'   Abadie (2021) S.3.2.
+#'   `"oos"` uses the out-of-sample validation procedure of Abadie (2021)
+#'   S.3.2 / ADH (2015): in the outcomes-only case, candidate W(V) are fitted
+#'   on training-half outcomes only, V* minimises validation-half MSPE, and
+#'   W* is refit with V* on the last floor(T_pre/2) pre-treatment outcomes.
+#' @param scale_predictors If `TRUE` (default) and `predictors` are supplied,
+#'   each predictor row of X0/X1 is divided by its standard deviation across
+#'   all units (treated + donors) before optimisation, matching the Synth
+#'   reference implementation (Abadie, Diamond & Hainmueller 2011, JSS).
+#'   V weights are then comparable across predictors with different units.
 #' @param donor_mspe_threshold Numeric threshold for donor pool filtering
 #'   (Abadie 2021 S.4). Each donor's individual pre-treatment MSPE is compared
 #'   to the best donor's MSPE: donors with ratio > threshold are excluded before
@@ -40,6 +47,7 @@ fit_scm_cpp <- function(
   lambda_pen = NULL,
   v_optim = c("coord_descent", "auto", "bfgs"),
   control_group = c("clean", "never_treated"),
+  scale_predictors = TRUE,
   ...
 ) {
   v_selection   <- match.arg(v_selection)
@@ -119,7 +127,7 @@ fit_scm_cpp <- function(
   Y_tr_pre <- Y[seq_len(T_pre), idx_tr]
   Y_tr_all <- Y[, idx_tr]
 
-  # -- Phase 11a: Donor pool filtering (Abadie 2021 S.4) -----------------------
+  # -- Donor pool filtering (Abadie 2021 S.4) ----------------------------------
   excluded_donors <- character(0L)
   if (!is.null(donor_mspe_threshold) && is.finite(donor_mspe_threshold)) {
     ind_mspe <- colMeans((as.vector(Y_tr_pre) - Y_co_pre)^2)
@@ -187,23 +195,54 @@ fit_scm_cpp <- function(
     pred_names <- paste0("V", seq_len(T_pre))
   }
 
+  # -- Synth-style predictor scaling (ADH 2011, JSS) ---------------------------
+  # Each predictor row is divided by its sd across all units so that the
+  # V-weighted loss (and the reported V weights) are not dominated by
+  # predictors with large numeric scales. The outcomes-only case needs no
+  # scaling (all rows share the outcome scale).
+  X0_raw <- X0
+  X1_raw <- X1
+  if (use_cov && isTRUE(scale_predictors)) {
+    pred_sds <- apply(cbind(X0, X1), 1L, stats::sd)
+    pred_sds[!is.finite(pred_sds) | pred_sds < 1e-12] <- 1
+    X0 <- X0 / pred_sds
+    X1 <- X1 / pred_sds
+  }
+
   Z0 <- Y_co_pre
   Z1 <- drop(Y_tr_pre)
 
-  t_train <- if (v_selection == "oos") T_pre %/% 2L else -1L
+  # OOS handling (Abadie 2021 S.3.2):
+  #  * outcomes-only: proper train/validation split via .scm_oos_outcomes()
+  #    (candidate W(V) must not see validation-period outcomes).
+  #  * user predictors: the predictor matrix is fixed (cannot be re-measured
+  #    per window), so only the MSPE evaluation window is restricted.
+  oos_outcomes <- (v_selection == "oos") && !use_cov
+  t_train      <- if (v_selection == "oos" && use_cov) T_pre %/% 2L else -1L
 
-  # Determine effective outer optimiser (Phase 12a)
-  k_dim <- nrow(X0)
+  # Determine effective outer optimiser
+  k_dim <- if (oos_outcomes) max(T_pre %/% 2L, 1L) else nrow(X0)
   effective_outer <- switch(v_optim,
     "auto"          = if (k_dim <= 15L) "bfgs" else "coord_descent",
     "bfgs"          = "bfgs",
     "coord_descent" = "coord_descent"
   )
 
-  # -- Phase 11b: Standard or penalised SCM -------------------------------------
+  v_rows_used <- if (use_cov) NULL else seq_len(T_pre)
+  if (oos_outcomes) {
+    oos <- .scm_oos_outcomes(Y_co_pre, drop(Y_tr_pre), effective_outer)
+    X0          <- oos$X0_final
+    X1          <- oos$X1_final
+    pred_names  <- paste0("V", oos$v_rows)
+    v_rows_used <- oos$v_rows
+  }
+
+  # -- Standard or penalised SCM -------------------------------------------------
   if (is.null(lambda_pen)) {
     # Standard SCM
-    res <- if (effective_outer == "bfgs") {
+    res <- if (oos_outcomes) {
+      oos
+    } else if (effective_outer == "bfgs") {
       .scm_bfgs_outer(X0, X1, Z0, Z1, t_train = t_train)
     } else {
       scm_weights_cpp(X0, X1, Z0, Z1, t_train = t_train)
@@ -214,7 +253,9 @@ fit_scm_cpp <- function(
     lambda_pen_used <- NA_real_
   } else {
     # Step 1: get V* via selected outer optimiser (respects v_selection)
-    res_v <- if (effective_outer == "bfgs") {
+    res_v <- if (oos_outcomes) {
+      oos
+    } else if (effective_outer == "bfgs") {
       .scm_bfgs_outer(X0, X1, Z0, Z1, t_train = t_train)
     } else {
       scm_weights_cpp(X0, X1, Z0, Z1, t_train = t_train)
@@ -253,10 +294,11 @@ fit_scm_cpp <- function(
   Y_treat <- drop(Y_tr_all)
 
   if (use_cov) {
-    synth_pred <- drop(X0 %*% unit_w)
+    # Balance table on the original (unscaled) predictor scale
+    synth_pred <- drop(X0_raw %*% unit_w)
     predictor_table <- data.frame(
       predictor = pred_names,
-      treated   = X1,
+      treated   = X1_raw,
       synthetic = synth_pred,
       row.names = NULL
     )
@@ -277,6 +319,8 @@ fit_scm_cpp <- function(
     loss            = loss,
     predictor_table = predictor_table,
     X0_mat          = if (use_cov) X0 else NULL,
+    X1_vec          = if (use_cov) X1 else NULL,
+    v_rows          = v_rows_used,
     Y_co_pre        = Y_co_pre,
     Y_co_post       = Y[-(seq_len(T_pre)), idx_co, drop = FALSE],
     excluded_donors = excluded_donors,
@@ -284,7 +328,49 @@ fit_scm_cpp <- function(
   )
 }
 
-# Internal: L-BFGS-B outer V optimisation (Phase 12a).
+# -- Abadie (2021) S.3.2 out-of-sample V selection (outcomes-only) -----------
+# 1. Split the pre-period into a training half (1..t0) and a validation half
+#    (t0+1..T_pre), with t0 = floor(T_pre / 2).
+# 2. For each V, fit W on training-half outcomes ONLY -- validation-period
+#    outcomes must not enter the inner QP, otherwise the V optimiser can
+#    drive validation MSPE to zero by loading V on validation rows (the
+#    leakage this procedure is designed to prevent).
+# 3. Select V* minimising validation-half MSPE.
+# 4. Refit W* with V* on the outcomes of the LAST t0 pre-treatment periods
+#    (Abadie 2021, step 4: "data on the predictors for the last t0 periods").
+.scm_oos_outcomes <- function(Y_co_pre, Y_tr_pre, optimizer = "coord_descent") {
+  T_pre <- nrow(Y_co_pre)
+  t0    <- T_pre %/% 2L
+  if (t0 < 1L) {
+    stop("v_selection = 'oos' requires at least 2 pre-treatment periods.",
+         call. = FALSE)
+  }
+  train <- seq_len(t0)
+  val   <- (t0 + 1L):T_pre
+
+  X0_train <- Y_co_pre[train, , drop = FALSE]
+  X1_train <- Y_tr_pre[train]
+  Z0_val   <- Y_co_pre[val, , drop = FALSE]
+  Z1_val   <- Y_tr_pre[val]
+
+  res <- if (optimizer == "bfgs") {
+    .scm_bfgs_outer(X0_train, X1_train, Z0_val, Z1_val, t_train = -1L)
+  } else {
+    scm_weights_cpp(X0_train, X1_train, Z0_val, Z1_val, t_train = -1L)
+  }
+  V_star <- drop(res$V)
+
+  v_rows   <- (T_pre - t0 + 1L):T_pre
+  X0_final <- Y_co_pre[v_rows, , drop = FALSE]
+  X1_final <- Y_tr_pre[v_rows]
+  W        <- drop(scm_inner_weights_cpp(X0_final, X1_final, V_star))
+  loss     <- sqrt(sum((Y_tr_pre - drop(Y_co_pre %*% W))^2))
+
+  list(W = W, V = V_star, loss = loss,
+       v_rows = v_rows, X0_final = X0_final, X1_final = X1_final)
+}
+
+# Internal: L-BFGS-B outer V optimisation.
 # ~O(k^2) inner QP calls vs coord_descent's k*11*iter calls.
 # Mirrors scm_weights_cpp semantics (OOS window, full-data W refit).
 .scm_bfgs_outer <- function(X0, X1, Z0, Z1, t_train = -1L) {
@@ -424,7 +510,7 @@ fit_scm_cpp <- function(
     Y_co_pre <- Y[pre_rows, idx_co_g, drop = FALSE]  # T_pre_g x N_co_g
     Y_tr_pre <- Y1_g[pre_rows]
 
-    # Phase 11a-style donor filtering per cohort
+    # Donor pool filtering per cohort (same rule as the sharp path)
     excl_g <- character(0L)
     if (is.finite(donor_mspe_threshold) && donor_mspe_threshold < Inf) {
       ind_mspe <- colMeans((Y_tr_pre - Y_co_pre)^2)
@@ -446,33 +532,42 @@ fit_scm_cpp <- function(
     )
 
     fit_g <- tryCatch({
+      oos_g <- (v_selection == "oos")
       if (is.null(lambda_pen)) {
-        # Standard SCM
-        res <- if (effective_outer_g == "bfgs") {
+        # Standard SCM (proper train/validation split when OOS)
+        res <- if (oos_g) {
+          .scm_oos_outcomes(Y_co_pre, Y_tr_pre, effective_outer_g)
+        } else if (effective_outer_g == "bfgs") {
           .scm_bfgs_outer(Y_co_pre, Y_tr_pre, Y_co_pre, Y_tr_pre,
-                          t_train = t_train_g)
+                          t_train = -1L)
         } else {
           scm_weights_cpp(Y_co_pre, Y_tr_pre, Y_co_pre, Y_tr_pre,
-                          t_train = t_train_g)
+                          t_train = -1L)
         }
         unit_w          <- drop(res$W)
         lambda_pen_used <- NA_real_
       } else {
-        # Penalised SCM (Phase 11b style, per cohort)
-        res_v <- if (effective_outer_g == "bfgs") {
+        # Penalised SCM, per cohort
+        res_v <- if (oos_g) {
+          .scm_oos_outcomes(Y_co_pre, Y_tr_pre, effective_outer_g)
+        } else if (effective_outer_g == "bfgs") {
           .scm_bfgs_outer(Y_co_pre, Y_tr_pre, Y_co_pre, Y_tr_pre,
-                          t_train = t_train_g)
+                          t_train = -1L)
         } else {
           scm_weights_cpp(Y_co_pre, Y_tr_pre, Y_co_pre, Y_tr_pre,
-                          t_train = t_train_g)
+                          t_train = -1L)
         }
-        V_star   <- drop(res_v$V)
-        diff_mat <- Y_tr_pre - Y_co_pre       # T_pre_g x N_co_g
+        V_star <- drop(res_v$V)
+        # OOS: V* refers to the last-t0 window, so the penalised QP must be
+        # built on the same rows (X0_final/X1_final).
+        X0_pen <- if (oos_g) res_v$X0_final else Y_co_pre
+        X1_pen <- if (oos_g) res_v$X1_final else Y_tr_pre
+        diff_mat <- X1_pen - X0_pen           # k x N_co_g
         d_pen    <- colSums(V_star * diff_mat^2)
         V_sqrt   <- sqrt(pmax(V_star, 0))
-        X0_sc    <- sweep(Y_co_pre, 1L, V_sqrt, `*`)
+        X0_sc    <- sweep(X0_pen, 1L, V_sqrt, `*`)
         Q_mat    <- crossprod(X0_sc)
-        c_base   <- as.vector(t(X0_sc) %*% (V_sqrt * Y_tr_pre))
+        c_base   <- as.vector(t(X0_sc) %*% (V_sqrt * X1_pen))
 
         lambda_pen_used <- if (identical(lambda_pen, "auto")) {
           .scm_tune_lambda_pen(Q_mat, c_base, d_pen,
@@ -690,7 +785,191 @@ mspe_ratio_pval <- function(
   )
 }
 
-# -- Phase 11c: Augmented SCM (Ben-Michael, Feller & Rothstein 2021) ---------
+# -- ADH (2015) validation exercises -------------------------------------------
+
+#' In-Time Placebo (Backdating) Test for SCM
+#'
+#' Re-estimates the synthetic control after artificially backdating the
+#' treatment to a pre-treatment period, following Abadie, Diamond &
+#' Hainmueller (2015) and Abadie & Vives-i-Bastida (2022, principle 7:
+#' "out-of-sample validation is key"). Only pre-treatment data enter the
+#' exercise, so the placebo gap after `t0_placebo` is uncontaminated by the
+#' actual intervention. A credible design shows no sizable divergence at the
+#' backdated treatment time.
+#'
+#' The refit uses the outcomes of periods `1..t0_placebo` as predictors
+#' (the `predictors = NULL` default), regardless of how the original fit was
+#' specified, because user-supplied `pred()` windows cannot be lagged
+#' automatically (ADH 2015 lag their predictors by hand).
+#'
+#' @param fit A sharp `coresynth` object from [scm_fit()] with
+#'   `method = "scm"`.
+#' @param t0_placebo Backdated treatment period as a 1-based position in
+#'   `fit$times`; must satisfy `2 <= t0_placebo < T_pre`. Default
+#'   `floor(T_pre / 2)`.
+#' @return A list with:
+#'   * `t0_placebo`: the backdated treatment period used
+#'   * `times`: time values of the pre-treatment window
+#'   * `unit_weights`: placebo donor weights
+#'   * `Y_treat`, `Y_synth`, `gap`: series over the pre-treatment window
+#'   * `placebo_att`: mean placebo gap over `(t0_placebo, T_pre]`
+#'   * `fit_rmspe`: RMSPE over the placebo fitting window `1..t0_placebo`
+#'   * `eval_rmspe`: RMSPE over the placebo post window `(t0_placebo, T_pre]`
+#' @seealso [mspe_ratio_pval()] for in-space placebos, [loo_donors()] for
+#'   donor-robustness checks.
+#' @export
+placebo_in_time <- function(fit, t0_placebo = NULL) {
+  if (!inherits(fit, "coresynth") || fit$method != "scm") {
+    stop("placebo_in_time() requires a coresynth object with method = 'scm'.",
+         call. = FALSE)
+  }
+  if (isTRUE(fit$staggered)) {
+    stop("placebo_in_time() supports sharp (single-cohort) fits only.",
+         call. = FALSE)
+  }
+  if (is.null(fit$Y_co_pre)) {
+    stop("fit is missing Y_co_pre. Re-run scm_fit() with the current version.",
+         call. = FALSE)
+  }
+
+  T_pre <- fit$T_pre
+  if (is.null(t0_placebo)) t0_placebo <- T_pre %/% 2L
+  t0_placebo <- as.integer(t0_placebo)
+  if (t0_placebo < 2L || t0_placebo >= T_pre) {
+    stop("'t0_placebo' must satisfy 2 <= t0_placebo < T_pre (= ", T_pre, ").",
+         call. = FALSE)
+  }
+
+  Y_co_pre <- fit$Y_co_pre
+  Y_tr_pre <- fit$Y_treat[seq_len(T_pre)]
+  fit_rows  <- seq_len(t0_placebo)
+  eval_rows <- (t0_placebo + 1L):T_pre
+
+  res <- scm_weights_cpp(
+    Y_co_pre[fit_rows, , drop = FALSE], Y_tr_pre[fit_rows],
+    Y_co_pre[fit_rows, , drop = FALSE], Y_tr_pre[fit_rows]
+  )
+  W <- drop(res$W)
+  names(W) <- colnames(Y_co_pre)
+
+  Y_synth <- drop(Y_co_pre %*% W)
+  gap     <- Y_tr_pre - Y_synth
+
+  list(
+    t0_placebo   = t0_placebo,
+    times        = fit$times[seq_len(T_pre)],
+    unit_weights = W,
+    Y_treat      = Y_tr_pre,
+    Y_synth      = Y_synth,
+    gap          = gap,
+    placebo_att  = mean(gap[eval_rows]),
+    fit_rmspe    = sqrt(mean(gap[fit_rows]^2)),
+    eval_rmspe   = sqrt(mean(gap[eval_rows]^2))
+  )
+}
+
+#' Leave-One-Out Donor Robustness for SCM
+#'
+#' Iteratively re-estimates the synthetic control excluding one contributing
+#' donor at a time, holding the predictor weights V fixed at their baseline
+#' values (Abadie, Diamond & Hainmueller 2015, footnote 20). The spread of
+#' the leave-one-out ATT estimates shows how much the result hinges on any
+#' single donor.
+#'
+#' For penalised fits (`lambda_pen` used), the same penalty is re-applied in
+#' each leave-one-out QP.
+#'
+#' @param fit A sharp `coresynth` object from [scm_fit()] with
+#'   `method = "scm"`.
+#' @param weight_threshold Only donors whose baseline weight exceeds this
+#'   value are dropped (removing a zero-weight donor cannot change the fit).
+#'   Default `1e-6`.
+#' @return A list with:
+#'   * `att_original`: baseline ATT
+#'   * `results`: data.frame with one row per excluded donor
+#'     (`donor`, `weight`, `att_loo`)
+#'   * `att_range`: range of the leave-one-out ATTs
+#' @seealso [placebo_in_time()], [mspe_ratio_pval()]
+#' @export
+loo_donors <- function(fit, weight_threshold = 1e-6) {
+  if (!inherits(fit, "coresynth") || fit$method != "scm") {
+    stop("loo_donors() requires a coresynth object with method = 'scm'.",
+         call. = FALSE)
+  }
+  if (isTRUE(fit$staggered)) {
+    stop("loo_donors() supports sharp (single-cohort) fits only.",
+         call. = FALSE)
+  }
+  if (is.null(fit$Y_co_pre) || is.null(fit$Y_co_post)) {
+    stop("fit is missing Y_co_pre / Y_co_post. Re-run scm_fit() with the ",
+         "current version.", call. = FALSE)
+  }
+
+  Y_co_pre  <- fit$Y_co_pre
+  Y_co_post <- fit$Y_co_post
+  T_pre     <- fit$T_pre
+  W0        <- fit$unit_weights
+  V         <- unname(fit$v_weights)
+  N_co      <- ncol(Y_co_pre)
+  if (N_co < 3L) {
+    stop("loo_donors() requires at least 3 donors.", call. = FALSE)
+  }
+
+  # Predictor matrices consistent with the original V optimisation:
+  # predictor-based fits store the (scaled) X0/X1; outcomes-only fits use
+  # the pre-treatment outcome rows recorded in v_rows (handles OOS fits,
+  # where V refers to the last floor(T_pre/2) periods only).
+  if (!is.null(fit$X0_mat)) {
+    X0 <- fit$X0_mat
+    X1 <- fit$X1_vec
+  } else {
+    v_rows <- if (!is.null(fit$v_rows)) fit$v_rows else seq_len(T_pre)
+    X0 <- Y_co_pre[v_rows, , drop = FALSE]
+    X1 <- fit$Y_treat[v_rows]
+  }
+  use_pen <- is.finite(fit$lambda_pen) && fit$lambda_pen > 0
+
+  refit_w <- function(keep) {
+    X0_k <- X0[, keep, drop = FALSE]
+    if (!use_pen) {
+      return(drop(scm_inner_weights_cpp(X0_k, X1, V)))
+    }
+    d_pen  <- colSums(V * (X1 - X0_k)^2)
+    V_sqrt <- sqrt(pmax(V, 0))
+    X0_sc  <- sweep(X0_k, 1L, V_sqrt, `*`)
+    Q_mat  <- crossprod(X0_sc)
+    c_pen  <- as.vector(t(X0_sc) %*% (V_sqrt * X1)) -
+      fit$lambda_pen / 2 * d_pen
+    drop(solve_simplex_qp(Q_mat, c_pen))
+  }
+
+  drop_idx <- which(W0 > weight_threshold)
+  if (length(drop_idx) == 0L) drop_idx <- seq_len(N_co)
+
+  Y_tr_post <- fit$Y_treat[-seq_len(T_pre)]
+  att_loo <- vapply(drop_idx, function(j) {
+    keep  <- setdiff(seq_len(N_co), j)
+    W_loo <- tryCatch(refit_w(keep), error = function(e) NULL)
+    if (is.null(W_loo) || !all(is.finite(W_loo))) return(NA_real_)
+    synth_post <- drop(Y_co_post[, keep, drop = FALSE] %*% W_loo)
+    mean(Y_tr_post - synth_post)
+  }, numeric(1L))
+
+  results <- data.frame(
+    donor   = colnames(Y_co_pre)[drop_idx],
+    weight  = unname(W0[drop_idx]),
+    att_loo = att_loo,
+    stringsAsFactors = FALSE
+  )
+
+  list(
+    att_original = fit$estimate,
+    results      = results,
+    att_range    = range(att_loo, na.rm = TRUE)
+  )
+}
+
+# -- Augmented SCM (Ben-Michael, Feller & Rothstein 2021) ----------------------
 
 # Internal helper: select ridge lambda via LOO-CV on control units.
 .cv_ridge_scm <- function(A, b, T_pre,

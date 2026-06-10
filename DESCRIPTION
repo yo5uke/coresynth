@@ -1,6 +1,6 @@
 Package: coresynth
 Title: Fast and Unified Synthetic Control Methods
-Version: 0.2.0
+Version: 0.2.1
 Authors@R:
     person("Yosuke Abe", role = c("aut", "cre"),
            email = "yosuke.abe0507@gmail.com")

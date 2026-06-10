@@ -137,7 +137,7 @@ fit_sdid_clean <- scm_fit(y ~ d | id + time, data = dat_s, method = "sdid",
 ### SCM: Predictor Variables via `pred()`
 
 SCM supports covariate-based matching following Abadie et al. (2010)
-§2.3. Use `pred(vars, times, op)` to specify which variables and time
+S.2.3. Use `pred(vars, times, op)` to specify which variables and time
 windows to include in the predictor matrix:
 
 ``` r

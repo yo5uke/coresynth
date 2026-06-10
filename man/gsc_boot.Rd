@@ -2,7 +2,7 @@
 % Please edit documentation in R/gsc.R
 \name{gsc_boot}
 \alias{gsc_boot}
-\title{Parametric Bootstrap Inference for GSC (Xu 2017 §3)}
+\title{Parametric Bootstrap Inference for GSC (Xu 2017 S.3)}
 \usage{
 gsc_boot(fit, B = 499L, alpha = 0.05, seed = NULL)
 }

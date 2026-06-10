@@ -28,11 +28,11 @@
 #' @param covariates Character vector of time-varying covariate column names in
 #'   `data`. When provided, covariates are partialled out of Y via OLS on the
 #'   control-unit pre-period block before computing SDID weights and the ATT
-#'   (Arkhangelsky et al. 2021 §4; Clarke et al. 2023). Requires `data`,
+#'   (Arkhangelsky et al. 2021 S.4; Clarke et al. 2023). Requires `data`,
 #'   `id_var`, and `time_var` to be supplied (done automatically when called
 #'   via [scm_fit()]). For staggered adoption, a global partial-out using all
 #'   Wit=0 observations is applied before cohort-level SDID (Clarke et al. 2023
-#'   §2.2 "projected" method, Kranz 2022).
+#'   S.2.2 "projected" method, Kranz 2022).
 #' @param data        Full long-format data frame (passed by [scm_fit()]).
 #' @param id_var      Name of the unit identifier column (passed by [scm_fit()]).
 #' @param time_var    Name of the time identifier column (passed by [scm_fit()]).
@@ -70,7 +70,7 @@
 # OLS of Y on X using ALL Wit=0 observations:
 #   - control units x all T periods
 #   - treated unit j x periods 1..(T_adopt[j]-1)
-# This is Clarke et al. (2023) §2.2 "projected" approach (Kranz 2022).
+# This is Clarke et al. (2023) S.2.2 "projected" approach (Kranz 2022).
 # Returns Y_tilde = Y - X * beta_hat (all units, all periods).
 .sdid_partial_out_staggered <- function(Y, X_arr, pan) {
   p       <- dim(X_arr)[3]
@@ -179,7 +179,7 @@
 }
 
 # ── Internal: re-estimate one SDID cohort with given control indices ──────────
-# Used by sdid_inference() staggered bootstrap/jackknife (Phase 18a).
+# Used by sdid_inference() staggered bootstrap/jackknife.
 # zeta2 = NULL: recompute from resampled data (bootstrap).
 # zeta2 = cf$zeta2: fixed from original fit (jackknife).
 .refit_sdid_cohort <- function(Y_mat, cf, zeta2 = NULL) {
@@ -201,8 +201,8 @@
 }
 
 # ── Internal: cohort-by-cohort SDID for staggered adoption ───────────────────
-# Arkhangelsky et al. (2021) Appendix §8; Clarke et al. (2023).
-# Y: optional pre-residualised outcome matrix (Phase 14a). If NULL, uses pan$Y.
+# Arkhangelsky et al. (2021) Appendix S.8; Clarke et al. (2023).
+# Y: optional pre-residualised outcome matrix. If NULL, uses pan$Y.
 .fit_sdid_staggered <- function(pan, Y = NULL, zeta2 = NULL, zeta_t = 1e-6,
                                 control_group = "clean") {
   Y       <- if (!is.null(Y)) Y else pan$Y
@@ -301,7 +301,7 @@ fit_sdid_cpp <- function(y, d, id, time,
 
   use_cov <- !is.null(covariates) && length(covariates) > 0L && !is.null(data)
 
-  # ── Staggered path (Arkhangelsky 2021 Appendix §8) ───────────────────────
+  # ── Staggered path (Arkhangelsky 2021 Appendix S.8) ──────────────────────
   if (!pan$is_sharp) {
     Y_work   <- pan$Y
     beta_hat <- numeric(0)
@@ -348,7 +348,7 @@ fit_sdid_cpp <- function(y, d, id, time,
   if (T_post < 1)
     stop("No post-treatment periods found.", call. = FALSE)
 
-  # Partial-out covariates (Arkhangelsky 2021 §4; Clarke et al. 2023)
+  # Partial-out covariates (Arkhangelsky 2021 S.4; Clarke et al. 2023)
   if (use_cov) {
     X_arr    <- build_covariate_array(data, id_var, time_var,
                                      covariates, pan$units, pan$times)
@@ -452,7 +452,7 @@ sdid_inference <- function(
   alpha     <- 1 - level
   staggered <- isTRUE(fit$staggered)
 
-  # ── Staggered path (Phase 18a) ───────────────────────────────────────────────
+  # ── Staggered path ────────────────────────────────────────────────────────────
   if (staggered) {
     if (is.null(fit$Y_mat))
       stop("fit$Y_mat not found. Re-estimate with the current version of coresynth.",
@@ -566,8 +566,8 @@ sdid_inference <- function(
     }
 
     if (method == "jackknife_global") {
-      # Global jackknife: drop one unique control across ALL cohorts simultaneously
-      # (Phase 18b). Captures cross-cohort correlation ignored by per-cohort LOO.
+      # Global jackknife: drop one unique control across ALL cohorts simultaneously.
+      # Captures cross-cohort correlation ignored by per-cohort LOO.
       all_co    <- sort(unique(unlist(lapply(cohort_fits, `[[`, "idx_co"))))
       orig_ests <- vapply(cohort_fits, `[[`, numeric(1L), "estimate")
       jack_ests <- vapply(all_co, function(i) {

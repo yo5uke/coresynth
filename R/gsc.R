@@ -1,5 +1,5 @@
 # ── Internal: cohort-by-cohort GSC for staggered adoption ────────────────────
-# Clarke et al. (2023); Arkhangelsky et al. (2021) Appendix §8.
+# Clarke et al. (2023); Arkhangelsky et al. (2021) Appendix S.8.
 # Factors estimated independently per cohort (gsc_ife_cpp per cohort).
 # Y_co_g uses all T periods (pragmatic: future-treated contamination treated as
 # noise, same rationale as SDID staggered). Covariates handled via per-cohort
@@ -287,7 +287,7 @@ fit_gsc_cpp <- function(
   )
 }
 
-#' Parametric Bootstrap Inference for GSC (Xu 2017 §3)
+#' Parametric Bootstrap Inference for GSC (Xu 2017 S.3)
 #'
 #' Generates the null distribution of the ATT under H0 (no treatment effect)
 #' by parametric resampling from the estimated IFE factor model. Under H0,
@@ -660,8 +660,8 @@ gsc_inference <- function(
   }
 
   if (method == "jackknife_global") {
-    # Global jackknife: drop one unique control across ALL cohorts simultaneously
-    # (Phase 18b). Captures cross-cohort correlation ignored by per-cohort LOO.
+    # Global jackknife: drop one unique control across ALL cohorts simultaneously.
+    # Captures cross-cohort correlation ignored by per-cohort LOO.
     all_co    <- sort(unique(unlist(lapply(cohort_fits, `[[`, "idx_co"))))
     orig_ests <- vapply(cohort_fits, `[[`, numeric(1L), "estimate")
     jack_ests <- vapply(all_co, function(i) {

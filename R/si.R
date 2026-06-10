@@ -191,7 +191,7 @@
 }
 
 # -- Internal: staggered + multi-arm SI (K>1 arms, staggered adoption) -------
-# Combines Phase 16b (staggered) and Phase 21 (multi-arm).
+# Handles the combination of staggered adoption and multiple treatment arms.
 # Within each cohort g, the SVD basis (from Y_pre_co_g) is shared across all
 # arms because unit factors v_il are arm-invariant (Agarwal et al. 2025 S.2).
 # cohort_fits is a flat list of (cohort, arm) cells -- each compatible with
@@ -484,7 +484,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
   mean(Y_treat_post - res$Y_hat)
 }
 
-# -- Internal: inference for staggered + multi-arm SI (Phase 23) -------------
+# -- Internal: inference for staggered + multi-arm SI -------------------------
 # Bootstrap: per-cohort resampling -- same resampled controls applied to all arms
 #   within a cohort (shared SVD basis requires shared donor bootstrap indices).
 # Jackknife: per-cohort LOO refitting all arms simultaneously + delta-method.
@@ -869,8 +869,8 @@ si_inference <- function(
   }
 
   if (method == "jackknife_global") {
-    # Global jackknife: drop one unique control across ALL cohorts simultaneously
-    # (Phase 18b). Captures cross-cohort correlation ignored by per-cohort LOO.
+    # Global jackknife: drop one unique control across ALL cohorts simultaneously.
+    # Captures cross-cohort correlation ignored by per-cohort LOO.
     all_co    <- sort(unique(unlist(lapply(cohort_fits, `[[`, "idx_co"))))
     orig_ests <- vapply(cohort_fits, `[[`, numeric(1L), "estimate")
     jack_ests <- vapply(all_co, function(i) {

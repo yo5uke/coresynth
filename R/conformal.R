@@ -2,7 +2,7 @@
 # Permutation inference based on permuting blocks of estimated residuals.
 # The counterfactual proxy is re-estimated under the null (post-treatment
 # treated outcomes imputed as Y1_t - tau0) using ALL T periods, which is
-# essential for the finite-sample validity of the procedure (CWZ 2021 §2.2).
+# essential for the finite-sample validity of the procedure (CWZ 2021 S.2.2).
 
 # Internal: extract the donor matrix (T x N_co) and treated series (length T)
 # from a sharp coresynth fit. Returns NULL if the fit is unsupported.

@@ -56,18 +56,18 @@ fit_scm <- scm_fit(
   )
 )
 fit_scm$estimate
-#> [1] 2.154071
+#> [1] 2.040418
 ```
 
 ### Out-of-sample V selection, donor filtering, penalisation
 
 ``` r
 
-# Abadie (2021) §3.2: split the pre-period to choose V out of sample
+# Abadie (2021) S.3.2: split the pre-period to choose V out of sample
 fit_oos <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
                    v_selection = "oos")
 
-# Abadie (2021) §4: drop poorly-fitting donors by individual MSPE ratio
+# Abadie (2021) S.4: drop poorly-fitting donors by individual MSPE ratio
 fit_filt <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
                     donor_mspe_threshold = 5)
 
@@ -77,7 +77,7 @@ fit_pen <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
 
 c(oos = fit_oos$estimate, filtered = fit_filt$estimate, penalised = fit_pen$estimate)
 #>       oos  filtered penalised 
-#>  2.037281  2.073847  2.073847
+#>  2.576140  2.073847  2.073847
 ```
 
 ### Augmented SCM
@@ -91,7 +91,7 @@ applies the ridge bias-correction of Ben-Michael, Feller & Rothstein
 aug <- augment_scm(fit_scm)
 c(scm = aug$att_scm, augmented = aug$att_aug)
 #>       scm augmented 
-#>  2.154071  2.306569
+#>  2.040418  2.118232
 ```
 
 ## SDID — Synthetic Difference-in-Differences

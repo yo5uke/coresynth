@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">coresynth</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -45,11 +45,31 @@
     </div>
 
     <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.2.1" id="coresynth-021">coresynth 0.2.1<a class="anchor" aria-label="anchor" href="#coresynth-021"></a></h2>
+<div class="section level3">
+<h3 id="bug-fixes-0-2-1">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-2-1"></a></h3>
+<ul><li>
+<code>v_selection = "oos"</code> (outcomes-only case) previously fit candidate <code>W(V)</code> on the full pre-treatment outcome matrix and restricted only the MSPE evaluation to the validation window, allowing the V optimiser to fit the validation period indirectly (a data leak relative to Abadie (2021) S.3.2). The new <code>.scm_oos_outcomes()</code> implements the correct train/validation split: candidate <code>W(V)</code> are fitted on training-half outcomes only, <code>V*</code> minimises validation-half MSPE, and <code>W*</code> is refit with <code>V*</code> on the outcomes of the last <code>floor(T_pre/2)</code> pre-treatment periods. For OOS fits, <code>v_weights</code> now has <code>floor(T_pre/2)</code> entries and a new <code>v_rows</code> field records which periods they refer to. <strong>This changes numerical results for <code>v_selection = "oos"</code>.</strong>
+</li>
+</ul></div>
+<div class="section level3">
+<h3 id="new-features-0-2-1">New features<a class="anchor" aria-label="anchor" href="#new-features-0-2-1"></a></h3>
+<ul><li>
+<code>scale_predictors</code> (default <code>TRUE</code>): predictor rows supplied via <code>predictors =</code> are now divided by their standard deviation across all units before optimisation, matching the Synth reference implementation (Abadie, Diamond &amp; Hainmueller 2011, JSS). <code>predictor_table</code> continues to report values on the original scale. <strong>This changes numerical results for SCM fits with user-supplied <code>predictors</code></strong> unless <code>scale_predictors = FALSE</code>.</li>
+<li>
+<code><a href="../reference/placebo_in_time.html">placebo_in_time()</a></code>: in-time placebo (backdating) test for sharp SCM fits (Abadie, Diamond &amp; Hainmueller 2015; Abadie &amp; Vives-i-Bastida 2022).</li>
+<li>
+<code><a href="../reference/loo_donors.html">loo_donors()</a></code>: leave-one-out donor robustness check with the predictor weights V held fixed (Abadie, Diamond &amp; Hainmueller 2015, footnote 20).</li>
+<li>
+<code>build_predictor_matrices()</code> now errors with an informative message if a <code><a href="../reference/pred.html">pred()</a></code> time window produces missing or non-finite predictor values.</li>
+</ul></div>
+</div>
+    <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.0" id="coresynth-020">coresynth 0.2.0<a class="anchor" aria-label="anchor" href="#coresynth-020"></a></h2>
 <div class="section level3">
 <h3 id="new-features-0-2-0">New features<a class="anchor" aria-label="anchor" href="#new-features-0-2-0"></a></h3>
 <ul><li>
-<strong>Conformal inference</strong> (<code><a href="../reference/conformal_inference.html">conformal_inference()</a></code>): permutation-based p-values and confidence intervals following Chernozhukov, Wüthrich &amp; Zhu (2021). Works with sharp fits across all supported estimation methods (<code>scm</code>, <code>sdid</code>, <code>gsc</code>, <code>mc</code>, <code>si</code>). The counterfactual proxy is re-estimated under the null on all <em>T</em> periods (essential for finite-sample validity per CWZ §2.2), and p-values are obtained via moving-block (cyclic-shift) permutation of the estimated residuals. Confidence intervals are constructed by test inversion over a user-supplied or automatically chosen grid. Returns a <code>coresynth_inference</code> subclass compatible with <code><a href="https://generics.r-lib.org/reference/tidy.html" class="external-link">tidy()</a></code> and <code><a href="https://generics.r-lib.org/reference/glance.html" class="external-link">glance()</a></code>.</li>
+<strong>Conformal inference</strong> (<code><a href="../reference/conformal_inference.html">conformal_inference()</a></code>): permutation-based p-values and confidence intervals following Chernozhukov, Wüthrich &amp; Zhu (2021). Works with sharp fits across all supported estimation methods (<code>scm</code>, <code>sdid</code>, <code>gsc</code>, <code>mc</code>, <code>si</code>). The counterfactual proxy is re-estimated under the null on all <em>T</em> periods (essential for finite-sample validity per CWZ S.2.2), and p-values are obtained via moving-block (cyclic-shift) permutation of the estimated residuals. Confidence intervals are constructed by test inversion over a user-supplied or automatically chosen grid. Returns a <code>coresynth_inference</code> subclass compatible with <code><a href="https://generics.r-lib.org/reference/tidy.html" class="external-link">tidy()</a></code> and <code><a href="https://generics.r-lib.org/reference/glance.html" class="external-link">glance()</a></code>.</li>
 </ul></div>
 <div class="section level3">
 <h3 id="minor-improvements-0-2-0">Minor improvements<a class="anchor" aria-label="anchor" href="#minor-improvements-0-2-0"></a></h3>

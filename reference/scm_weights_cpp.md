@@ -41,10 +41,11 @@ scm_weights_cpp(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-04, t_train = -1L)
 
 - t_train:
 
-  Training window length for out-of-sample V selection. -1 (default):
-  in-sample V selection (original behaviour). Positive: use rows
-  0..(t_train-1) of Z for fitting W, rows t_train..(T_pre-1) as the
-  validation window for V selection, then refit W on full data.
+  Validation-window split for V selection. -1 (default): V selected on
+  the full Z window (in-sample). Positive: rows t_train..(T_pre-1) of Z
+  form the validation window used to select V (W is fitted on the full X
+  throughout); after selecting V\*, W is refit and the reported loss
+  uses the full Z window.
 
 ## Value
 
@@ -59,8 +60,12 @@ A list with:
 
 ## Details
 
-When `t_train > 0`, uses out-of-sample V selection per Abadie (2021)
-§3.2: V is selected by minimising MSPE on a validation window (rows
-t_train..T_pre-1 of Z), while W is fitted on the training window (rows
-0..t_train-1 of X when X and Z have the same row count, i.e. the
-outcomes-only case). After selecting V\*, W is refit on the full data.
+When `t_train > 0`, V is selected by minimising MSPE on a validation
+window (rows t_train..T_pre-1 of Z) while W is fitted on the full
+predictor matrix X. This is appropriate when X is a fixed predictor
+matrix that contains no validation-period outcome information (the
+user-supplied predictors case). For the outcomes-only case the proper
+Abadie (2021) S.3.2 train/validation split is implemented in R
+(`.scm_oos_outcomes()`): candidate W(V) are fitted on training-half
+outcomes only, by passing the training rows as X and the validation rows
+as Z to this function with `t_train = -1`.

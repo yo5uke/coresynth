@@ -9,7 +9,7 @@ inference methods.  The formula syntax is:"><meta property="og:image" content="h
 
     <a class="navbar-brand me-2" href="../index.html">coresynth</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -89,7 +89,10 @@ inference methods.  The formula syntax is:</p>
 predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each <code><a href="pred.html">pred()</a></code>
 entry aggregates one or more variables over a time window. Pass <code>NULL</code>
 (default) to use all pre-treatment outcome periods as predictors.
-Applies to <code>method = "scm"</code> only.</p></dd>
+Applies to <code>method = "scm"</code> only. Predictor rows are scaled by their
+standard deviation across all units before optimisation, matching the
+Synth reference implementation (ADH 2011, JSS); pass
+<code>scale_predictors = FALSE</code> to disable.</p></dd>
 
 
 <dt id="arg-covariates">covariates<a class="anchor" aria-label="anchor" href="#arg-covariates"></a></dt>
@@ -103,8 +106,15 @@ string naming a column in <code>data</code>. Supported for <code>method = "sdid"
 <dd><p>V matrix selection method for <code>method = "scm"</code>.
 <code>"insample"</code> (default) follows Abadie et al. (2010): V is chosen by
 minimising in-sample pre-treatment MSPE. <code>"oos"</code> follows Abadie (2021)
-S.3.2: the pre-treatment window is split in half; V is selected to minimise
-MSPE on the validation half, then W is refit on the full window.</p></dd>
+S.3.2 / ADH (2015): the pre-treatment window is split into a training
+half and a validation half. In the default outcomes-as-predictors case,
+candidate W(V) are fitted on training-half outcomes only, V* minimises
+the validation-half MSPE, and the final W* is refit with V* on the
+outcomes of the last <code>floor(T_pre/2)</code> pre-treatment periods (so
+<code>v_weights</code> has <code>floor(T_pre/2)</code> entries). With user-supplied
+<code>predictors</code>, the predictor matrix is fixed and only the MSPE evaluation
+window is restricted to the validation half; lag your <code><a href="pred.html">pred()</a></code> windows
+to the training period for a fully out-of-sample exercise.</p></dd>
 
 
 <dt id="arg-donor-mspe-threshold">donor_mspe_threshold<a class="anchor" aria-label="anchor" href="#arg-donor-mspe-threshold"></a></dt>

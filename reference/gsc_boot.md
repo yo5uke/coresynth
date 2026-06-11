@@ -1,4 +1,4 @@
-# Parametric Bootstrap Inference for GSC (Xu 2017 §3)
+# Parametric Bootstrap Inference for GSC (Xu 2017 S.3)
 
 Generates the null distribution of the ATT under H0 (no treatment
 effect) by parametric resampling from the estimated IFE factor model.

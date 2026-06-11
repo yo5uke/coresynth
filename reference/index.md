@@ -23,11 +23,21 @@ for the supported estimators.
 - [`sdid_inference()`](https://yo5uke.com/coresynth/reference/sdid_inference.md)
   : Inference for Synthetic Difference-in-Differences
 - [`gsc_boot()`](https://yo5uke.com/coresynth/reference/gsc_boot.md) :
-  Parametric Bootstrap Inference for GSC (Xu 2017 §3)
+  Parametric Bootstrap Inference for GSC (Xu 2017 S.3)
 - [`gsc_inference()`](https://yo5uke.com/coresynth/reference/gsc_inference.md)
   : Non-parametric Inference for GSC (Xu 2017)
 - [`si_inference()`](https://yo5uke.com/coresynth/reference/si_inference.md)
   : Non-parametric Inference for SI (Agarwal et al. 2025)
+
+## Diagnostics & robustness checks
+
+Validation exercises recommended by Abadie, Diamond & Hainmueller
+(2015).
+
+- [`placebo_in_time()`](https://yo5uke.com/coresynth/reference/placebo_in_time.md)
+  : In-Time Placebo (Backdating) Test for SCM
+- [`loo_donors()`](https://yo5uke.com/coresynth/reference/loo_donors.md)
+  : Leave-One-Out Donor Robustness for SCM
 
 ## Augmentation & broom tidiers
 

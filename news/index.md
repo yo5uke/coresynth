@@ -1,5 +1,41 @@
 # Changelog
 
+## coresynth 0.2.1
+
+### Bug fixes
+
+- `v_selection = "oos"` (outcomes-only case) previously fit candidate
+  `W(V)` on the full pre-treatment outcome matrix and restricted only
+  the MSPE evaluation to the validation window, allowing the V optimiser
+  to fit the validation period indirectly (a data leak relative to
+  Abadie (2021) S.3.2). The new `.scm_oos_outcomes()` implements the
+  correct train/validation split: candidate `W(V)` are fitted on
+  training-half outcomes only, `V*` minimises validation-half MSPE, and
+  `W*` is refit with `V*` on the outcomes of the last `floor(T_pre/2)`
+  pre-treatment periods. For OOS fits, `v_weights` now has
+  `floor(T_pre/2)` entries and a new `v_rows` field records which
+  periods they refer to. **This changes numerical results for
+  `v_selection = "oos"`.**
+
+### New features
+
+- `scale_predictors` (default `TRUE`): predictor rows supplied via
+  `predictors =` are now divided by their standard deviation across all
+  units before optimisation, matching the Synth reference implementation
+  (Abadie, Diamond & Hainmueller 2011, JSS). `predictor_table` continues
+  to report values on the original scale. **This changes numerical
+  results for SCM fits with user-supplied `predictors`** unless
+  `scale_predictors = FALSE`.
+- [`placebo_in_time()`](https://yo5uke.com/coresynth/reference/placebo_in_time.md):
+  in-time placebo (backdating) test for sharp SCM fits (Abadie, Diamond
+  & Hainmueller 2015; Abadie & Vives-i-Bastida 2022).
+- [`loo_donors()`](https://yo5uke.com/coresynth/reference/loo_donors.md):
+  leave-one-out donor robustness check with the predictor weights V held
+  fixed (Abadie, Diamond & Hainmueller 2015, footnote 20).
+- `build_predictor_matrices()` now errors with an informative message if
+  a [`pred()`](https://yo5uke.com/coresynth/reference/pred.md) time
+  window produces missing or non-finite predictor values.
+
 ## coresynth 0.2.0
 
 ### New features
@@ -10,7 +46,7 @@
   Chernozhukov, Wüthrich & Zhu (2021). Works with sharp fits across all
   supported estimation methods (`scm`, `sdid`, `gsc`, `mc`, `si`). The
   counterfactual proxy is re-estimated under the null on all *T* periods
-  (essential for finite-sample validity per CWZ §2.2), and p-values are
+  (essential for finite-sample validity per CWZ S.2.2), and p-values are
   obtained via moving-block (cyclic-shift) permutation of the estimated
   residuals. Confidence intervals are constructed by test inversion over
   a user-supplied or automatically chosen grid. Returns a

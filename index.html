@@ -28,7 +28,7 @@
 
     <a class="navbar-brand me-2" href="index.html">coresynth</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -244,7 +244,7 @@
 <h3 id="scm-predictor-variables-via-pred">SCM: Predictor Variables via <code>pred()</code>
 <a class="anchor" aria-label="anchor" href="#scm-predictor-variables-via-pred"></a>
 </h3>
-<p>SCM supports covariate-based matching following Abadie et al. (2010) §2.3. Use <code>pred(vars, times, op)</code> to specify which variables and time windows to include in the predictor matrix:</p>
+<p>SCM supports covariate-based matching following Abadie et al. (2010) S.2.3. Use <code>pred(vars, times, op)</code> to specify which variables and time windows to include in the predictor matrix:</p>
 <div class="sourceCode" id="cb7"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="co"># Assume dat has extra columns: income, unemp</span></span>
 <span><span class="va">fit_scm_cov</span> <span class="op">&lt;-</span> <span class="fu"><a href="reference/scm_fit.html">scm_fit</a></span><span class="op">(</span></span>

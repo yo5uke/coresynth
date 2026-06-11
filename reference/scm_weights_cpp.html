@@ -11,7 +11,7 @@ MSPE, following Abadie, Diamond &amp;amp; Hainmueller (2010)."><meta property="o
 
     <a class="navbar-brand me-2" href="../index.html">coresynth</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.0</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.1</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -89,10 +89,11 @@ MSPE, following Abadie, Diamond &amp; Hainmueller (2010).</p>
 
 
 <dt id="arg-t-train">t_train<a class="anchor" aria-label="anchor" href="#arg-t-train"></a></dt>
-<dd><p>Training window length for out-of-sample V selection.
--1 (default): in-sample V selection (original behaviour).
-Positive: use rows 0..(t_train-1) of Z for fitting W, rows t_train..(T_pre-1)
-as the validation window for V selection, then refit W on full data.</p></dd>
+<dd><p>Validation-window split for V selection.
+-1 (default): V selected on the full Z window (in-sample).
+Positive: rows t_train..(T_pre-1) of Z form the validation window used
+to select V (W is fitted on the full X throughout); after selecting V*,
+W is refit and the reported loss uses the full Z window.</p></dd>
 
 </dl></div>
     <div class="section level2">
@@ -103,11 +104,15 @@ as the validation window for V selection, then refit W on full data.</p></dd>
 </ul></div>
     <div class="section level2">
     <h2 id="details">Details<a class="anchor" aria-label="anchor" href="#details"></a></h2>
-    <p>When <code>t_train &gt; 0</code>, uses out-of-sample V selection per Abadie (2021)
-§3.2: V is selected by minimising MSPE on a validation window
-(rows t_train..T_pre-1 of Z), while W is fitted on the training window
-(rows 0..t_train-1 of X when X and Z have the same row count, i.e. the
-outcomes-only case). After selecting V*, W is refit on the full data.</p>
+    <p>When <code>t_train &gt; 0</code>, V is selected by minimising MSPE on a validation
+window (rows t_train..T_pre-1 of Z) while W is fitted on the full
+predictor matrix X. This is appropriate when X is a fixed predictor
+matrix that contains no validation-period outcome information (the
+user-supplied predictors case). For the outcomes-only case the proper
+Abadie (2021) S.3.2 train/validation split is implemented in R
+(<code>.scm_oos_outcomes()</code>): candidate W(V) are fitted on training-half
+outcomes only, by passing the training rows as X and the validation
+rows as Z to this function with <code>t_train = -1</code>.</p>
     </div>
 
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

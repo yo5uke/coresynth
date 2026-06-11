@@ -51,6 +51,13 @@ reference:
   - gsc_inference
   - si_inference
 
+- title: Diagnostics & robustness checks
+  desc: >
+    Validation exercises recommended by Abadie, Diamond & Hainmueller (2015).
+  contents:
+  - placebo_in_time
+  - loo_donors
+
 - title: Augmentation & broom tidiers
   desc: >
     Augmented SCM and one-row tidiers for inference objects.

@@ -14,7 +14,11 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"), ...) {
     if(is.null(x$times) || is.null(x$Y_treat))
       stop("fit object does not contain time series data for plotting.")
 
-    times <- as.numeric(x$times)
+    times <- x$times
+    # Coerce only types ggplot cannot place on a continuous/date axis; pass
+    # Date/POSIXct through so the appropriate date scale is selected automatically.
+    if (is.character(times) || is.factor(times))
+      times <- as.numeric(as.character(times))
     # Handle matrix Y_treat (multiple treated units) by averaging
     Y_treat <- if(is.matrix(x$Y_treat)) rowMeans(x$Y_treat, na.rm = TRUE) else x$Y_treat
     Y_synth <- if(!is.null(x$Y_synth)) {

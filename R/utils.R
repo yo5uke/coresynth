@@ -45,6 +45,20 @@ panel_to_matrices <- function(y, d, id, time) {
 
   # Vectorised fill (avoids O(n * (T + N)) which() lookups inside a loop)
   idx_mat <- cbind(match(time, times), match(id, units))
+
+  # A balanced panel requires each (id, time) cell to be unique. Duplicates would
+  # otherwise be silently overwritten by the last assignment, dropping rows.
+  dup <- duplicated(idx_mat)
+  if (any(dup)) {
+    i <- which(dup)[1L]
+    stop(sprintf(
+      paste0("Duplicate (id, time) entries detected (%d rows): unit '%s' at ",
+             "time '%s' appears more than once. Each unit-time cell must be ",
+             "unique (balanced panel)."),
+      sum(dup), as.character(id[i]), as.character(time[i])),
+      call. = FALSE)
+  }
+
   Y[idx_mat] <- y
   D[idx_mat] <- d
 

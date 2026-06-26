@@ -168,6 +168,18 @@ scm_design <- function(
               dimnames = list(as.character(times), as.character(units)))
   ri_all <- match(data[[time]], times)
   ci_all <- match(data[[unit]], units)
+
+  # Each (unit, time) cell must be unique; duplicates would be silently overwritten.
+  dup <- duplicated(cbind(ri_all, ci_all))
+  if (any(dup)) {
+    i <- which(dup)[1L]
+    stop(sprintf(
+      paste0("Duplicate (unit, time) entries detected (%d rows): unit '%s' at ",
+             "time '%s' appears more than once. Each unit-time cell must be unique."),
+      sum(dup), as.character(data[[unit]][i]), as.character(data[[time]][i])),
+      call. = FALSE)
+  }
+
   Y[cbind(ri_all, ci_all)] <- data[[outcome]]
 
   # Population weights f

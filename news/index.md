@@ -1,5 +1,27 @@
 # Changelog
 
+## coresynth 0.2.2
+
+### Bug fixes
+
+- `panel_to_matrices()` (and therefore every
+  [`scm_fit()`](https://yo5uke.com/coresynth/reference/scm_fit.md)
+  method) and
+  [`scm_design()`](https://yo5uke.com/coresynth/reference/scm_design.md)
+  now error on duplicate `(id, time)` entries instead of silently
+  keeping a single arbitrary row. A balanced panel requires each
+  unit-time cell to be unique; duplicates were previously overwritten by
+  the last matrix-index assignment, dropping data without warning. The
+  error reports the number of offending rows and the first duplicated
+  unit and time.
+- [`plot()`](https://rdrr.io/r/graphics/plot.default.html) now renders
+  `Date`/`POSIXct` time axes correctly. The time vector was coerced with
+  [`as.numeric()`](https://rdrr.io/r/base/numeric.html), so dates
+  appeared as days-since-epoch (e.g. 16000,
+  20000. on the x-axis. `Date`/`POSIXct` values are now passed through
+         unchanged so ggplot2 selects the appropriate date scale; only
+         `character`/`factor` time values are coerced to numeric.
+
 ## coresynth 0.2.1
 
 ### Bug fixes
@@ -37,6 +59,8 @@
   window produces missing or non-finite predictor values.
 
 ## coresynth 0.2.0
+
+CRAN release: 2026-06-12
 
 ### New features
 

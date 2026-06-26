@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">coresynth</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.1</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.2</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -45,6 +45,18 @@
     </div>
 
     <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.2.2" id="coresynth-022">coresynth 0.2.2<a class="anchor" aria-label="anchor" href="#coresynth-022"></a></h2>
+<div class="section level3">
+<h3 id="bug-fixes-0-2-2">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-2-2"></a></h3>
+<ul><li>
+<code>panel_to_matrices()</code> (and therefore every <code><a href="../reference/scm_fit.html">scm_fit()</a></code> method) and <code><a href="../reference/scm_design.html">scm_design()</a></code> now error on duplicate <code>(id, time)</code> entries instead of silently keeping a single arbitrary row. A balanced panel requires each unit-time cell to be unique; duplicates were previously overwritten by the last matrix-index assignment, dropping data without warning. The error reports the number of offending rows and the first duplicated unit and time.</li>
+<li>
+<code><a href="https://rdrr.io/r/graphics/plot.default.html" class="external-link">plot()</a></code> now renders <code>Date</code>/<code>POSIXct</code> time axes correctly. The time vector was coerced with <code><a href="https://rdrr.io/r/base/numeric.html" class="external-link">as.numeric()</a></code>, so dates appeared as days-since-epoch (e.g. 16000,
+<ol start="20000" style="list-style-type: decimal"><li>on the x-axis. <code>Date</code>/<code>POSIXct</code> values are now passed through unchanged so ggplot2 selects the appropriate date scale; only <code>character</code>/<code>factor</code> time values are coerced to numeric.</li>
+</ol></li>
+</ul></div>
+</div>
+    <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.1" id="coresynth-021">coresynth 0.2.1<a class="anchor" aria-label="anchor" href="#coresynth-021"></a></h2>
 <div class="section level3">
 <h3 id="bug-fixes-0-2-1">Bug fixes<a class="anchor" aria-label="anchor" href="#bug-fixes-0-2-1"></a></h3>
@@ -65,7 +77,7 @@
 </ul></div>
 </div>
     <div class="section level2">
-<h2 class="pkg-version" data-toc-text="0.2.0" id="coresynth-020">coresynth 0.2.0<a class="anchor" aria-label="anchor" href="#coresynth-020"></a></h2>
+<h2 class="pkg-version" data-toc-text="0.2.0" id="coresynth-020">coresynth 0.2.0<a class="anchor" aria-label="anchor" href="#coresynth-020"></a></h2><p class="text-muted">CRAN release: 2026-06-12</p>
 <div class="section level3">
 <h3 id="new-features-0-2-0">New features<a class="anchor" aria-label="anchor" href="#new-features-0-2-0"></a></h3>
 <ul><li>

@@ -11,11 +11,11 @@ timings).
 
 ``` r
 
-# From GitHub (requires Rtools on Windows, Xcode on macOS)
-pak::pak("yo5uke/coresynth")
+# From CRAN
+install.packages("coresynth")
 
-# Via devtools
-devtools::install_github("yo5uke/coresynth")
+# Development version from GitHub
+pak::pak("yo5uke/coresynth")
 ```
 
 ## Quick Start

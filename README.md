@@ -5,6 +5,8 @@
 
 <!-- badges: start -->
 
+[![CRAN
+status](https://www.r-pkg.org/badges/version/coresynth)](https://CRAN.R-project.org/package=coresynth)
 [![R-CMD-check](https://github.com/yo5uke/coresynth/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/yo5uke/coresynth/actions/workflows/R-CMD-check.yaml)
 [![License:
 MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -22,11 +24,11 @@ timings).
 ## Installation
 
 ``` r
-# From GitHub (requires Rtools on Windows, Xcode on macOS)
-pak::pak("yo5uke/coresynth")
+# From CRAN
+install.packages("coresynth")
 
-# Via devtools
-devtools::install_github("yo5uke/coresynth")
+# Development version from GitHub
+pak::pak("yo5uke/coresynth")
 ```
 
 ## Quick Start

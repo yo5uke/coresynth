@@ -16,6 +16,7 @@ knitr::opts_chunk$set(
 # coresynth <img src="man/figures/logo.png" align="right" height="140" />
 
 <!-- badges: start -->
+[![CRAN status](https://www.r-pkg.org/badges/version/coresynth)](https://CRAN.R-project.org/package=coresynth)
 [![R-CMD-check](https://github.com/yo5uke/coresynth/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/yo5uke/coresynth/actions/workflows/R-CMD-check.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Lifecycle: experimental](https://img.shields.io/badge/lifecycle-experimental-orange.svg)](https://lifecycle.r-lib.org/articles/stages.html#experimental)
@@ -27,11 +28,11 @@ All core optimizations (QP solving, SVD, Kalman filtering) are implemented in C+
 ## Installation
 
 ```{r install, eval=FALSE}
-# From GitHub (requires Rtools on Windows, Xcode on macOS)
-pak::pak("yo5uke/coresynth")
+# From CRAN
+install.packages("coresynth")
 
-# Via devtools
-devtools::install_github("yo5uke/coresynth")
+# Development version from GitHub
+pak::pak("yo5uke/coresynth")
 ```
 
 ## Quick Start

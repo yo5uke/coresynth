@@ -1452,9 +1452,17 @@ test_that("Phase 13a: SDID without covariates — beta_hat is length-0", {
 })
 
 test_that("Phase 13a: covariate partial-out changes the ATT estimate", {
-  fit_no  <- scm_fit(y ~ d | id + time, data = panel_cov, method = "sdid")
-  fit_cov <- scm_fit(y ~ d | id + time, data = panel_cov, method = "sdid",
-                     covariates = "cov1")
+  # cov1/cov2 in panel_cov are time-invariant, so they are absorbed by the
+  # two-way fixed effects and (correctly) leave the SDID ATT essentially
+  # unchanged. A meaningful partial-out test needs a genuinely time-varying
+  # covariate that drives the outcome.
+  set.seed(99)
+  pc <- panel_cov
+  pc$covtv <- rnorm(nrow(pc), 0, 1) + 0.5 * pc$time
+  pc$y     <- pc$y + 0.8 * pc$covtv
+  fit_no  <- scm_fit(y ~ d | id + time, data = pc, method = "sdid")
+  fit_cov <- scm_fit(y ~ d | id + time, data = pc, method = "sdid",
+                     covariates = "covtv")
   expect_false(isTRUE(all.equal(fit_no$estimate, fit_cov$estimate, tol = 1e-6)))
 })
 

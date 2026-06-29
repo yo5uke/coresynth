@@ -2,6 +2,8 @@
 
 ## coresynth 0.2.2
 
+CRAN release: 2026-06-26
+
 ### Bug fixes
 
 - `panel_to_matrices()` (and therefore every

@@ -56,7 +56,7 @@ fit_scm <- scm_fit(
   )
 )
 fit_scm$estimate
-#> [1] 2.040418
+#> [1] 2.038808
 ```
 
 ### Out-of-sample V selection, donor filtering, penalisation
@@ -77,7 +77,7 @@ fit_pen <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
 
 c(oos = fit_oos$estimate, filtered = fit_filt$estimate, penalised = fit_pen$estimate)
 #>       oos  filtered penalised 
-#>  2.576140  2.073847  2.073847
+#>  2.583619  2.073836  2.073836
 ```
 
 ### Augmented SCM
@@ -91,7 +91,7 @@ applies the ridge bias-correction of Ben-Michael, Feller & Rothstein
 aug <- augment_scm(fit_scm)
 c(scm = aug$att_scm, augmented = aug$att_aug)
 #>       scm augmented 
-#>  2.040418  2.118232
+#>  2.038808  2.115741
 ```
 
 ## SDID — Synthetic Difference-in-Differences
@@ -105,7 +105,7 @@ out first (Clarke et al. 2023):
 fit_sdid <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
                     covariates = "x")
 fit_sdid$estimate
-#> [1] 1.975381
+#> [1] 1.975303
 ```
 
 ## GSC — Generalised Synthetic Control
@@ -232,6 +232,6 @@ des
 #> === scm_design (Abadie & Zhao 2026) ===
 #> Design variant : base 
 #> Treated units  : u3 
-#> ATT estimate   : 0.0063 
+#> ATT estimate   : 0.0083 
 #> p-value        : NA (no blank periods)
 ```

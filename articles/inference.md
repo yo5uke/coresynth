@@ -56,12 +56,12 @@ inf_boot <- sdid_inference(fit_sdid, method = "bootstrap", n_boot = 100, seed = 
 
 tidy(inf_plac)
 #>   term estimate std.error statistic    p.value conf.low conf.high  method
-#> 1  ATT 1.821896        NA        NA 0.08333333       NA        NA placebo
+#> 1  ATT 1.821899        NA        NA 0.08333333       NA        NA placebo
 #>   alternative n_controls staggered
 #> 1   two.sided         11     FALSE
 tidy(inf_boot)
 #>   term estimate std.error statistic      p.value conf.low conf.high    method
-#> 1  ATT 1.821896 0.1287863  14.14666 1.958361e-45 1.600463  2.027934 bootstrap
+#> 1  ATT 1.821899 0.1287232  14.15362 1.773922e-45  1.60038  2.027952 bootstrap
 #>   alternative n_controls staggered
 #> 1   two.sided         11     FALSE
 ```
@@ -76,9 +76,9 @@ gives a compact summary:
 
 glance(inf_boot)
 #>      method n_controls staggered estimate std.error      p.value conf.low
-#> 1 bootstrap         11     FALSE 1.821896 0.1287863 1.958361e-45 1.600463
+#> 1 bootstrap         11     FALSE 1.821899 0.1287232 1.773922e-45  1.60038
 #>   conf.high alternative n_boot_valid
-#> 1  2.027934   two.sided          100
+#> 1  2.027952   two.sided          100
 ```
 
 ## GSC — parametric and non-parametric
@@ -134,7 +134,7 @@ confidence interval.
 conf <- conformal_inference(fit_scm, tau0 = 0, level = 0.95)
 tidy(conf)
 #>   term estimate std.error statistic p.value   conf.low conf.high    method
-#> 1  ATT 1.698424        NA        NA     0.1 -0.1077258  3.162582 conformal
+#> 1  ATT 1.698439        NA        NA     0.1 -0.1072756  3.162243 conformal
 #>   alternative n_controls staggered
 #> 1   two.sided         11     FALSE
 ```
@@ -156,7 +156,7 @@ do.call(rbind, list(
   cbind(method = "scm (conformal)",  tidy(conf)[c("estimate","p.value","conf.low","conf.high")])
 ))
 #>             method estimate      p.value   conf.low conf.high
-#> 1   sdid (placebo) 1.821896 8.333333e-02         NA        NA
-#> 2 sdid (bootstrap) 1.821896 1.958361e-45  1.6004630  2.027934
-#> 3  scm (conformal) 1.698424 1.000000e-01 -0.1077258  3.162582
+#> 1   sdid (placebo) 1.821899 8.333333e-02         NA        NA
+#> 2 sdid (bootstrap) 1.821899 1.773922e-45  1.6003801  2.027952
+#> 3  scm (conformal) 1.698439 1.000000e-01 -0.1072756  3.162243
 ```

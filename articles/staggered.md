@@ -41,7 +41,7 @@ dat$y[dat$d == 1] <- dat$y[dat$d == 1] + 2.0   # true ATT = 2.0
 
 fit <- scm_fit(y ~ d | id + time, data = dat, method = "sdid")
 fit$estimate          # aggregate ATT
-#> [1] 1.872835
+#> [1] 1.872811
 fit$staggered         # TRUE
 #> [1] TRUE
 ```
@@ -52,8 +52,8 @@ Per-cohort detail is in `cohort_estimates`:
 
 fit$cohort_estimates
 #>   cohort n_treated T_pre T_post estimate    weight
-#> 1     11         1    10     10 1.839381 0.6666667
-#> 2     16         1    15      5 1.939744 0.3333333
+#> 1     11         1    10     10 1.839366 0.6666667
+#> 2     16         1    15      5 1.939702 0.3333333
 ```
 
 ## Choosing the control group
@@ -72,7 +72,7 @@ fit_nt    <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
                      control_group = "never_treated")
 c(clean = fit_clean$estimate, never_treated = fit_nt$estimate)
 #>         clean never_treated 
-#>      1.872835      1.962071
+#>      1.872811      1.962067
 ```
 
 ## Across estimators
@@ -85,7 +85,7 @@ methods <- c("scm", "sdid", "gsc", "mc", "tasc", "si")
 sapply(methods, function(m)
   scm_fit(y ~ d | id + time, data = dat, method = m)$estimate)
 #>      scm     sdid      gsc       mc     tasc       si 
-#> 1.835229 1.872835 1.760712 2.292777 3.153267 1.934303
+#> 1.835085 1.872811 1.760712 2.292777 3.153267 1.934303
 ```
 
 ## Inference under staggered adoption
@@ -102,13 +102,13 @@ staggered-specific variant that removes each unique control unit across
 
 library(broom)
 tidy(sdid_inference(fit, method = "bootstrap", n_boot = 100, seed = 1))
-#>   term estimate  std.error statistic      p.value conf.low conf.high    method
-#> 1  ATT 1.872835 0.09273774  20.19496 1.084054e-90 1.711155  2.060448 bootstrap
+#>   term estimate  std.error statistic     p.value conf.low conf.high    method
+#> 1  ATT 1.872811 0.09200243  20.35611 4.09877e-92 1.711835  2.058967 bootstrap
 #>   alternative n_controls staggered
 #> 1   two.sided       10.5      TRUE
 tidy(sdid_inference(fit, method = "jackknife_global"))
 #>   term estimate std.error statistic      p.value conf.low conf.high
-#> 1  ATT 1.872835 0.1186042  15.79063 3.609468e-56 1.640375  2.105295
+#> 1  ATT 1.872811 0.1185776  15.79397 3.423562e-56 1.640404  2.105219
 #>             method alternative n_controls staggered
 #> 1 jackknife_global   two.sided         11      TRUE
 ```

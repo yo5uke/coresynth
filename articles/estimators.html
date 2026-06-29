@@ -124,7 +124,7 @@ specs:</p>
 <span>  <span class="op">)</span></span>
 <span><span class="op">)</span></span>
 <span><span class="va">fit_scm</span><span class="op">$</span><span class="va">estimate</span></span>
-<span><span class="co">#&gt; [1] 2.040418</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 2.038808</span></span></code></pre></div>
 </div>
 <div class="section level3">
 <h3 id="out-of-sample-v-selection-donor-filtering-penalisation">Out-of-sample V selection, donor filtering, penalisation<a class="anchor" aria-label="anchor" href="#out-of-sample-v-selection-donor-filtering-penalisation"></a>
@@ -144,7 +144,7 @@ specs:</p>
 <span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>oos <span class="op">=</span> <span class="va">fit_oos</span><span class="op">$</span><span class="va">estimate</span>, filtered <span class="op">=</span> <span class="va">fit_filt</span><span class="op">$</span><span class="va">estimate</span>, penalised <span class="op">=</span> <span class="va">fit_pen</span><span class="op">$</span><span class="va">estimate</span><span class="op">)</span></span>
 <span><span class="co">#&gt;       oos  filtered penalised </span></span>
-<span><span class="co">#&gt;  2.576140  2.073847  2.073847</span></span></code></pre></div>
+<span><span class="co">#&gt;  2.583619  2.073836  2.073836</span></span></code></pre></div>
 </div>
 <div class="section level3">
 <h3 id="augmented-scm">Augmented SCM<a class="anchor" aria-label="anchor" href="#augmented-scm"></a>
@@ -155,7 +155,7 @@ Ben-Michael, Feller &amp; Rothstein (2021):</p>
 <code class="sourceCode R"><span><span class="va">aug</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/augment_scm.html">augment_scm</a></span><span class="op">(</span><span class="va">fit_scm</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span>scm <span class="op">=</span> <span class="va">aug</span><span class="op">$</span><span class="va">att_scm</span>, augmented <span class="op">=</span> <span class="va">aug</span><span class="op">$</span><span class="va">att_aug</span><span class="op">)</span></span>
 <span><span class="co">#&gt;       scm augmented </span></span>
-<span><span class="co">#&gt;  2.040418  2.118232</span></span></code></pre></div>
+<span><span class="co">#&gt;  2.038808  2.115741</span></span></code></pre></div>
 </div>
 </div>
 <div class="section level2">
@@ -168,7 +168,7 @@ partialled out first (Clarke et al. 2023):</p>
 <code class="sourceCode R"><span><span class="va">fit_sdid</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/scm_fit.html">scm_fit</a></span><span class="op">(</span><span class="va">y</span> <span class="op">~</span> <span class="va">d</span> <span class="op">|</span> <span class="va">id</span> <span class="op">+</span> <span class="va">time</span>, data <span class="op">=</span> <span class="va">dat</span>, method <span class="op">=</span> <span class="st">"sdid"</span>,</span>
 <span>                    covariates <span class="op">=</span> <span class="st">"x"</span><span class="op">)</span></span>
 <span><span class="va">fit_sdid</span><span class="op">$</span><span class="va">estimate</span></span>
-<span><span class="co">#&gt; [1] 1.975381</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 1.975303</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="gsc-generalised-synthetic-control">GSC — Generalised Synthetic Control<a class="anchor" aria-label="anchor" href="#gsc-generalised-synthetic-control"></a>
@@ -281,7 +281,7 @@ with blank-period permutation tests and split-conformal CIs.</p>
 <span><span class="co">#&gt; === scm_design (Abadie &amp; Zhao 2026) ===</span></span>
 <span><span class="co">#&gt; Design variant : base </span></span>
 <span><span class="co">#&gt; Treated units  : u3 </span></span>
-<span><span class="co">#&gt; ATT estimate   : 0.0063 </span></span>
+<span><span class="co">#&gt; ATT estimate   : 0.0083 </span></span>
 <span><span class="co">#&gt; p-value        : NA (no blank periods)</span></span></code></pre></div>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>

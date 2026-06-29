@@ -59,7 +59,7 @@ fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
 fit
 #> === coresynth fit ===
 #> Method : SCM 
-#> Estimate (ATT): 2.2712 
+#> Estimate (ATT): 2.2711 
 #> Pre-treatment periods: 10
 ```
 
@@ -68,7 +68,7 @@ The estimated ATT lives in `fit$estimate`:
 ``` r
 
 fit$estimate
-#> [1] 2.271164
+#> [1] 2.271125
 ```
 
 ## Comparing all six methods
@@ -141,18 +141,18 @@ library(broom)
 
 tidy(fits$scm)     # donor weights as a data frame
 #>   term   estimate        type
-#> 1   u2 0.24733877 unit_weight
+#> 1   u2 0.24752069 unit_weight
 #> 2   u3 0.00000000 unit_weight
-#> 3   u4 0.07036082 unit_weight
+#> 3   u4 0.07055224 unit_weight
 #> 4   u5 0.00000000 unit_weight
-#> 5   u6 0.14754253 unit_weight
-#> 6   u7 0.32811909 unit_weight
+#> 5   u6 0.14767482 unit_weight
+#> 6   u7 0.32770301 unit_weight
 #> 7   u8 0.00000000 unit_weight
 #> 8   u9 0.00000000 unit_weight
-#> 9  u10 0.20663878 unit_weight
+#> 9  u10 0.20654924 unit_weight
 glance(fits$scm)   # one-row model summary
 #>   method estimate n_controls n_treated T_pre T_post staggered multi_arm
-#> 1    scm 2.271164          9         1    10     10     FALSE     FALSE
+#> 1    scm 2.271125          9         1    10     10     FALSE     FALSE
 ```
 
 [`export_json()`](https://yo5uke.com/coresynth/reference/export_json.md)

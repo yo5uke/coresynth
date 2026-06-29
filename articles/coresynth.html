@@ -132,12 +132,12 @@ switches on for treated units in post-treatment periods.
 <span><span class="va">fit</span></span>
 <span><span class="co">#&gt; === coresynth fit ===</span></span>
 <span><span class="co">#&gt; Method : SCM </span></span>
-<span><span class="co">#&gt; Estimate (ATT): 2.2712 </span></span>
+<span><span class="co">#&gt; Estimate (ATT): 2.2711 </span></span>
 <span><span class="co">#&gt; Pre-treatment periods: 10</span></span></code></pre></div>
 <p>The estimated ATT lives in <code>fit$estimate</code>:</p>
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="va">fit</span><span class="op">$</span><span class="va">estimate</span></span>
-<span><span class="co">#&gt; [1] 2.271164</span></span></code></pre></div>
+<span><span class="co">#&gt; [1] 2.271125</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="comparing-all-six-methods">Comparing all six methods<a class="anchor" aria-label="anchor" href="#comparing-all-six-methods"></a>
@@ -218,18 +218,18 @@ straight into tidy workflows and paper tables.</p>
 <span></span>
 <span><span class="fu"><a href="https://generics.r-lib.org/reference/tidy.html" class="external-link">tidy</a></span><span class="op">(</span><span class="va">fits</span><span class="op">$</span><span class="va">scm</span><span class="op">)</span>     <span class="co"># donor weights as a data frame</span></span>
 <span><span class="co">#&gt;   term   estimate        type</span></span>
-<span><span class="co">#&gt; 1   u2 0.24733877 unit_weight</span></span>
+<span><span class="co">#&gt; 1   u2 0.24752069 unit_weight</span></span>
 <span><span class="co">#&gt; 2   u3 0.00000000 unit_weight</span></span>
-<span><span class="co">#&gt; 3   u4 0.07036082 unit_weight</span></span>
+<span><span class="co">#&gt; 3   u4 0.07055224 unit_weight</span></span>
 <span><span class="co">#&gt; 4   u5 0.00000000 unit_weight</span></span>
-<span><span class="co">#&gt; 5   u6 0.14754253 unit_weight</span></span>
-<span><span class="co">#&gt; 6   u7 0.32811909 unit_weight</span></span>
+<span><span class="co">#&gt; 5   u6 0.14767482 unit_weight</span></span>
+<span><span class="co">#&gt; 6   u7 0.32770301 unit_weight</span></span>
 <span><span class="co">#&gt; 7   u8 0.00000000 unit_weight</span></span>
 <span><span class="co">#&gt; 8   u9 0.00000000 unit_weight</span></span>
-<span><span class="co">#&gt; 9  u10 0.20663878 unit_weight</span></span>
+<span><span class="co">#&gt; 9  u10 0.20654924 unit_weight</span></span>
 <span><span class="fu"><a href="https://generics.r-lib.org/reference/glance.html" class="external-link">glance</a></span><span class="op">(</span><span class="va">fits</span><span class="op">$</span><span class="va">scm</span><span class="op">)</span>   <span class="co"># one-row model summary</span></span>
 <span><span class="co">#&gt;   method estimate n_controls n_treated T_pre T_post staggered multi_arm</span></span>
-<span><span class="co">#&gt; 1    scm 2.271164          9         1    10     10     FALSE     FALSE</span></span></code></pre></div>
+<span><span class="co">#&gt; 1    scm 2.271125          9         1    10     10     FALSE     FALSE</span></span></code></pre></div>
 <p><code><a href="../reference/export_json.html">export_json()</a></code> writes a fit to disk as JSON for
 reproducibility or downstream (e.g. AI) workflows:</p>
 <div class="sourceCode" id="cb11"><pre class="downlit sourceCode r">

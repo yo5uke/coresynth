@@ -126,12 +126,12 @@ from every donor. It returns a plain list.</p>
 <span></span>
 <span><span class="fu"><a href="https://generics.r-lib.org/reference/tidy.html" class="external-link">tidy</a></span><span class="op">(</span><span class="va">inf_plac</span><span class="op">)</span></span>
 <span><span class="co">#&gt;   term estimate std.error statistic    p.value conf.low conf.high  method</span></span>
-<span><span class="co">#&gt; 1  ATT 1.821896        NA        NA 0.08333333       NA        NA placebo</span></span>
+<span><span class="co">#&gt; 1  ATT 1.821899        NA        NA 0.08333333       NA        NA placebo</span></span>
 <span><span class="co">#&gt;   alternative n_controls staggered</span></span>
 <span><span class="co">#&gt; 1   two.sided         11     FALSE</span></span>
 <span><span class="fu"><a href="https://generics.r-lib.org/reference/tidy.html" class="external-link">tidy</a></span><span class="op">(</span><span class="va">inf_boot</span><span class="op">)</span></span>
 <span><span class="co">#&gt;   term estimate std.error statistic      p.value conf.low conf.high    method</span></span>
-<span><span class="co">#&gt; 1  ATT 1.821896 0.1287863  14.14666 1.958361e-45 1.600463  2.027934 bootstrap</span></span>
+<span><span class="co">#&gt; 1  ATT 1.821899 0.1287232  14.15362 1.773922e-45  1.60038  2.027952 bootstrap</span></span>
 <span><span class="co">#&gt;   alternative n_controls staggered</span></span>
 <span><span class="co">#&gt; 1   two.sided         11     FALSE</span></span></code></pre></div>
 <p><code><a href="https://generics.r-lib.org/reference/tidy.html" class="external-link">tidy()</a></code> returns a one-row data frame with
@@ -141,9 +141,9 @@ a CI — ready to <code><a href="https://rdrr.io/r/base/cbind.html" class="exter
 <div class="sourceCode" id="cb5"><pre class="downlit sourceCode r">
 <code class="sourceCode R"><span><span class="fu"><a href="https://generics.r-lib.org/reference/glance.html" class="external-link">glance</a></span><span class="op">(</span><span class="va">inf_boot</span><span class="op">)</span></span>
 <span><span class="co">#&gt;      method n_controls staggered estimate std.error      p.value conf.low</span></span>
-<span><span class="co">#&gt; 1 bootstrap         11     FALSE 1.821896 0.1287863 1.958361e-45 1.600463</span></span>
+<span><span class="co">#&gt; 1 bootstrap         11     FALSE 1.821899 0.1287232 1.773922e-45  1.60038</span></span>
 <span><span class="co">#&gt;   conf.high alternative n_boot_valid</span></span>
-<span><span class="co">#&gt; 1  2.027934   two.sided          100</span></span></code></pre></div>
+<span><span class="co">#&gt; 1  2.027952   two.sided          100</span></span></code></pre></div>
 </div>
 <div class="section level2">
 <h2 id="gsc-parametric-and-non-parametric">GSC — parametric and non-parametric<a class="anchor" aria-label="anchor" href="#gsc-parametric-and-non-parametric"></a>
@@ -190,7 +190,7 @@ residuals to get a p-value and a confidence interval.</p>
 <code class="sourceCode R"><span><span class="va">conf</span> <span class="op">&lt;-</span> <span class="fu"><a href="../reference/conformal_inference.html">conformal_inference</a></span><span class="op">(</span><span class="va">fit_scm</span>, tau0 <span class="op">=</span> <span class="fl">0</span>, level <span class="op">=</span> <span class="fl">0.95</span><span class="op">)</span></span>
 <span><span class="fu"><a href="https://generics.r-lib.org/reference/tidy.html" class="external-link">tidy</a></span><span class="op">(</span><span class="va">conf</span><span class="op">)</span></span>
 <span><span class="co">#&gt;   term estimate std.error statistic p.value   conf.low conf.high    method</span></span>
-<span><span class="co">#&gt; 1  ATT 1.698424        NA        NA     0.1 -0.1077258  3.162582 conformal</span></span>
+<span><span class="co">#&gt; 1  ATT 1.698439        NA        NA     0.1 -0.1072756  3.162243 conformal</span></span>
 <span><span class="co">#&gt;   alternative n_controls staggered</span></span>
 <span><span class="co">#&gt; 1   two.sided         11     FALSE</span></span></code></pre></div>
 <p>The p-value tests the sharp null τ0 = 0; the CI is obtained by test
@@ -209,9 +209,9 @@ methods is a single <code><a href="https://rdrr.io/r/base/cbind.html" class="ext
 <span>  <span class="fu"><a href="https://rdrr.io/r/base/cbind.html" class="external-link">cbind</a></span><span class="op">(</span>method <span class="op">=</span> <span class="st">"scm (conformal)"</span>,  <span class="fu"><a href="https://generics.r-lib.org/reference/tidy.html" class="external-link">tidy</a></span><span class="op">(</span><span class="va">conf</span><span class="op">)</span><span class="op">[</span><span class="fu"><a href="https://rdrr.io/r/base/c.html" class="external-link">c</a></span><span class="op">(</span><span class="st">"estimate"</span>,<span class="st">"p.value"</span>,<span class="st">"conf.low"</span>,<span class="st">"conf.high"</span><span class="op">)</span><span class="op">]</span><span class="op">)</span></span>
 <span><span class="op">)</span><span class="op">)</span></span>
 <span><span class="co">#&gt;             method estimate      p.value   conf.low conf.high</span></span>
-<span><span class="co">#&gt; 1   sdid (placebo) 1.821896 8.333333e-02         NA        NA</span></span>
-<span><span class="co">#&gt; 2 sdid (bootstrap) 1.821896 1.958361e-45  1.6004630  2.027934</span></span>
-<span><span class="co">#&gt; 3  scm (conformal) 1.698424 1.000000e-01 -0.1077258  3.162582</span></span></code></pre></div>
+<span><span class="co">#&gt; 1   sdid (placebo) 1.821899 8.333333e-02         NA        NA</span></span>
+<span><span class="co">#&gt; 2 sdid (bootstrap) 1.821899 1.773922e-45  1.6003801  2.027952</span></span>
+<span><span class="co">#&gt; 3  scm (conformal) 1.698439 1.000000e-01 -0.1072756  3.162243</span></span></code></pre></div>
 </div>
   </main><aside class="col-md-3"><nav id="toc" aria-label="Table of contents"><h2>On this page</h2>
     </nav></aside>

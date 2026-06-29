@@ -138,7 +138,7 @@ summary(fit)
 #> === coresynth summary ===
 #> Method : SDID 
 #> Periods : T_pre = 15 | T_post = 5 
-#> ATT estimate: 3.499896 
+#> ATT estimate: 3.49975 
 #> Unit weights (non-zero donors):
 #>      2      3      4      5      6      8      9     10 
 #> 0.0886 0.1557 0.0275 0.1072 0.0966 0.1351 0.1746 0.2147 

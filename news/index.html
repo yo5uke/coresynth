@@ -7,7 +7,7 @@
 
     <a class="navbar-brand me-2" href="../index.html">coresynth</a>
 
-    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.2</small>
+    <small class="nav-text text-muted me-auto" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Released version">0.2.3</small>
 
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation">
@@ -44,6 +44,15 @@
       <small>Source: <a href="https://github.com/yo5uke/coresynth/blob/main/NEWS.md" class="external-link"><code>NEWS.md</code></a></small>
     </div>
 
+    <div class="section level2">
+<h2 class="pkg-version" data-toc-text="0.2.3" id="coresynth-023">coresynth 0.2.3<a class="anchor" aria-label="anchor" href="#coresynth-023"></a></h2>
+<div class="section level3">
+<h3 id="performance-0-2-3">Performance<a class="anchor" aria-label="anchor" href="#performance-0-2-3"></a></h3>
+<ul><li>The inner simplex QP solvers (<code>solve_simplex_qp()</code> / <code>solve_simplex_qp_lr()</code>), used by every <code>scm_fit(method = "scm")</code> fit and by the <code>method = "sdid"</code> unit weights, now use FISTA with adaptive restart (O’Donoghue &amp; Candès 2015, gradient scheme). The first-order solver’s iteration count grows with the condition number of <code>Q = X0'VX0</code>, which is large for the collinear pre-treatment outcome panels typical of synthetic control; resetting the momentum term when it works against the gradient removes this slowdown. Each inner solve converges to the same optimum (verified against an exact QP solver to within <code>1e-10</code>), so the returned weights are unchanged.</li>
+<li>For the common outcomes-only case the fit is effectively identical (differences <code>~1e-5</code>). For <code>v_selection = "oos"</code> and penalised (<code>lambda_pen</code>) fits on ill-conditioned panels, the non-convex outer V search may now settle on a different local optimum, shifting results slightly; both the previous and the new solutions are valid SCM fits with the same objective. <strong>This can change numerical results for <code>v_selection = "oos"</code> and penalised fits on poorly conditioned data.</strong>
+</li>
+</ul></div>
+</div>
     <div class="section level2">
 <h2 class="pkg-version" data-toc-text="0.2.2" id="coresynth-022">coresynth 0.2.2<a class="anchor" aria-label="anchor" href="#coresynth-022"></a></h2><p class="text-muted">CRAN release: 2026-06-26</p>
 <div class="section level3">

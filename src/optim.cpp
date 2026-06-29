@@ -49,21 +49,31 @@ arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter 
   
   arma::vec y = x;
   double t_acc = 1.0;
-  
+
   for(int iter = 0; iter < max_iter; iter++) {
     arma::vec x_prev = x;
-    
+
     // Gradient step
     arma::vec grad = Q * y - c;
-    
+
     // Projection step
     x = proj_simplex(y - t * grad);
-    
+
+    // Adaptive restart (O'Donoghue & Candes 2015, gradient scheme): when the
+    // momentum direction disagrees with the descent direction, the
+    // acceleration is overshooting and slowing convergence on ill-conditioned
+    // Q (the dominant cost in SCM, where Q = X0'VX0 is highly collinear).
+    // Resetting t_acc removes the stale momentum. This only changes the path
+    // to the optimum, not the optimum itself.
+    if (arma::dot(grad, x - x_prev) > 0.0) {
+      t_acc = 1.0;
+    }
+
     // FISTA acceleration
     double t_acc_next = (1.0 + std::sqrt(1.0 + 4.0 * t_acc * t_acc)) / 2.0;
     y = x + ((t_acc - 1.0) / t_acc_next) * (x - x_prev);
     t_acc = t_acc_next;
-    
+
     if(arma::norm(x - x_prev, 2) < tol) {
       break;
     }
@@ -97,6 +107,10 @@ arma::vec solve_simplex_qp_lr(const arma::mat& B, const arma::vec& b,
     arma::vec x_prev = x;
     arma::vec grad   = B.t() * (B * y - b);         // O(k * N_co)
     x = proj_simplex(y - t * grad);
+    // Adaptive restart (gradient scheme) -- see solve_simplex_qp for rationale.
+    if (arma::dot(grad, x - x_prev) > 0.0) {
+      t_acc = 1.0;
+    }
     double t_acc_next = (1.0 + std::sqrt(1.0 + 4.0 * t_acc * t_acc)) / 2.0;
     y = x + ((t_acc - 1.0) / t_acc_next) * (x - x_prev);
     t_acc = t_acc_next;

@@ -1,3 +1,24 @@
+# coresynth 0.2.3
+
+## Performance
+
+- The inner simplex QP solvers (`solve_simplex_qp()` / `solve_simplex_qp_lr()`),
+  used by every `scm_fit(method = "scm")` fit and by the `method = "sdid"` unit
+  weights, now use FISTA with adaptive restart (O'Donoghue & Candès 2015,
+  gradient scheme). The first-order solver's iteration count grows with the
+  condition number of `Q = X0'VX0`, which is large for the collinear
+  pre-treatment outcome panels typical of synthetic control; resetting the
+  momentum term when it works against the gradient removes this slowdown. Each
+  inner solve converges to the same optimum (verified against an exact QP solver
+  to within `1e-10`), so the returned weights are unchanged.
+- For the common outcomes-only case the fit is effectively identical
+  (differences `~1e-5`). For `v_selection = "oos"` and penalised (`lambda_pen`)
+  fits on ill-conditioned panels, the non-convex outer V search may now settle on
+  a different local optimum, shifting results slightly; both the previous and the
+  new solutions are valid SCM fits with the same objective. **This can change
+  numerical results for `v_selection = "oos"` and penalised fits on poorly
+  conditioned data.**
+
 # coresynth 0.2.2
 
 ## Bug fixes

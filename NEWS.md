@@ -1,3 +1,44 @@
+# coresynth 0.2.4
+
+## Bug fixes
+
+- `method = "mc"` treated missing `(id, time)` panel cells and `NA` outcomes as
+  observed zeros instead of excluding them from the observation mask used by
+  the Soft-Impute solver. Missing cells are now masked out the same way as
+  treated post-adoption cells. **This changes numerical results for `mc` fits
+  on unbalanced panels or panels with `NA` outcomes.**
+- `method = "tasc"`'s EM loop already handles missing outcome cells (Kalman
+  smoother plus per-unit M-steps), but its initialisation (`svd()`, the
+  treated-unit loading OLS, and `var()`) failed on panels with missing cells.
+  Initial values are now computed from a column-mean-imputed matrix; the EM
+  loop itself still runs on the true, unimputed data.
+
+## Input validation
+
+Malformed panels previously produced confusing or misleading errors — for
+example, a 0-row data frame (from an upstream filtering bug) was misclassified
+as staggered adoption and failed with an unrelated "predictors not supported"
+error, and missing `(id, time)` cells surfaced as a raw
+`eig_sym(): decomposition failed` from the C++ layer. `panel_to_matrices()`
+(shared by all six estimators) and `scm_design()` now validate and error
+clearly on:
+
+- 0-row input data
+- `NA` unit or time identifiers
+- `NA` or negative treatment indicator values
+- no treated units, or (for sharp fits only) no control units — staggered
+  fits may legitimately have no never-treated units when future adopters
+  serve as clean controls
+- missing `(id, time)` cells or non-finite outcomes, for the estimators that
+  require a fully observed panel (`scm`, `sdid`, `gsc`, `si` — `mc` and
+  `tasc` handle missing data by design)
+
+`scm_fit()` also now rejects non-numeric (`factor`/`character`) outcome or
+treatment columns and non-integer treatment values, instead of silently
+coercing them (`as.integer(factor(...))` returns level codes, not the original
+values). "All cohort-level fits failed" errors (SCM/SDID/GSC/SI staggered
+paths) now point back to the preceding per-cohort warnings for diagnosis.
+
 # coresynth 0.2.3
 
 ## Performance

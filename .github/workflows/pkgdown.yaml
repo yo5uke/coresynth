@@ -1,5 +1,5 @@
 # Workflow derived from https://github.com/r-lib/actions/tree/v2/examples
-# Builds the pkgdown site and deploys it to the gh-pages branch.
+# Builds the pkgdown site and deploys it via GitHub Pages (Actions source).
 on:
   push:
     branches: [main, master]
@@ -12,16 +12,15 @@ name: pkgdown.yaml
 
 permissions: read-all
 
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
-  pkgdown:
+  build:
     runs-on: ubuntu-latest
-    # Only restrict concurrency for non-PR jobs
-    concurrency:
-      group: pkgdown-${{ github.event_name != 'pull_request' || github.run_id }}
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -47,10 +46,23 @@ jobs:
       - name: Disable Jekyll
         run: touch docs/.nojekyll
 
-      - name: Deploy to GitHub pages 🚀
-        if: github.event_name != 'pull_request'
-        uses: JamesIves/github-pages-deploy-action@v4.5.0
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
         with:
-          clean: false
-          branch: gh-pages
-          folder: docs
+          path: docs
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages 🚀
+        id: deployment
+        uses: actions/deploy-pages@v4

@@ -2137,9 +2137,11 @@ test_that("Phase 21: panel_to_tensor — idx_by_arm unit counts correct", {
 test_that("Phase 21: panel_to_tensor — error when arm 0 absent", {
   bad <- tensor_panel
   bad$d <- bad$d + 1L  # shift: now arms are 1, 2, 3 (no 0)
+  # The shift makes every unit "treated" from period 1, so the shared
+  # no-control-units check fires before panel_to_tensor's own arm-0 check.
   expect_error(
     coresynth:::panel_to_tensor(bad$y, bad$d, bad$id, bad$time),
-    "arm 0"
+    "arm 0|No control units"
   )
 })
 
@@ -3186,4 +3188,147 @@ test_that("Phase 26: loo_donors works for OOS and predictor fits", {
 
   stag_fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
   expect_error(loo_donors(stag_fit), "sharp")
+})
+
+# == Input validation: empty / degenerate / unbalanced panels =================
+
+test_that("0-row data errors with a clear message for every method", {
+  empty <- panel[0, ]
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
+    expect_error(
+      scm_fit(y ~ d | id + time, data = empty, method = m),
+      "0 rows", info = m
+    )
+  }
+})
+
+test_that("data with no treated units errors clearly", {
+  no_tr <- panel[panel$id != "u1", ]
+  expect_error(
+    scm_fit(y ~ d | id + time, data = no_tr, method = "scm"),
+    "No treated units"
+  )
+})
+
+test_that("sharp data with no control units errors clearly", {
+  all_tr <- panel
+  all_tr$d <- as.integer(all_tr$time > 10)
+  expect_error(
+    scm_fit(y ~ d | id + time, data = all_tr, method = "scm"),
+    "No control units"
+  )
+})
+
+test_that("staggered panel with no never-treated units still fits via clean controls", {
+  stag_all <- make_panel()
+  stag_all$d <- as.integer(
+    (stag_all$id %in% paste0("u", 1:3) & stag_all$time > 10) |
+    (!stag_all$id %in% paste0("u", 1:3) & stag_all$time > 16)
+  )
+  expect_warning(
+    fit <- scm_fit(y ~ d | id + time, data = stag_all, method = "scm"),
+    "skipped"
+  )
+  expect_true(isTRUE(fit$staggered))
+  expect_true(is.finite(fit$estimate))
+})
+
+test_that("NA in the treatment indicator errors instead of silently dropping the unit", {
+  na_d <- panel
+  na_d$d[57] <- NA
+  expect_error(
+    scm_fit(y ~ d | id + time, data = na_d, method = "scm"),
+    "NA value"
+  )
+})
+
+test_that("negative treatment values are rejected", {
+  neg <- panel
+  neg$d[1] <- -1L
+  expect_error(
+    scm_fit(y ~ d | id + time, data = neg, method = "scm"),
+    "non-negative"
+  )
+})
+
+test_that("NA unit identifiers are rejected", {
+  na_id <- panel
+  na_id$id[3] <- NA
+  expect_error(
+    scm_fit(y ~ d | id + time, data = na_id, method = "scm"),
+    "identifiers contain NA"
+  )
+})
+
+test_that("missing (id, time) cells error clearly for dense-matrix methods", {
+  unbal <- panel[!(panel$id == "u5" & panel$time == 10), ]
+  for (m in c("scm", "sdid", "gsc", "si")) {
+    expect_error(
+      scm_fit(y ~ d | id + time, data = unbal, method = m),
+      "balanced panel with fully observed outcomes", info = m
+    )
+  }
+})
+
+test_that("NA outcome values error the same way as missing cells", {
+  na_y <- panel
+  na_y$y[na_y$id == "u5" & na_y$time == 10] <- NA
+  expect_error(
+    scm_fit(y ~ d | id + time, data = na_y, method = "scm"),
+    "balanced panel with fully observed outcomes"
+  )
+})
+
+test_that("MC masks missing cells instead of treating them as observed zeros", {
+  unbal <- panel[!(panel$id == "u5" & panel$time == 10), ]
+  fit_full  <- scm_fit(y ~ d | id + time, data = panel, method = "mc")
+  fit_unbal <- scm_fit(y ~ d | id + time, data = unbal, method = "mc")
+  expect_true(is.finite(fit_unbal$estimate))
+  expect_lt(abs(fit_unbal$estimate - fit_full$estimate), 0.5)
+})
+
+test_that("TASC fits a panel with missing outcome cells", {
+  unbal <- panel[!(panel$id == "u5" & panel$time == 10), ]
+  fit <- scm_fit(y ~ d | id + time, data = unbal, method = "tasc")
+  expect_true(is.finite(fit$estimate))
+})
+
+test_that("factor treatment and non-numeric outcome columns are rejected", {
+  fac_d <- panel
+  fac_d$d <- factor(fac_d$d)
+  expect_error(
+    scm_fit(y ~ d | id + time, data = fac_d, method = "scm"),
+    "must be numeric, integer, or logical"
+  )
+  chr_y <- panel
+  chr_y$y <- as.character(chr_y$y)
+  expect_error(
+    scm_fit(y ~ d | id + time, data = chr_y, method = "scm"),
+    "must be numeric"
+  )
+})
+
+test_that("non-integer treatment values are rejected", {
+  frac_d <- panel
+  frac_d$d <- frac_d$d * 0.5
+  expect_error(
+    scm_fit(y ~ d | id + time, data = frac_d, method = "scm"),
+    "non-integer"
+  )
+})
+
+test_that("SCM with zero pre-treatment periods errors clearly", {
+  t0 <- panel
+  t0$d <- as.integer(t0$id == "u1")
+  expect_error(
+    scm_fit(y ~ d | id + time, data = t0, method = "scm"),
+    "No pre-treatment periods"
+  )
+})
+
+test_that("scm_design rejects 0-row data", {
+  expect_error(
+    scm_design(panel[0, ], outcome = "y", unit = "id", time = "time", T0 = 10),
+    "0 rows"
+  )
 })

@@ -25,7 +25,10 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL, ...) {
     if (!is.na(t0) && t0 <= TT) O[t0:TT, j] <- 0.0
   }
 
-  # Replace NAs in Y with 0 (unobserved positions will be ignored via mask)
+  # Missing cells (unbalanced panel or NA outcomes) are unobserved, like
+  # treated post-adoption cells: mask them out, then zero-fill so the masked
+  # positions carry no weight in the C++ solver.
+  O[is.na(Y)] <- 0.0
   Y_obs <- Y; Y_obs[is.na(Y_obs)] <- 0.0
 
   # Default lambda: small fraction of spectral norm

@@ -170,7 +170,10 @@
   })
 
   valid <- !vapply(cohort_list, is.null, logical(1L))
-  if (!any(valid)) stop("All cohort-level SI fits failed.", call. = FALSE)
+  if (!any(valid)) {
+    stop("All cohort-level SI fits failed; see the preceding warnings for ",
+         "per-cohort reasons.", call. = FALSE)
+  }
   r_list <- cohort_list[valid]
 
   w   <- vapply(r_list, `[[`, numeric(1L), "weight")
@@ -283,7 +286,8 @@
   }
 
   if (length(cf_list) == 0L)
-    stop("All (cohort, arm) SI fits failed.", call. = FALSE)
+    stop("All (cohort, arm) SI fits failed; see the preceding warnings for ",
+         "per-cell reasons.", call. = FALSE)
 
   ws      <- vapply(cf_list, `[[`, numeric(1L), "weight")
   taus    <- vapply(cf_list, `[[`, numeric(1L), "estimate")
@@ -371,8 +375,9 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
 
   # -- Multi-arm detection: max(d) > 1 means K>=2 treatment arms -------------
   d_int <- as.integer(d)
-  if (max(d_int, na.rm = TRUE) > 1L) {
+  if (any(d_int > 1L, na.rm = TRUE)) {
     tensor <- panel_to_tensor(y, d_int, id, time)
+    .check_panel_complete(tensor$Y, "SI")
     k_use  <- if (is.null(k)) NULL else as.integer(k)
     if (!tensor$is_sharp) {
       return(.fit_si_staggered_multi(tensor, k_use, control_group))
@@ -382,6 +387,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
   }
 
   pan    <- panel_to_matrices(y, d_int, id, time)
+  .check_panel_complete(pan$Y, "SI")
 
   # -- Staggered adoption path -------------------------------------------------
   if (!pan$is_sharp) {

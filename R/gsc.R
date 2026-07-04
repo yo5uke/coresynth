@@ -90,7 +90,10 @@
   })
 
   valid <- !vapply(cohort_list, is.null, logical(1L))
-  if (!any(valid)) stop("All cohort-level GSC fits failed.", call. = FALSE)
+  if (!any(valid)) {
+    stop("All cohort-level GSC fits failed; see the preceding warnings for ",
+         "per-cohort reasons.", call. = FALSE)
+  }
   r_list <- cohort_list[valid]
 
   w   <- vapply(r_list, `[[`, numeric(1L), "weight")
@@ -146,6 +149,7 @@ fit_gsc_cpp <- function(
 ) {
   control_group <- match.arg(control_group)
   pan <- panel_to_matrices(y, d, id, time)
+  .check_panel_complete(pan$Y, "GSC")
 
   # ── Staggered adoption path ──────────────────────────────────────────────
   if (!pan$is_sharp) {

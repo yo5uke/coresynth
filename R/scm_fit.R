@@ -127,8 +127,34 @@ scm_fit <- function(
     }
   }
 
-  y <- as.numeric(data[[y_var]])
-  d <- as.integer(data[[d_var]])
+  y_raw <- data[[y_var]]
+  d_raw <- data[[d_var]]
+
+  # as.numeric()/as.integer() on a factor silently return level codes, so
+  # factor/character columns must be rejected rather than coerced.
+  if (is.factor(y_raw) || is.character(y_raw)) {
+    stop(sprintf(paste0(
+      "Outcome variable '%s' is of type %s; it must be numeric. Convert it ",
+      "explicitly, e.g. as.numeric(as.character(x))."),
+      y_var, class(y_raw)[1L]), call. = FALSE)
+  }
+  if (is.factor(d_raw) || is.character(d_raw)) {
+    stop(sprintf(paste0(
+      "Treatment variable '%s' is of type %s; it must be numeric, integer, ",
+      "or logical (0 = control, 1 = treated). Convert it explicitly, e.g. ",
+      "as.integer(as.character(x))."),
+      d_var, class(d_raw)[1L]), call. = FALSE)
+  }
+  if (is.numeric(d_raw) &&
+      any(abs(d_raw - round(d_raw)) > 1e-8, na.rm = TRUE)) {
+    stop(sprintf(paste0(
+      "Treatment variable '%s' contains non-integer values; it must be 0/1 ",
+      "(or 0..K integer arms for method = 'si')."),
+      d_var), call. = FALSE)
+  }
+
+  y <- as.numeric(y_raw)
+  d <- as.integer(round(as.numeric(d_raw)))
   id <- data[[id_var]]
   time <- data[[time_var]]
 

@@ -18,6 +18,27 @@
 #'   * `idx_control`: Column indices of control units
 #' @noRd
 panel_to_matrices <- function(y, d, id, time) {
+  if (length(y) == 0L) {
+    stop("Panel data have 0 rows. Check that upstream filtering or cleaning ",
+         "did not remove all observations before calling scm_fit().",
+         call. = FALSE)
+  }
+  if (anyNA(id) || anyNA(time)) {
+    stop("Unit or time identifiers contain NA values. Drop or recode these ",
+         "rows before fitting.", call. = FALSE)
+  }
+  if (anyNA(d)) {
+    stop(sprintf(paste0(
+      "Treatment indicator contains %d NA value(s). Units with NA treatment ",
+      "status cannot be classified as treated or control; recode or drop ",
+      "these rows before fitting."), sum(is.na(d))), call. = FALSE)
+  }
+  if (any(d < 0)) {
+    stop("Treatment indicator must be non-negative (0 = control, ",
+         "1 = treated, 2+ = additional arms for method = 'si').",
+         call. = FALSE)
+  }
+
   # Sort by id then time
   ord <- order(id, time)
   y <- y[ord]
@@ -66,6 +87,13 @@ panel_to_matrices <- function(y, d, id, time) {
   ever_treated <- which(colSums(D) > 0)
   ever_control <- which(colSums(D) == 0)
 
+  if (length(ever_treated) == 0L) {
+    stop("No treated units found: the treatment indicator is 0 for all ",
+         "observations. Check that the treated unit(s) were not dropped ",
+         "during data preparation and that the treatment column is coded ",
+         "correctly.", call. = FALSE)
+  }
+
   # Per-unit adoption row index (first row where D[,j] > 0, i.e. any treatment arm)
   T_adopt <- rep(NA_integer_, N)
   for (j in ever_treated) {
@@ -76,6 +104,15 @@ panel_to_matrices <- function(y, d, id, time) {
   # Global T_pre = min(T_adopt) - 1 (backward-compatible semantics)
   T_pre <- min(T_adopt[ever_treated], na.rm = TRUE) - 1L
   is_sharp <- length(unique(T_adopt[ever_treated])) == 1L
+
+  # Under staggered adoption a panel with no never-treated units can still be
+  # estimable (future adopters serve as clean controls), so only reject the
+  # sharp case where the donor pool is structurally empty.
+  if (length(ever_control) == 0L && is_sharp) {
+    stop("No control units found: every unit is treated at the same time, ",
+         "leaving no donor pool. Check the treatment coding and upstream ",
+         "filtering.", call. = FALSE)
+  }
 
   list(
     Y = Y,
@@ -88,6 +125,32 @@ panel_to_matrices <- function(y, d, id, time) {
     idx_treat = ever_treated,
     idx_control = ever_control
   )
+}
+
+#' Validate that the outcome matrix is fully observed
+#'
+#' SCM/SDID/GSC/SI operate on dense matrices and would otherwise fail deep in
+#' the C++ solvers with cryptic messages (e.g. "eig_sym(): decomposition
+#' failed") when the panel has missing cells. MC and TASC handle missing
+#' outcomes by design and must not call this.
+#'
+#' @param Y            Outcome matrix (T x N) from `panel_to_matrices()`.
+#' @param method_label Estimator name used in the error message.
+#' @noRd
+.check_panel_complete <- function(Y, method_label) {
+  bad <- !is.finite(Y)
+  n_bad <- sum(bad)
+  if (n_bad == 0L) return(invisible(NULL))
+  ij <- which(bad, arr.ind = TRUE)[1L, ]
+  stop(sprintf(paste0(
+    "%s requires a balanced panel with fully observed outcomes, but %d ",
+    "unit-time cell(s) are missing or non-finite (first: unit '%s' at time ",
+    "'%s'). This happens when (id, time) rows are absent from the data or ",
+    "the outcome contains NA/Inf values. Complete the panel, drop the ",
+    "affected units, or use method = 'mc' or 'tasc', which handle missing ",
+    "outcomes."),
+    method_label, n_bad, colnames(Y)[ij[2L]], rownames(Y)[ij[1L]]),
+    call. = FALSE)
 }
 
 #' NULL-coalescing helper

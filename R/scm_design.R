@@ -135,6 +135,11 @@ scm_design <- function(
     }
   }
 
+  if (nrow(data) == 0L) {
+    stop("Panel data have 0 rows. Check that upstream filtering or cleaning ",
+         "did not remove all observations.", call. = FALSE)
+  }
+
   units <- sort(unique(data[[unit]]))
   times <- sort(unique(data[[time]]))
   J     <- length(units)

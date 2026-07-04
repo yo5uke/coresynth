@@ -265,7 +265,10 @@
   })
 
   valid <- !vapply(cohort_list, is.null, logical(1L))
-  if (!any(valid)) stop("All cohort-level SDID fits failed.", call. = FALSE)
+  if (!any(valid)) {
+    stop("All cohort-level SDID fits failed; see the preceding warnings for ",
+         "per-cohort reasons.", call. = FALSE)
+  }
   r <- cohort_list[valid]
 
   w   <- vapply(r, `[[`, numeric(1L), "weight")
@@ -294,6 +297,7 @@ fit_sdid_cpp <- function(y, d, id, time,
                          ...) {
   control_group <- match.arg(control_group)
   pan    <- panel_to_matrices(y, d, id, time)
+  .check_panel_complete(pan$Y, "SDID")
   Y      <- pan$Y
   T_pre  <- pan$T_pre
   idx_tr <- pan$idx_treat

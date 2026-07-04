@@ -34,9 +34,21 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 20, fix_A = FALSE, ...
     if (!is.na(t0) && t0 <= TT) Y_obs[t0:TT, j] <- NA_real_
   }
 
+  # The EM (Kalman smoother + per-unit M-steps) handles missing cells in
+  # Y_obs, but the SVD/OLS initialisation below cannot: impute missing cells
+  # with the column mean for the starting values only.
+  impute_col_mean <- function(M) {
+    if (!anyNA(M)) return(M)
+    cm <- colMeans(M, na.rm = TRUE)
+    cm[!is.finite(cm)] <- mean(M, na.rm = TRUE)
+    idx <- which(is.na(M), arr.ind = TRUE)
+    M[idx] <- cm[idx[, 2L]]
+    M
+  }
+
   # Initialise parameters from SVD of control-unit data (T_pre x N_co)
   # u: T_pre x r (time factors), v: N_co x r (unit loadings)
-  Y_co_pre <- Y[seq_len(T_pre), idx_co, drop = FALSE]
+  Y_co_pre <- impute_col_mean(Y[seq_len(T_pre), idx_co, drop = FALSE])
   svd_res  <- svd(Y_co_pre, nu = r, nv = r)
 
   # W_full: N x r observation/loading matrix
@@ -49,7 +61,8 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 20, fix_A = FALSE, ...
   if(T_pre >= r) {
     F_pre <- svd_res$u %*% diag(svd_res$d[seq_len(r)], r, r)   # T_pre x r
     L_tr  <- solve(t(F_pre) %*% F_pre + diag(1e-8, r),
-                   t(F_pre) %*% Y[seq_len(T_pre), idx_tr, drop = FALSE])
+                   t(F_pre) %*%
+                     impute_col_mean(Y[seq_len(T_pre), idx_tr, drop = FALSE]))
     W_full[idx_tr, ] <- t(L_tr)
   }
 

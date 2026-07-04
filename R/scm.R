@@ -54,6 +54,7 @@ fit_scm_cpp <- function(
   v_optim       <- match.arg(v_optim)
   control_group <- match.arg(control_group)
   pan <- panel_to_matrices(y, d, id, time)
+  .check_panel_complete(pan$Y, "SCM")
 
   # -- Staggered path (cohort-by-cohort SCM) -----------------------------------
   if (!pan$is_sharp) {
@@ -120,6 +121,11 @@ fit_scm_cpp <- function(
   }
   if (length(idx_co) < 2L) {
     stop("SCM requires at least two control units.")
+  }
+  if (T_pre < 1L) {
+    stop("No pre-treatment periods: the treated unit is already treated in ",
+         "the first period. SCM needs at least one pre-treatment period to ",
+         "fit donor weights.", call. = FALSE)
   }
 
   Y_co_pre <- Y[seq_len(T_pre), idx_co, drop = FALSE]
@@ -605,7 +611,10 @@ fit_scm_cpp <- function(
   })
 
   valid <- !vapply(cohort_list, is.null, logical(1L))
-  if (!any(valid)) stop("All cohort-level SCM fits failed.", call. = FALSE)
+  if (!any(valid)) {
+    stop("All cohort-level SCM fits failed; see the preceding warnings for ",
+         "per-cohort reasons.", call. = FALSE)
+  }
   r <- cohort_list[valid]
 
   w   <- vapply(r, `[[`, numeric(1L), "weight")

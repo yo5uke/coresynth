@@ -81,12 +81,14 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
 //'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 //'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
 //'   * `effects`:   N_co-vector of mean post-period gap per placebo unit
+//'   * `gaps`:      (T_pre + T_post) x N_co matrix of placebo gap paths
 //' @export
 // [[Rcpp::export]]
 Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
                             int max_iter = 100, double tol = 1e-4) {
   int N_co = Y_pre.n_cols;
   arma::vec mspe_pre(N_co), mspe_post(N_co), effects(N_co);
+  arma::mat gaps(Y_pre.n_rows + Y_post.n_rows, N_co);
   arma::uvec all_idx = arma::regspace<arma::uvec>(0, N_co - 1);
 
   #pragma omp parallel for schedule(dynamic, 1)
@@ -109,11 +111,13 @@ Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
     mspe_pre(i)  = arma::mean(arma::square(y_pre_i  - synth_pre));
     mspe_post(i) = arma::mean(arma::square(y_post_i - synth_post));
     effects(i)   = arma::mean(y_post_i - synth_post);
+    gaps.col(i)  = arma::join_cols(y_pre_i - synth_pre, y_post_i - synth_post);
   }
 
   return Rcpp::List::create(
     Rcpp::Named("mspe_pre")  = mspe_pre,
     Rcpp::Named("mspe_post") = mspe_post,
-    Rcpp::Named("effects")   = effects
+    Rcpp::Named("effects")   = effects,
+    Rcpp::Named("gaps")      = gaps
   );
 }

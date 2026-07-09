@@ -1,13 +1,63 @@
+# -- Internal style-merging helpers ------------------------------------------
+#
+# geom_vline()/geom_hline() cannot be removed from a ggplot object once added
+# (only overplotted), so suppression and restyling of reference lines must
+# happen inside the plot method, before the layer is ever added.
+
+# Merge user overrides onto a default aesthetic list for a reference line.
+# override = NULL or FALSE suppresses the line entirely (returns NULL).
+# override = list(...) is merged onto default via modifyList (unset keys keep
+# their default value).
+.line_style <- function(default, override) {
+  if (is.null(override) || isFALSE(override)) return(NULL)
+  if (!is.list(override))
+    stop("vline/hline must be a list of aesthetic overrides ",
+         "(e.g. list(color = \"red\")), or NULL/FALSE to hide the line.",
+         call. = FALSE)
+  utils::modifyList(default, override)
+}
+
+# Merge a user-supplied named color vector onto the package default, keeping
+# any series name the user didn't mention at its default color.
+.merge_named_colors <- function(default, override) {
+  if (is.null(override)) return(default)
+  if (is.null(names(override)) || !all(nzchar(names(override))))
+    stop("colors must be a named vector, e.g. c(Treated = \"black\"). ",
+         "Valid names: ", paste(names(default), collapse = ", "), ".",
+         call. = FALSE)
+  unknown <- setdiff(names(override), names(default))
+  if (length(unknown) > 0)
+    stop("colors has unrecognized name(s): ", paste(unknown, collapse = ", "),
+         ". Valid names: ", paste(names(default), collapse = ", "), ".",
+         call. = FALSE)
+  default[names(override)] <- override
+  default
+}
+
 #' Plot a coresynth model
 #'
-#' @param x     A `coresynth` object.
-#' @param type  One of `"trend"` (observed vs synthetic), `"gap"` (ATT over time),
-#'              or `"weights"` (donor unit weight bar chart).
-#' @param ...   Ignored.
+#' @param x      A `coresynth` object.
+#' @param type   One of `"trend"` (observed vs synthetic), `"gap"` (ATT over time),
+#'               or `"weights"` (donor unit weight bar chart).
+#' @param colors For `type = "trend"`: a named vector overriding series colors,
+#'   e.g. `c(Treated = "black")` (valid names: `"Treated"`, `"Synthetic Control"`).
+#'   For `type = "gap"`: a single color string for the gap line. Ignored for
+#'   `type = "weights"` (use `fill` instead).
+#' @param vline  Aesthetic overrides for the vertical treatment-time line, as a
+#'   list passed to [ggplot2::geom_vline()] (e.g. `list(color = "red")`).
+#'   `NULL` or `FALSE` hides the line entirely. Applies to `"trend"` and `"gap"`.
+#' @param hline  Aesthetic overrides for the horizontal zero line in `type =
+#'   "gap"`, as a list passed to [ggplot2::geom_hline()]. `NULL` or `FALSE`
+#'   hides the line. Ignored for other types.
+#' @param fill   For `type = "weights"`: a single color string overriding the
+#'   bar fill. Ignored for other types.
+#' @param ...    Ignored.
 #' @return A `ggplot2` plot object.
 #' @import ggplot2
 #' @export
-plot.coresynth <- function(x, type = c("trend", "gap", "weights"), ...) {
+plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
+                            colors = NULL, vline = list(), hline = list(),
+                            fill = NULL, ...) {
   type <- match.arg(type)
 
   if(type %in% c("trend", "gap")) {
@@ -28,9 +78,13 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"), ...) {
       Y_hat <- if(!is.null(x$Y_hat)) x$Y_hat else x$Y_tr_hat
       if(is.matrix(Y_hat)) rowMeans(Y_hat, na.rm = TRUE) else Y_hat
     }
-    treat_time <- if(!is.null(x$T_pre)) times[x$T_pre + 1] else NA
+    treat_time  <- if(!is.null(x$T_pre)) times[x$T_pre + 1] else NA
+    vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
 
     if(type == "trend") {
+      series_colors <- .merge_named_colors(
+        c(Treated = "#2166ac", `Synthetic Control` = "#d73027"), colors
+      )
       df <- data.frame(
         time     = c(times, times),
         value    = c(Y_treat, Y_synth),
@@ -38,9 +92,9 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"), ...) {
       )
       p <- ggplot(df, aes(x = time, y = value, color = series, linetype = series)) +
         geom_line(linewidth = 0.9) +
-        scale_color_manual(values = c("Treated" = "#2166ac", "Synthetic Control" = "#d73027")) +
+        scale_color_manual(values = series_colors) +
         scale_linetype_manual(values = c("Treated" = "solid", "Synthetic Control" = "dashed")) +
-        {if(!is.na(treat_time)) geom_vline(xintercept = treat_time, linetype = "dotted", color = "gray40")} +
+        {if(!is.null(vline_style) && !is.na(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
         theme_minimal(base_size = 13) +
         labs(title    = paste0("Synthetic Control Trend  [", toupper(x$method), "]"),
              x = "Time", y = "Outcome", color = NULL, linetype = NULL)
@@ -48,12 +102,14 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"), ...) {
     }
 
     if(type == "gap") {
+      gap_color   <- if (is.null(colors)) "#1a9641" else unname(colors[[1]])
+      hline_style <- .line_style(list(color = "gray50", linetype = "dashed"), hline)
       gap <- Y_treat - Y_synth
       df  <- data.frame(time = times, gap = gap)
       p <- ggplot(df, aes(x = time, y = gap)) +
-        geom_line(color = "#1a9641", linewidth = 0.9) +
-        geom_hline(yintercept = 0, color = "gray50", linetype = "dashed") +
-        {if(!is.na(treat_time)) geom_vline(xintercept = treat_time, linetype = "dotted", color = "gray40")} +
+        geom_line(color = gap_color, linewidth = 0.9) +
+        {if(!is.null(hline_style)) do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
+        {if(!is.null(vline_style) && !is.na(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
         theme_minimal(base_size = 13) +
         labs(title = paste0("Treatment Effect Gap  [", toupper(x$method), "]"),
              x = "Time", y = "Y_treated - Y_synthetic")
@@ -66,6 +122,7 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"), ...) {
     if(is.null(w) || all(is.na(w)))
       stop("No unit weights available for this method (GSC/MC/TASC use factor loadings).")
 
+    bar_fill <- fill %||% "#4575b4"
     df <- data.frame(
       unit   = names(w) %||% paste0("Unit_", seq_along(w)),
       weight = as.numeric(w)
@@ -74,10 +131,139 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"), ...) {
     if(nrow(df) == 0) stop("All unit weights are negligibly small.")
 
     p <- ggplot(df, aes(x = reorder(unit, weight), y = weight)) +
-      geom_col(fill = "#4575b4", alpha = 0.85) +
+      geom_col(fill = bar_fill, alpha = 0.85) +
       coord_flip() +
       theme_minimal(base_size = 13) +
       labs(title = "Donor Unit Weights", x = NULL, y = "Weight")
     return(p)
   }
+}
+
+#' Plot SCM In-Space Placebo Results
+#'
+#' Visualizes the placebo study returned by [mspe_ratio_pval()], following
+#' Abadie, Diamond & Hainmueller (2010, Section 3.4).
+#'
+#' `type = "gaps"` overlays the treated unit's gap path (treated minus
+#' synthetic control) on the placebo gap paths obtained by reassigning the
+#' intervention to each donor unit (ADH 2010, Figure 4). Placebo units whose
+#' synthetic control fits poorly before treatment carry no information about
+#' the rarity of a large post-treatment gap, so ADH exclude units whose
+#' pre-treatment MSPE exceeds a multiple of the treated unit's: 20, 5, and 2
+#' in their Figures 5-7 (`mspe_prune`).
+#'
+#' `type = "ratios"` shows the post/pre-treatment MSPE ratio of every unit
+#' (ADH 2010, Figure 8), the statistic behind the two-sided permutation
+#' p-value; it requires no pruning cutoff by construction.
+#'
+#' @param x A `scm_placebo` object from [mspe_ratio_pval()].
+#' @param type One of `"gaps"` (ADH 2010, Figures 4-7) or `"ratios"`
+#'   (ADH 2010, Figure 8).
+#' @param mspe_prune Only for `type = "gaps"`: exclude placebo units whose
+#'   pre-treatment MSPE exceeds `mspe_prune` times the treated unit's.
+#'   Default `Inf` (no pruning). A rule stated on the RMSPE scale, such as
+#'   tidysynth's "2 times the treated unit's pre-period RMSPE", corresponds
+#'   to the squared multiple (`mspe_prune = 4`).
+#' @param colors A named vector overriding series colors, e.g.
+#'   `c(Treated = "black")`. Valid names: `"Treated"`, `"Placebo (donor pool)"`.
+#' @param vline Only for `type = "gaps"`: aesthetic overrides for the vertical
+#'   treatment-time line, as a list passed to [ggplot2::geom_vline()].
+#'   `NULL` or `FALSE` hides the line entirely.
+#' @param hline Only for `type = "gaps"`: aesthetic overrides for the
+#'   horizontal zero line, as a list passed to [ggplot2::geom_hline()].
+#'   `NULL` or `FALSE` hides the line entirely.
+#' @param ... Ignored.
+#' @return A `ggplot2` plot object.
+#' @seealso [mspe_ratio_pval()]
+#' @export
+plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
+                              colors = NULL, vline = list(), hline = list(), ...) {
+  type <- match.arg(type)
+  if (!is.numeric(mspe_prune) || length(mspe_prune) != 1L || mspe_prune <= 0)
+    stop("mspe_prune must be a single positive number (Inf = no pruning).")
+
+  subtitle <- paste0(
+    "Permutation p-value = ", formatC(x$p_value, digits = 3, format = "g"),
+    " (", x$alternative, ", ", x$n_placebo_used, " placebo units)"
+  )
+
+  if (type == "gaps") {
+    times <- x$times
+    if (is.character(times) || is.factor(times))
+      times <- as.numeric(as.character(times))
+    treat_time <- times[x$T_pre + 1L]
+
+    keep <- is.finite(x$mspe_pre_placebo) &
+      x$mspe_pre_placebo <= mspe_prune * x$mspe_pre_treated
+    n_pruned <- sum(!keep)
+    if (!any(keep))
+      warning("All placebo units were pruned; only the treated gap is shown. ",
+              "Consider a larger mspe_prune.")
+
+    gaps  <- x$gaps[, keep, drop = FALSE]
+    # sprintf keeps zero-length input zero-length (paste0 would collapse it to "Donor ")
+    units <- colnames(gaps) %||% sprintf("Donor %d", which(keep))
+    df_pl <- data.frame(
+      time = rep(times, times = ncol(gaps)),
+      gap  = as.vector(gaps),
+      unit = rep(units, each = length(times))
+    )
+    df_tr <- data.frame(time = times, gap = x$treated_gap)
+
+    series_colors <- .merge_named_colors(
+      c(Treated = "#2166ac", `Placebo (donor pool)` = "grey70"), colors
+    )
+    vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
+    hline_style <- .line_style(list(color = "gray50", linetype = "dashed"), hline)
+
+    p <- ggplot() +
+      geom_line(data = df_pl,
+                aes(x = time, y = gap, group = unit, color = "Placebo (donor pool)"),
+                linewidth = 0.4, alpha = 0.8) +
+      geom_line(data = df_tr, aes(x = time, y = gap, color = "Treated"),
+                linewidth = 1.0) +
+      {if(!is.null(hline_style)) do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
+      {if(!is.null(vline_style)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
+      scale_color_manual(values = series_colors, breaks = names(series_colors)) +
+      theme_minimal(base_size = 13) +
+      labs(title = "Placebo Gaps in the Donor Pool  [SCM]",
+           subtitle = subtitle,
+           x = "Time", y = "Gap (unit - synthetic control)",
+           color = NULL,
+           caption = if (n_pruned > 0L) {
+             paste0("Pruned ", n_pruned, " placebo unit(s) with pre-treatment MSPE > ",
+                    mspe_prune, "x the treated unit's (ADH 2010, Figures 5-7).")
+           })
+    return(p)
+  }
+
+  # type == "ratios" (ADH 2010, Figure 8)
+  r     <- x$mspe_ratios_all
+  units <- names(r)
+  if (is.null(units)) units <- c("Treated", sprintf("Donor %d", seq_len(length(r) - 1L)))
+  units[1L] <- "Treated"
+  blank <- !nzchar(units)
+  units[blank] <- sprintf("Donor %d", which(blank) - 1L)
+
+  df <- data.frame(unit = units, ratio = as.numeric(r),
+                   series = c("Treated", rep("Placebo (donor pool)", length(r) - 1L)))
+  n_dropped <- sum(!is.finite(df$ratio))
+  df <- df[is.finite(df$ratio), ]
+  if (nrow(df) == 0L) stop("No finite MSPE ratios to plot.")
+
+  series_colors <- .merge_named_colors(
+    c(Treated = "#2166ac", `Placebo (donor pool)` = "grey60"), colors
+  )
+
+  p <- ggplot(df, aes(x = ratio, y = reorder(unit, ratio), color = series)) +
+    geom_point(size = 2.5) +
+    scale_color_manual(values = series_colors, breaks = names(series_colors)) +
+    theme_minimal(base_size = 13) +
+    labs(title = "Post/Pre-Treatment MSPE Ratios  [SCM]",
+         subtitle = subtitle,
+         x = "MSPE ratio (post / pre)", y = NULL, color = NULL,
+         caption = if (n_dropped > 0L) {
+           paste0(n_dropped, " unit(s) without a finite ratio (mspe_threshold filter) omitted.")
+         })
+  p
 }

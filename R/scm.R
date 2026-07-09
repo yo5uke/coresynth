@@ -660,13 +660,20 @@ fit_scm_cpp <- function(
 #'   `"greater"` tests whether the treatment increased the outcome;
 #'   `"less"` tests whether the treatment decreased the outcome.
 #'   One-sided tests use the signed ATT as the test statistic.
-#' @return A list with:
+#' @return An object of class `scm_placebo` (a list) with:
 #'   * `p_value`: Permutation p-value between 0 and 1
 #'   * `mspe_ratio_treated`: MSPE_post / MSPE_pre for the treated unit (two.sided only)
 #'   * `mspe_ratios_all`: Named numeric vector (treated first, then controls); two.sided only
 #'   * `placebo_effects`: Named N_co-vector of placebo ATT estimates
 #'   * `treated_effect`: ATT estimate for the treated unit
 #'   * `n_placebo_used`: Number of control units used
+#'   * `gaps`: T x N_co matrix of placebo gap paths (unit minus its synthetic
+#'     control over all periods), for the Abadie et al. (2010) Figure 4-7 plot
+#'   * `treated_gap`: T-vector of the treated unit's gap path
+#'   * `mspe_pre_treated`, `mspe_pre_placebo`: Pre-treatment MSPEs used for
+#'     the relative pruning rule in [plot.scm_placebo()]
+#'   * `times`, `T_pre`: Time axis metadata for plotting
+#' @seealso [plot.scm_placebo()] for the placebo gap and MSPE ratio plots.
 #' @export
 mspe_ratio_pval <- function(
   fit,
@@ -721,6 +728,7 @@ mspe_ratio_pval <- function(
     mspe_pre_vec <- numeric(N_co)
     mspe_post_vec <- numeric(N_co)
     effects_vec  <- numeric(N_co)
+    gaps_mat     <- matrix(NA_real_, nrow = T_all, ncol = N_co)
 
     for (i in seq_len(N_co)) {
       X0_loo <- fit$X0_mat[, -i, drop = FALSE]
@@ -746,23 +754,30 @@ mspe_ratio_pval <- function(
       mspe_pre_vec[i]  <- mean((Z1_loo - synth_pre)^2)
       mspe_post_vec[i] <- mean((fit$Y_co_post[, i] - synth_post)^2)
       effects_vec[i]   <- mean(fit$Y_co_post[, i] - synth_post)
+      gaps_mat[, i]    <- c(Z1_loo - synth_pre, fit$Y_co_post[, i] - synth_post)
     }
 
     keep      <- !is.na(mspe_pre_vec) & mspe_pre_vec > mspe_threshold
     ratios_co <- ifelse(keep, mspe_post_vec / mspe_pre_vec, NA_real_)
     co_effects <- effects_vec
+    mspe_pre_co <- mspe_pre_vec
   } else {
     plac      <- scm_placebo_cpp(fit$Y_co_pre, fit$Y_co_post,
                                   max_iter = max_iter, tol = tol)
     keep      <- plac$mspe_pre > mspe_threshold
     ratios_co <- ifelse(keep, plac$mspe_post / plac$mspe_pre, NA_real_)
     co_effects <- plac$effects
+    # Armadillo vectors come back as N_co x 1 matrices; flatten for naming
+    mspe_pre_co <- as.numeric(plac$mspe_pre)
+    gaps_mat    <- plac$gaps
   }
 
   co_names <- colnames(fit$Y_co_pre)
   if (!is.null(co_names)) {
-    names(ratios_co)  <- co_names
-    names(co_effects) <- co_names
+    names(ratios_co)   <- co_names
+    names(co_effects)  <- co_names
+    names(mspe_pre_co) <- co_names
+    colnames(gaps_mat) <- co_names
   }
 
   treated_effect <- fit$estimate
@@ -784,13 +799,23 @@ mspe_ratio_pval <- function(
     n_used     <- sum(!is.na(co_effects))
   }
 
-  list(
-    p_value            = p_value,
-    mspe_ratio_treated = ratio_tr,
-    mspe_ratios_all    = all_ratios,
-    placebo_effects    = co_effects,
-    treated_effect     = treated_effect,
-    n_placebo_used     = n_used
+  structure(
+    list(
+      p_value            = p_value,
+      mspe_ratio_treated = ratio_tr,
+      mspe_ratios_all    = all_ratios,
+      placebo_effects    = co_effects,
+      treated_effect     = treated_effect,
+      n_placebo_used     = n_used,
+      gaps               = gaps_mat,
+      treated_gap        = as.numeric(fit$gap %||% (fit$Y_treat - fit$Y_synth)),
+      mspe_pre_treated   = mspe_pre_tr,
+      mspe_pre_placebo   = mspe_pre_co,
+      times              = fit$times,
+      T_pre              = T_pre,
+      alternative        = alternative
+    ),
+    class = "scm_placebo"
   )
 }
 

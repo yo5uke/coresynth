@@ -4,13 +4,36 @@
 \alias{plot.coresynth}
 \title{Plot a coresynth model}
 \usage{
-\method{plot}{coresynth}(x, type = c("trend", "gap", "weights"), ...)
+\method{plot}{coresynth}(
+  x,
+  type = c("trend", "gap", "weights"),
+  colors = NULL,
+  vline = list(),
+  hline = list(),
+  fill = NULL,
+  ...
+)
 }
 \arguments{
 \item{x}{A \code{coresynth} object.}
 
 \item{type}{One of \code{"trend"} (observed vs synthetic), \code{"gap"} (ATT over time),
 or \code{"weights"} (donor unit weight bar chart).}
+
+\item{colors}{For \code{type = "trend"}: a named vector overriding series colors,
+e.g. \code{c(Treated = "black")} (valid names: \code{"Treated"}, \code{"Synthetic Control"}).
+For \code{type = "gap"}: a single color string for the gap line. Ignored for
+\code{type = "weights"} (use \code{fill} instead).}
+
+\item{vline}{Aesthetic overrides for the vertical treatment-time line, as a
+list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}} (e.g. \code{list(color = "red")}).
+\code{NULL} or \code{FALSE} hides the line entirely. Applies to \code{"trend"} and \code{"gap"}.}
+
+\item{hline}{Aesthetic overrides for the horizontal zero line in \code{type = "gap"}, as a list passed to \code{\link[ggplot2:geom_hline]{ggplot2::geom_hline()}}. \code{NULL} or \code{FALSE}
+hides the line. Ignored for other types.}
+
+\item{fill}{For \code{type = "weights"}: a single color string overriding the
+bar fill. Ignored for other types.}
 
 \item{...}{Ignored.}
 }

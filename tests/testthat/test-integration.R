@@ -3332,3 +3332,162 @@ test_that("scm_design rejects 0-row data", {
     "0 rows"
   )
 })
+
+# ── Phase 28: in-space placebo gap paths + plot (ADH 2010, Figures 4-8) ───────
+
+test_that("scm_placebo_cpp returns gap paths consistent with effects", {
+  fit  <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  plac <- scm_placebo_cpp(fit$Y_co_pre, fit$Y_co_post)
+  expect_equal(dim(plac$gaps), c(20L, 9L))
+  expect_true(all(is.finite(plac$gaps)))
+  # Mean of the post-period gap rows must reproduce the placebo effects
+  expect_equal(colMeans(plac$gaps[11:20, , drop = FALSE]), as.numeric(plac$effects),
+               tolerance = 1e-10)
+  # Mean squared pre-period gap rows must reproduce mspe_pre
+  expect_equal(colMeans(plac$gaps[1:10, , drop = FALSE]^2), as.numeric(plac$mspe_pre),
+               tolerance = 1e-10)
+})
+
+test_that("mspe_ratio_pval returns scm_placebo object with gap paths", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+  expect_s3_class(inf, "scm_placebo")
+  expect_equal(dim(inf$gaps), c(20L, 9L))
+  expect_equal(colnames(inf$gaps), sort(paste0("u", 2:10)))
+  expect_equal(length(inf$treated_gap), 20L)
+  expect_equal(inf$treated_gap, as.numeric(fit$gap))
+  expect_equal(length(inf$mspe_pre_placebo), 9L)
+  expect_true(is.finite(inf$mspe_pre_treated))
+  expect_equal(inf$T_pre, 10L)
+  expect_equal(inf$times, fit$times)
+  # placebo_effects must equal post-period column means of the gap paths
+  expect_equal(as.numeric(inf$placebo_effects), unname(colMeans(inf$gaps[11:20, ])),
+               tolerance = 1e-10)
+})
+
+test_that("mspe_ratio_pval use_covariates=TRUE also returns gap paths", {
+  fit <- scm_fit(
+    y ~ d | id + time, data = panel, method = "scm",
+    predictors = list(pred("y", 1:5, "mean"), pred("y", 6:10, "mean"))
+  )
+  inf <- mspe_ratio_pval(fit, use_covariates = TRUE)
+  expect_s3_class(inf, "scm_placebo")
+  expect_equal(dim(inf$gaps), c(20L, 9L))
+  expect_true(all(is.finite(inf$gaps)))
+  expect_equal(as.numeric(inf$placebo_effects), unname(colMeans(inf$gaps[11:20, ])),
+               tolerance = 1e-10)
+})
+
+test_that("plot.scm_placebo type='gaps' returns a ggplot and prunes by MSPE multiple", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+
+  p_all <- plot(inf, type = "gaps")
+  expect_s3_class(p_all, "ggplot")
+  expect_equal(length(unique(p_all$layers[[1]]$data$unit)), 9L)
+
+  # ADH 2010 Figures 5-7 style pruning: only well-fitted placebos remain
+  mult    <- 2
+  n_keep  <- sum(inf$mspe_pre_placebo <= mult * inf$mspe_pre_treated)
+  p_prune <- plot(inf, type = "gaps", mspe_prune = mult)
+  expect_s3_class(p_prune, "ggplot")
+  expect_equal(length(unique(p_prune$layers[[1]]$data$unit)), n_keep)
+})
+
+test_that("plot.scm_placebo warns when all placebos are pruned", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+  expect_warning(p <- plot(inf, type = "gaps", mspe_prune = 1e-12),
+                 "pruned")
+  expect_s3_class(p, "ggplot")
+})
+
+test_that("plot.scm_placebo type='ratios' returns a ggplot with all units", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+  p <- plot(inf, type = "ratios")
+  expect_s3_class(p, "ggplot")
+  expect_equal(nrow(p$data), 10L) # treated + 9 donors
+  expect_true("Treated" %in% p$data$unit)
+})
+
+test_that("plot.scm_placebo rejects invalid mspe_prune", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+  expect_error(plot(inf, mspe_prune = -1), "positive")
+  expect_error(plot(inf, mspe_prune = c(1, 2)), "single")
+})
+
+# ── Phase 29: plot style customization (colors/vline/hline/fill) ────────────
+
+test_that("plot.coresynth trend: color override reaches the built plot data", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  p_default <- plot(fit, type = "trend")
+  expect_equal(length(p_default$layers), 2L) # geom_line + geom_vline
+
+  p_custom <- plot(fit, type = "trend", colors = c(Treated = "black"))
+  built <- ggplot2::ggplot_build(p_custom)
+  expect_true("black" %in% built$data[[1]]$colour)
+  expect_true("#d73027" %in% built$data[[1]]$colour) # Synthetic Control unchanged
+})
+
+test_that("plot.coresynth trend: unknown color name errors", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(plot(fit, type = "trend", colors = c(Bogus = "red")),
+               "unrecognized name")
+})
+
+test_that("plot.coresynth trend: vline = FALSE/NULL suppresses the line", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  n_default <- length(plot(fit, type = "trend")$layers)
+  expect_equal(length(plot(fit, type = "trend", vline = FALSE)$layers), n_default - 1L)
+  expect_equal(length(plot(fit, type = "trend", vline = NULL)$layers), n_default - 1L)
+})
+
+test_that("plot.coresynth trend: vline must be a list", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(plot(fit, type = "trend", vline = "red"),
+               "list of aesthetic overrides")
+})
+
+test_that("plot.coresynth gap: color/vline/hline overrides work", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  n_default <- length(plot(fit, type = "gap")$layers)
+  expect_equal(length(plot(fit, type = "gap", vline = NULL, hline = NULL)$layers),
+               n_default - 2L)
+
+  p_color <- plot(fit, type = "gap", colors = "black")
+  built   <- ggplot2::ggplot_build(p_color)
+  expect_true(all(built$data[[1]]$colour == "black"))
+})
+
+test_that("plot.coresynth weights: fill override reaches the built plot data", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  p <- plot(fit, type = "weights", fill = "darkorange")
+  built <- ggplot2::ggplot_build(p)
+  expect_true(all(built$data[[1]]$fill == "darkorange"))
+})
+
+test_that("plot.scm_placebo type='gaps': color/vline/hline overrides work", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+
+  n_default <- length(plot(inf, type = "gaps")$layers)
+  expect_equal(length(plot(inf, type = "gaps", vline = FALSE, hline = FALSE)$layers),
+               n_default - 2L)
+
+  p_custom <- plot(inf, type = "gaps",
+                    colors = c(`Placebo (donor pool)` = "lightblue"))
+  built <- ggplot2::ggplot_build(p_custom)
+  expect_true("lightblue" %in% built$data[[1]]$colour)
+  expect_true("#2166ac" %in% built$data[[2]]$colour) # Treated unchanged
+})
+
+test_that("plot.scm_placebo: unknown color name errors", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+  expect_error(plot(inf, type = "gaps", colors = c(Bogus = "red")),
+               "unrecognized name")
+  expect_error(plot(inf, type = "ratios", colors = c(Bogus = "red")),
+               "unrecognized name")
+})

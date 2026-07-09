@@ -35,7 +35,7 @@ Default \code{FALSE} (faster C++ outcomes-only placebos).}
 One-sided tests use the signed ATT as the test statistic.}
 }
 \value{
-A list with:
+An object of class \code{scm_placebo} (a list) with:
 \itemize{
 \item \code{p_value}: Permutation p-value between 0 and 1
 \item \code{mspe_ratio_treated}: MSPE_post / MSPE_pre for the treated unit (two.sided only)
@@ -43,6 +43,12 @@ A list with:
 \item \code{placebo_effects}: Named N_co-vector of placebo ATT estimates
 \item \code{treated_effect}: ATT estimate for the treated unit
 \item \code{n_placebo_used}: Number of control units used
+\item \code{gaps}: T x N_co matrix of placebo gap paths (unit minus its synthetic
+control over all periods), for the Abadie et al. (2010) Figure 4-7 plot
+\item \code{treated_gap}: T-vector of the treated unit's gap path
+\item \code{mspe_pre_treated}, \code{mspe_pre_placebo}: Pre-treatment MSPEs used for
+the relative pruning rule in \code{\link[=plot.scm_placebo]{plot.scm_placebo()}}
+\item \code{times}, \code{T_pre}: Time axis metadata for plotting
 }
 }
 \description{
@@ -56,4 +62,7 @@ post/pre MSPE ratio, following Abadie et al. (2010). When
 average post-treatment gap (ATT), giving a one-sided permutation test as
 recommended by Abadie (2021) S.3.5 for improved power when the direction
 of the treatment effect is known.
+}
+\seealso{
+\code{\link[=plot.scm_placebo]{plot.scm_placebo()}} for the placebo gap and MSPE ratio plots.
 }

@@ -21,6 +21,7 @@ A list with:
 \item \code{mspe_pre}:  N_co-vector of pre-treatment MSPE per placebo unit
 \item \code{mspe_post}: N_co-vector of post-treatment MSPE per placebo unit
 \item \code{effects}:   N_co-vector of mean post-period gap per placebo unit
+\item \code{gaps}:      (T_pre + T_post) x N_co matrix of placebo gap paths
 }
 }
 \description{

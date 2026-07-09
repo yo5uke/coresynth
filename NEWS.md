@@ -1,3 +1,27 @@
+# coresynth (development version)
+
+## New features
+
+- **In-space placebo visualization** (Abadie, Diamond & Hainmueller 2010,
+  Section 3.4): `mspe_ratio_pval()` now returns an `scm_placebo` object
+  (still fully backward compatible with the previous plain-list fields) that
+  additionally carries the placebo gap path for every donor unit. A new
+  `plot.scm_placebo()` method renders the two companion figures from the
+  paper: `type = "gaps"` overlays the treated unit's gap on the donor-pool
+  placebo gaps (Figures 4-7, with `mspe_prune` implementing the paper's
+  relative pre-treatment MSPE pruning at 20x/5x/2x), and `type = "ratios"`
+  plots the post/pre-treatment MSPE ratio for every unit (Figure 8).
+- **Plot style customization**: `plot.coresynth()` and `plot.scm_placebo()`
+  gain `colors`, `vline`, `hline`, and (for `type = "weights"`) `fill`
+  arguments. `vline`/`hline` accept a list of `geom_vline()`/`geom_hline()`
+  aesthetic overrides merged onto the built-in defaults, or `NULL`/`FALSE` to
+  suppress the reference line entirely — since a line already added to a
+  returned `ggplot` object cannot be removed, only restyled or overplotted,
+  suppression has to happen inside the plot method. `colors` accepts a named
+  vector overriding individual series colors (unmentioned series keep their
+  default). All defaults reproduce the previous appearance exactly, so
+  existing calls are unaffected.
+
 # coresynth 0.2.4
 
 ## Bug fixes

@@ -68,6 +68,7 @@ sdid_placebo_cpp <- function(Y_pre, Y_post, time_weights, zeta2) {
 #'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 #'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
 #'   * `effects`:   N_co-vector of mean post-period gap per placebo unit
+#'   * `gaps`:      (T_pre + T_post) x N_co matrix of placebo gap paths
 #' @export
 scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4) {
     .Call(`_coresynth_scm_placebo_cpp`, Y_pre, Y_post, max_iter, tol)

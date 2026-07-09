@@ -69,6 +69,7 @@ reference:
 - title: Visualization & export
   contents:
   - plot.coresynth
+  - plot.scm_placebo
   - plot.scm_design
   - export_json
 

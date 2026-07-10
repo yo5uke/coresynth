@@ -8,6 +8,7 @@
   x,
   type = c("trend", "gap", "weights"),
   colors = NULL,
+  labels = NULL,
   vline = list(),
   hline = list(),
   fill = NULL,
@@ -24,6 +25,12 @@ or \code{"weights"} (donor unit weight bar chart).}
 e.g. \code{c(Treated = "black")} (valid names: \code{"Treated"}, \code{"Synthetic Control"}).
 For \code{type = "gap"}: a single color string for the gap line. Ignored for
 \code{type = "weights"} (use \code{fill} instead).}
+
+\item{labels}{For \code{type = "trend"}: a named vector overriding the legend
+text of individual series, e.g. \code{c(Treated = "California")} (valid names:
+\code{"Treated"}, \code{"Synthetic Control"}). Series not mentioned keep their
+default label, and \code{colors} keys always refer to the original series
+names regardless of relabeling. Ignored for other types (no legend).}
 
 \item{vline}{Aesthetic overrides for the vertical treatment-time line, as a
 list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}} (e.g. \code{list(color = "red")}).
@@ -42,4 +49,24 @@ A \code{ggplot2} plot object.
 }
 \description{
 Plot a coresynth model
+}
+\examples{
+set.seed(1)
+panel <- expand.grid(unit = 1:10, year = 1:20)
+panel$treated <- as.integer(panel$unit == 5 & panel$year > 15)
+panel$gdp <- panel$unit + 0.5 * panel$year +
+  rnorm(nrow(panel)) + 3 * panel$treated
+fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "scm")
+
+\donttest{
+plot(fit, type = "trend")
+plot(fit, type = "gap")
+plot(fit, type = "weights")
+
+# Customize series colors, legend text, and reference lines
+plot(fit, type = "trend",
+     colors = c(Treated = "black"),
+     labels = c(Treated = "Unit 5"),
+     vline  = list(color = "red", linetype = "dashed"))
+}
 }

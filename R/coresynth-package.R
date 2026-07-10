@@ -8,5 +8,5 @@
 utils::globalVariables(c(
   "time", "value", "series", "weight",
   "group", "tau_hat", "ci_lower", "ci_upper",
-  "sd"
+  "sd", "gap", "ratio"
 ))

@@ -48,6 +48,36 @@ mspe <- mspe_ratio_pval(fit_scm, alternative = "two.sided")
 c(p_value = mspe$p_value, ratio_obs = mspe$ratio_obs)
 ```
 
+The returned `scm_placebo` object has a `plot()` method that reproduces the
+two companion figures of the paper. `type = "gaps"` overlays the treated
+unit's gap path (treated minus synthetic control) on the placebo gap paths
+obtained by reassigning the intervention to each donor (ADH 2010, Figure 4):
+
+```{r scm-placebo-gaps}
+plot(mspe, type = "gaps")
+```
+
+Placebo units whose synthetic control fits poorly before treatment carry no
+information about the rarity of a large post-treatment gap; ADH exclude them
+with a relative pre-treatment MSPE cutoff (20x/5x/2x in their Figures 5–7),
+available here as `mspe_prune`:
+
+```{r scm-placebo-gaps-pruned}
+plot(mspe, type = "gaps", mspe_prune = 2)
+```
+
+`type = "ratios"` shows the post/pre-treatment MSPE ratio of every unit (ADH
+2010, Figure 8) — the statistic behind the permutation p-value, which needs no
+pruning cutoff by construction:
+
+```{r scm-placebo-ratios}
+plot(mspe, type = "ratios")
+```
+
+Series colors, legend text, and the reference lines are customizable via
+`colors`, `labels` (e.g. `labels = c(Treated = "California")`), `vline`, and
+`hline` — see `?plot.scm_placebo`.
+
 ## SDID — four inference methods
 
 *Arkhangelsky et al. (2021); Clarke et al. (2023).* `sdid_inference()` supports

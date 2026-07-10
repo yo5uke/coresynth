@@ -71,6 +71,25 @@
 #'   bar fill. Ignored for other types.
 #' @param ...    Ignored.
 #' @return A `ggplot2` plot object.
+#' @examples
+#' set.seed(1)
+#' panel <- expand.grid(unit = 1:10, year = 1:20)
+#' panel$treated <- as.integer(panel$unit == 5 & panel$year > 15)
+#' panel$gdp <- panel$unit + 0.5 * panel$year +
+#'   rnorm(nrow(panel)) + 3 * panel$treated
+#' fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "scm")
+#'
+#' \donttest{
+#' plot(fit, type = "trend")
+#' plot(fit, type = "gap")
+#' plot(fit, type = "weights")
+#'
+#' # Customize series colors, legend text, and reference lines
+#' plot(fit, type = "trend",
+#'      colors = c(Treated = "black"),
+#'      labels = c(Treated = "Unit 5"),
+#'      vline  = list(color = "red", linetype = "dashed"))
+#' }
 #' @import ggplot2
 #' @export
 plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
@@ -201,6 +220,26 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
 #'   `NULL` or `FALSE` hides the line entirely.
 #' @param ... Ignored.
 #' @return A `ggplot2` plot object.
+#' @examples
+#' set.seed(1)
+#' panel <- expand.grid(unit = 1:10, year = 1:20)
+#' panel$treated <- as.integer(panel$unit == 5 & panel$year > 15)
+#' panel$gdp <- panel$unit + 0.5 * panel$year +
+#'   rnorm(nrow(panel)) + 3 * panel$treated
+#' fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "scm")
+#' placebo <- mspe_ratio_pval(fit)
+#'
+#' \donttest{
+#' # Treated gap overlaid on the donor-pool placebo gaps (ADH 2010, Fig. 4)
+#' plot(placebo, type = "gaps")
+#'
+#' # Prune poorly fitting placebos and relabel the legend
+#' plot(placebo, type = "gaps", mspe_prune = 5,
+#'      labels = c(Treated = "Unit 5"))
+#'
+#' # Post/pre-treatment MSPE ratios (ADH 2010, Fig. 8)
+#' plot(placebo, type = "ratios")
+#' }
 #' @seealso [mspe_ratio_pval()]
 #' @export
 plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,

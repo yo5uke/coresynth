@@ -66,6 +66,27 @@ in their Figures 5-7 (\code{mspe_prune}).
 (ADH 2010, Figure 8), the statistic behind the two-sided permutation
 p-value; it requires no pruning cutoff by construction.
 }
+\examples{
+set.seed(1)
+panel <- expand.grid(unit = 1:10, year = 1:20)
+panel$treated <- as.integer(panel$unit == 5 & panel$year > 15)
+panel$gdp <- panel$unit + 0.5 * panel$year +
+  rnorm(nrow(panel)) + 3 * panel$treated
+fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "scm")
+placebo <- mspe_ratio_pval(fit)
+
+\donttest{
+# Treated gap overlaid on the donor-pool placebo gaps (ADH 2010, Fig. 4)
+plot(placebo, type = "gaps")
+
+# Prune poorly fitting placebos and relabel the legend
+plot(placebo, type = "gaps", mspe_prune = 5,
+     labels = c(Treated = "Unit 5"))
+
+# Post/pre-treatment MSPE ratios (ADH 2010, Fig. 8)
+plot(placebo, type = "ratios")
+}
+}
 \seealso{
 \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}}
 }

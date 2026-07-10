@@ -50,3 +50,23 @@ A \code{ggplot2} plot object.
 \description{
 Plot a coresynth model
 }
+\examples{
+set.seed(1)
+panel <- expand.grid(unit = 1:10, year = 1:20)
+panel$treated <- as.integer(panel$unit == 5 & panel$year > 15)
+panel$gdp <- panel$unit + 0.5 * panel$year +
+  rnorm(nrow(panel)) + 3 * panel$treated
+fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "scm")
+
+\donttest{
+plot(fit, type = "trend")
+plot(fit, type = "gap")
+plot(fit, type = "weights")
+
+# Customize series colors, legend text, and reference lines
+plot(fit, type = "trend",
+     colors = c(Treated = "black"),
+     labels = c(Treated = "Unit 5"),
+     vline  = list(color = "red", linetype = "dashed"))
+}
+}

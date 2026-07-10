@@ -9,6 +9,7 @@
   type = c("gaps", "ratios"),
   mspe_prune = Inf,
   colors = NULL,
+  labels = NULL,
   vline = list(),
   hline = list(),
   ...
@@ -28,6 +29,12 @@ to the squared multiple (\code{mspe_prune = 4}).}
 
 \item{colors}{A named vector overriding series colors, e.g.
 \code{c(Treated = "black")}. Valid names: \code{"Treated"}, \code{"Placebo (donor pool)"}.}
+
+\item{labels}{A named vector overriding the legend text of individual
+series, e.g. \code{c(Treated = "California")}. Valid names: \code{"Treated"},
+\code{"Placebo (donor pool)"}. Series not mentioned keep their default label,
+and \code{colors} keys always refer to the original series names regardless
+of relabeling.}
 
 \item{vline}{Only for \code{type = "gaps"}: aesthetic overrides for the vertical
 treatment-time line, as a list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}}.

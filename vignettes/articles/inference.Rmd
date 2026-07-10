@@ -74,8 +74,9 @@ pruning cutoff by construction:
 plot(mspe, type = "ratios")
 ```
 
-Series colors and the reference lines are customizable via `colors`, `vline`,
-and `hline` — see `?plot.scm_placebo`.
+Series colors, legend text, and the reference lines are customizable via
+`colors`, `labels` (e.g. `labels = c(Treated = "California")`), `vline`, and
+`hline` — see `?plot.scm_placebo`.
 
 ## SDID — four inference methods
 

@@ -3491,3 +3491,37 @@ test_that("plot.scm_placebo: unknown color name errors", {
   expect_error(plot(inf, type = "ratios", colors = c(Bogus = "red")),
                "unrecognized name")
 })
+
+test_that("plot.coresynth trend: labels relabel the legend on both scales", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  p <- plot(fit, type = "trend", labels = c(Treated = "California"))
+  expect_equal(p$scales$get_scales("colour")$labels[["Treated"]], "California")
+  expect_equal(p$scales$get_scales("linetype")$labels[["Treated"]], "California")
+  # unmentioned series keeps its default label
+  expect_equal(p$scales$get_scales("colour")$labels[["Synthetic Control"]],
+               "Synthetic Control")
+})
+
+test_that("plot.coresynth trend: labels validation", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(plot(fit, type = "trend", labels = c(Bogus = "x")),
+               "unrecognized name")
+  expect_error(plot(fit, type = "trend", labels = "x"), "named vector")
+})
+
+test_that("plot.scm_placebo: labels relabel the legend and the ratios axis tick", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+
+  p_gaps <- plot(inf, type = "gaps", labels = c(`Placebo (donor pool)` = "Donors"))
+  expect_equal(p_gaps$scales$get_scales("colour")$labels[["Placebo (donor pool)"]],
+               "Donors")
+
+  p_ratios <- plot(inf, type = "ratios", labels = c(Treated = "California"))
+  expect_equal(p_ratios$scales$get_scales("colour")$labels[["Treated"]], "California")
+  built <- ggplot2::ggplot_build(p_ratios)
+  expect_true("California" %in% built$layout$panel_params[[1]]$y$get_labels())
+
+  expect_error(plot(inf, type = "gaps", labels = c(Bogus = "x")),
+               "unrecognized name")
+})

@@ -8,6 +8,7 @@
   x,
   type = c("trend", "gap", "weights"),
   colors = NULL,
+  labels = NULL,
   vline = list(),
   hline = list(),
   fill = NULL,
@@ -24,6 +25,12 @@ or \code{"weights"} (donor unit weight bar chart).}
 e.g. \code{c(Treated = "black")} (valid names: \code{"Treated"}, \code{"Synthetic Control"}).
 For \code{type = "gap"}: a single color string for the gap line. Ignored for
 \code{type = "weights"} (use \code{fill} instead).}
+
+\item{labels}{For \code{type = "trend"}: a named vector overriding the legend
+text of individual series, e.g. \code{c(Treated = "California")} (valid names:
+\code{"Treated"}, \code{"Synthetic Control"}). Series not mentioned keep their
+default label, and \code{colors} keys always refer to the original series
+names regardless of relabeling. Ignored for other types (no legend).}
 
 \item{vline}{Aesthetic overrides for the vertical treatment-time line, as a
 list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}} (e.g. \code{list(color = "red")}).

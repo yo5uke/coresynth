@@ -2,6 +2,21 @@
 
 ## New features
 
+- **Outcome-series accessors**: new exported generics `treated_outcomes()`,
+  `synthetic_outcomes()`, and `donor_outcomes()` return the treated series,
+  the estimated counterfactual, and the donor outcome matrix from any
+  `coresynth` fit under a uniform interface, regardless of the estimation
+  method. They replace the per-method field sniffing previously duplicated
+  across `augment()`, `conformal_inference()`, and `plot()`; each returns
+  `NULL` when the series is not stored in the fit (e.g. staggered fits,
+  which keep their data per cohort in `fit$cohort_fits`).
+- **Structural subclasses**: fits with staggered adoption now additionally
+  inherit from `"coresynth_staggered"`, and multi-arm SI fits from
+  `"coresynth_multiarm"`. S3 methods (`print()`, `summary()`, `tidy()`,
+  `augment()`) dispatch on these subclasses instead of branching on internal
+  flags. The `staggered`/`multi_arm` list fields are retained, so existing
+  code that reads them keeps working, and all class checks remain
+  `inherits()`-compatible.
 - **In-space placebo visualization** (Abadie, Diamond & Hainmueller 2010,
   Section 3.4): `mspe_ratio_pval()` now returns an `scm_placebo` object
   (still fully backward compatible with the previous plain-list fields) that
@@ -25,6 +40,21 @@
   independently, and in `type = "ratios"` the treated unit's axis tick
   follows the relabeled legend entry. All defaults reproduce the previous
   appearance exactly, so existing calls are unaffected.
+
+## Improvements
+
+- `augment(fit, include_donors = TRUE)` now returns donor rows for
+  `method = "si"` fits too (previously it warned that control outcomes were
+  unavailable and returned treated rows only). Estimates are unaffected.
+- `plot()` on a staggered fit now fails with a clear message explaining that
+  staggered fits store their series per cohort, instead of an internal
+  `data.frame` length error.
+
+## Internal
+
+- `conformal_inference()`'s counterfactual refit now dispatches on the fit's
+  class (one S3 method per estimator) rather than an `if`-chain on the
+  method string. Results are unchanged.
 
 # coresynth 0.2.4
 

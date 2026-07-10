@@ -52,6 +52,10 @@
 #'                (e.g. `r`, `lambda`, `zeta2`).
 #'
 #' @return An object of classes `c("coresynth_<method>", "coresynth")`.
+#'   Fits with staggered adoption additionally inherit from
+#'   `"coresynth_staggered"`, and multi-arm SI fits from
+#'   `"coresynth_multiarm"`; S3 methods such as [tidy()] and [augment()]
+#'   dispatch on these subclasses.
 #'   All methods return at minimum:
 #'   * `method`: estimator name
 #'   * `estimate`: average treatment effect (ATT)
@@ -202,7 +206,19 @@ scm_fit <- function(
     stop(paste0("Unknown method: '", method, "'"))
   )
 
-  class(res) <- c(paste0("coresynth_", method), "coresynth")
+  new_coresynth(res, method)
+}
+
+# Internal constructor: attach the class tags that drive S3 dispatch.
+# Structural variants get their own subclass so methods (print, tidy,
+# augment, ...) can dispatch instead of branching on isTRUE(res$staggered) /
+# isTRUE(res$multi_arm). "coresynth_multiarm" precedes "coresynth_staggered"
+# so multi-arm methods win and can delegate via NextMethod().
+new_coresynth <- function(res, method) {
+  cls <- character(0L)
+  if (isTRUE(res$multi_arm)) cls <- c(cls, "coresynth_multiarm")
+  if (isTRUE(res$staggered)) cls <- c(cls, "coresynth_staggered")
+  class(res) <- c(cls, paste0("coresynth_", method), "coresynth")
   res
 }
 
@@ -210,13 +226,20 @@ scm_fit <- function(
 print.coresynth <- function(x, ...) {
   cat("=== coresynth fit ===\n")
   cat("Method :", toupper(x$method), "\n")
-  if (isTRUE(x$multi_arm)) {
-    stag_label <- if (isTRUE(x$staggered)) " (staggered)" else ""
-    cat(sprintf("Multi-arm SI%s (K = %d arms)\n", stag_label, length(x$arm_levels)))
-    cat("Per-arm ATT:",
-        paste(names(x$arm_estimates), round(x$arm_estimates, 4),
-              sep = "=", collapse = "  "), "\n")
-  }
+  cat("Estimate (ATT):", round(x$estimate, 4), "\n")
+  cat("Pre-treatment periods:", x$T_pre, "\n")
+  invisible(x)
+}
+
+#' @export
+print.coresynth_multiarm <- function(x, ...) {
+  cat("=== coresynth fit ===\n")
+  cat("Method :", toupper(x$method), "\n")
+  stag_label <- if (inherits(x, "coresynth_staggered")) " (staggered)" else ""
+  cat(sprintf("Multi-arm SI%s (K = %d arms)\n", stag_label, length(x$arm_levels)))
+  cat("Per-arm ATT:",
+      paste(names(x$arm_estimates), round(x$arm_estimates, 4),
+            sep = "=", collapse = "  "), "\n")
   cat("Estimate (ATT):", round(x$estimate, 4), "\n")
   cat("Pre-treatment periods:", x$T_pre, "\n")
   invisible(x)
@@ -226,13 +249,25 @@ print.coresynth <- function(x, ...) {
 summary.coresynth <- function(object, ...) {
   cat("=== coresynth summary ===\n")
   cat("Method :", toupper(object$method), "\n")
-  if (isTRUE(object$multi_arm)) {
-    stag_label <- if (isTRUE(object$staggered)) " (staggered)" else ""
-    cat(sprintf("Multi-arm SI%s (K = %d treatment arms)\n",
-                stag_label, length(object$arm_levels)))
-    cat("Per-arm ATT:\n")
-    print(round(object$arm_estimates, 6))
-  }
+  .summary_coresynth_body(object)
+  invisible(object)
+}
+
+#' @export
+summary.coresynth_multiarm <- function(object, ...) {
+  cat("=== coresynth summary ===\n")
+  cat("Method :", toupper(object$method), "\n")
+  stag_label <- if (inherits(object, "coresynth_staggered")) " (staggered)" else ""
+  cat(sprintf("Multi-arm SI%s (K = %d treatment arms)\n",
+              stag_label, length(object$arm_levels)))
+  cat("Per-arm ATT:\n")
+  print(round(object$arm_estimates, 6))
+  .summary_coresynth_body(object)
+  invisible(object)
+}
+
+# Shared tail of summary.coresynth / summary.coresynth_multiarm.
+.summary_coresynth_body <- function(object) {
   cat(
     "Periods : T_pre =",
     object$T_pre,

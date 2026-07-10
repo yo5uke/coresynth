@@ -107,8 +107,7 @@ fit_scm_cpp <- function(
       beta_hat         = beta_hat,
       covariates       = covariates
     )
-    class(res) <- c("coresynth_scm", "coresynth")
-    return(res)
+    return(res)  # class tags are attached by new_coresynth() in scm_fit()
   }
 
   Y <- pan$Y
@@ -684,10 +683,10 @@ mspe_ratio_pval <- function(
   alternative = c("two.sided", "greater", "less")
 ) {
   alternative <- match.arg(alternative)
-  if (!inherits(fit, "coresynth") || fit$method != "scm") {
+  if (!inherits(fit, "coresynth_scm")) {
     stop("mspe_ratio_pval() requires a coresynth object with method = 'scm'.")
   }
-  if (isTRUE(fit$staggered)) {
+  if (inherits(fit, "coresynth_staggered")) {
     stop(
       "mspe_ratio_pval() does not support staggered fits.\n",
       "Alternatives:\n",
@@ -853,11 +852,11 @@ mspe_ratio_pval <- function(
 #'   donor-robustness checks.
 #' @export
 placebo_in_time <- function(fit, t0_placebo = NULL) {
-  if (!inherits(fit, "coresynth") || fit$method != "scm") {
+  if (!inherits(fit, "coresynth_scm")) {
     stop("placebo_in_time() requires a coresynth object with method = 'scm'.",
          call. = FALSE)
   }
-  if (isTRUE(fit$staggered)) {
+  if (inherits(fit, "coresynth_staggered")) {
     stop("placebo_in_time() supports sharp (single-cohort) fits only.",
          call. = FALSE)
   }
@@ -926,11 +925,11 @@ placebo_in_time <- function(fit, t0_placebo = NULL) {
 #' @seealso [placebo_in_time()], [mspe_ratio_pval()]
 #' @export
 loo_donors <- function(fit, weight_threshold = 1e-6) {
-  if (!inherits(fit, "coresynth") || fit$method != "scm") {
+  if (!inherits(fit, "coresynth_scm")) {
     stop("loo_donors() requires a coresynth object with method = 'scm'.",
          call. = FALSE)
   }
-  if (isTRUE(fit$staggered)) {
+  if (inherits(fit, "coresynth_staggered")) {
     stop("loo_donors() supports sharp (single-cohort) fits only.",
          call. = FALSE)
   }
@@ -1051,7 +1050,7 @@ loo_donors <- function(fit, weight_threshold = 1e-6) {
 #'   * `beta_hat`: Ridge regression coefficients (length T_pre)
 #' @export
 augment_scm <- function(fit, lambda_ridge = NULL) {
-  if (!inherits(fit, "coresynth") || fit$method != "scm") {
+  if (!inherits(fit, "coresynth_scm")) {
     stop("augment_scm() requires a coresynth object with method = 'scm'.", call. = FALSE)
   }
   if (is.null(fit$Y_co_pre) || is.null(fit$Y_co_post)) {

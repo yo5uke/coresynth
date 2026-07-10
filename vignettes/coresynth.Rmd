@@ -123,6 +123,15 @@ tidy(fits$scm)     # donor weights as a data frame
 glance(fits$scm)   # one-row model summary
 ```
 
+For custom plots or diagnostics, the accessor generics return the underlying
+series from any fit under a uniform interface, whatever the estimation method:
+
+```{r accessors}
+head(treated_outcomes(fits$scm))    # observed treated series
+head(synthetic_outcomes(fits$scm))  # estimated counterfactual
+dim(donor_outcomes(fits$scm))       # T x N_co donor outcome matrix
+```
+
 `export_json()` writes a fit to disk as JSON for reproducibility or downstream
 (e.g. AI) workflows:
 

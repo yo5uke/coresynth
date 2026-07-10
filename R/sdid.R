@@ -449,12 +449,12 @@ sdid_inference <- function(
   alternative <- match.arg(alternative)
 
   # ── Input validation ────────────────────────────────────────────────────────
-  if (!inherits(fit, "coresynth") || !identical(fit$method, "sdid"))
+  if (!inherits(fit, "coresynth_sdid"))
     stop("sdid_inference() requires a coresynth fit with method = 'sdid'.",
          call. = FALSE)
   tau_hat   <- fit$estimate
   alpha     <- 1 - level
-  staggered <- isTRUE(fit$staggered)
+  staggered <- inherits(fit, "coresynth_staggered")
 
   # ── Staggered path ────────────────────────────────────────────────────────────
   if (staggered) {

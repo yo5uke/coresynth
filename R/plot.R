@@ -107,15 +107,13 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
     # Date/POSIXct through so the appropriate date scale is selected automatically.
     if (is.character(times) || is.factor(times))
       times <- as.numeric(as.character(times))
-    # Handle matrix Y_treat (multiple treated units) by averaging
-    Y_treat <- if(is.matrix(x$Y_treat)) rowMeans(x$Y_treat, na.rm = TRUE) else x$Y_treat
-    Y_synth <- if(!is.null(x$Y_synth)) {
-      if(is.matrix(x$Y_synth)) rowMeans(x$Y_synth, na.rm = TRUE) else x$Y_synth
-    } else {
-      # For GSC/MC/TASC, compute from Y_hat
-      Y_hat <- if(!is.null(x$Y_hat)) x$Y_hat else x$Y_tr_hat
-      if(is.matrix(Y_hat)) rowMeans(Y_hat, na.rm = TRUE) else Y_hat
-    }
+    # Multiple treated units are averaged per period by the accessors
+    Y_treat <- treated_outcomes(x, na.rm = TRUE)
+    Y_synth <- synthetic_outcomes(x, na.rm = TRUE)
+    if(is.null(Y_synth))
+      stop("fit object does not contain a synthetic/counterfactual series ",
+           "to plot (staggered fits store their series per cohort).",
+           call. = FALSE)
     treat_time  <- if(!is.null(x$T_pre)) times[x$T_pre + 1] else NA
     vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
 

@@ -731,17 +731,17 @@ si_inference <- function(
   method      <- match.arg(method)
   alternative <- match.arg(alternative)
 
-  if (!inherits(fit, "coresynth") || !identical(fit$method, "si"))
+  if (!inherits(fit, "coresynth_si"))
     stop("si_inference() requires a coresynth fit with method = 'si'.",
          call. = FALSE)
 
   tau_hat   <- fit$estimate
   alpha     <- 1 - level
-  staggered <- isTRUE(fit$staggered)
+  staggered <- inherits(fit, "coresynth_staggered")
 
   # -- Multi-arm path ----------------------------------------------------------
-  if (isTRUE(fit$multi_arm)) {
-    if (isTRUE(fit$staggered)) {
+  if (inherits(fit, "coresynth_multiarm")) {
+    if (inherits(fit, "coresynth_staggered")) {
       return(.si_inference_staggered_multi(fit, method, n_boot, level, alternative, seed))
     }
     if (method == "jackknife_global")

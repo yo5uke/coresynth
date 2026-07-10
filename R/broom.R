@@ -1,35 +1,6 @@
 #' @importFrom broom tidy
 #' @export
 tidy.coresynth <- function(x, ...) {
-  if (isTRUE(x$staggered)) {
-    if (isTRUE(x$multi_arm) && !is.null(x$cohort_arm_estimates)) {
-      ca <- x$cohort_arm_estimates
-      return(data.frame(
-        term      = paste0("cohort_", ca$cohort, "_arm_", ca$arm),
-        estimate  = ca$estimate,
-        weight    = ca$weight,
-        n_treated = ca$n_treated,
-        T_pre     = ca$T_pre,
-        T_post    = ca$T_post,
-        type      = "cohort_arm_estimate",
-        stringsAsFactors = FALSE
-      ))
-    }
-    ce <- x$cohort_estimates
-    if (!is.null(ce) && nrow(ce) > 0L) {
-      return(data.frame(
-        term     = paste0("cohort_", ce$cohort),
-        estimate = ce$estimate,
-        weight   = ce$weight,
-        n_treated = ce$n_treated,
-        T_pre    = ce$T_pre,
-        T_post   = ce$T_post,
-        type     = "cohort_estimate",
-        stringsAsFactors = FALSE
-      ))
-    }
-    return(data.frame())
-  }
   if (is.null(x$unit_weights)) {
     return(data.frame())
   }
@@ -37,6 +8,44 @@ tidy.coresynth <- function(x, ...) {
     term     = names(x$unit_weights) %||% paste0("Unit_", seq_along(x$unit_weights)),
     estimate = as.numeric(x$unit_weights),
     type     = "unit_weight",
+    stringsAsFactors = FALSE
+  )
+}
+
+#' @export
+tidy.coresynth_staggered <- function(x, ...) {
+  ce <- x$cohort_estimates
+  if (is.null(ce) || nrow(ce) == 0L) {
+    return(data.frame())
+  }
+  data.frame(
+    term     = paste0("cohort_", ce$cohort),
+    estimate = ce$estimate,
+    weight   = ce$weight,
+    n_treated = ce$n_treated,
+    T_pre    = ce$T_pre,
+    T_post   = ce$T_post,
+    type     = "cohort_estimate",
+    stringsAsFactors = FALSE
+  )
+}
+
+#' @export
+tidy.coresynth_multiarm <- function(x, ...) {
+  ca <- x$cohort_arm_estimates
+  if (is.null(ca)) {
+    # Sharp multi-arm fits carry no cohort-arm table; fall through to the
+    # staggered/sharp implementation next in the class chain.
+    return(NextMethod())
+  }
+  data.frame(
+    term      = paste0("cohort_", ca$cohort, "_arm_", ca$arm),
+    estimate  = ca$estimate,
+    weight    = ca$weight,
+    n_treated = ca$n_treated,
+    T_pre     = ca$T_pre,
+    T_post    = ca$T_post,
+    type      = "cohort_arm_estimate",
     stringsAsFactors = FALSE
   )
 }
@@ -155,33 +164,15 @@ glance.coresynth_inference <- function(x, ...) {
 #' @importFrom broom augment
 #' @export
 augment.coresynth <- function(x, include_donors = FALSE, ...) {
-  # ── Staggered path ──────────────────────────────────────────────────────────
-  if (isTRUE(x$staggered)) {
-    return(.augment_staggered(x, include_donors = include_donors))
-  }
-
-  # Resolve Y_treat
-  Y_treat_raw <- x$Y_treat
-  if (is.null(Y_treat_raw))
+  Y_treat <- treated_outcomes(x)
+  if (is.null(Y_treat))
     stop("augment.coresynth: cannot find treated outcome in fit object.",
          call. = FALSE)
-  Y_treat <- if (is.matrix(Y_treat_raw)) rowMeans(Y_treat_raw) else as.numeric(Y_treat_raw)
 
-  # Resolve Y_fitted in priority order
-  Y_fitted <- NULL
-  if (!is.null(x$Y_synth)) {
-    Y_fitted <- if (is.matrix(x$Y_synth)) rowMeans(x$Y_synth) else as.numeric(x$Y_synth)
-  } else if (!is.null(x$Y_tr_hat)) {
-    Y_fitted <- rowMeans(as.matrix(x$Y_tr_hat))
-  } else if (!is.null(x$Y_hat)) {
-    Y_fitted <- rowMeans(as.matrix(x$Y_hat))
-  } else if (!is.null(x$gap)) {
-    gap_raw  <- if (is.matrix(x$gap)) rowMeans(x$gap) else as.numeric(x$gap)
-    Y_fitted <- Y_treat - gap_raw
-  } else {
+  Y_fitted <- synthetic_outcomes(x)
+  if (is.null(Y_fitted))
     stop("augment.coresynth: cannot find fitted values in fit object.",
          call. = FALSE)
-  }
 
   T_total   <- length(Y_treat)
   T_pre     <- x$T_pre %||% 0L
@@ -208,13 +199,7 @@ augment.coresynth <- function(x, include_donors = FALSE, ...) {
     return(treated_df)
   }
 
-  # Build control rows from Y_co_pre + Y_co_post (SCM/SDID) or Y_co_all (GSC)
-  Y_co_mat <- NULL
-  if (!is.null(x$Y_co_pre) && !is.null(x$Y_co_post)) {
-    Y_co_mat <- rbind(x$Y_co_pre, x$Y_co_post)
-  } else if (!is.null(x$Y_co_all)) {
-    Y_co_mat <- x$Y_co_all
-  }
+  Y_co_mat <- donor_outcomes(x)
 
   if (is.null(Y_co_mat)) {
     warning(
@@ -243,6 +228,11 @@ augment.coresynth <- function(x, include_donors = FALSE, ...) {
   rbind(treated_df, control_df)
 }
 
+#' @export
+augment.coresynth_staggered <- function(x, include_donors = FALSE, ...) {
+  .augment_staggered(x, include_donors = include_donors)
+}
+
 # ── Internal: augment() for staggered fits ────────────────────────────────────
 # Returns a long-format data.frame stacking the treated outcome and synthetic
 # counterfactual for each cohort (and each treatment arm, if multi-arm).
@@ -256,7 +246,7 @@ augment.coresynth <- function(x, include_donors = FALSE, ...) {
     return(data.frame())
   }
   times_all <- x$times %||% seq_len(nrow(x$Y_treat %||% matrix(NA_real_, 0, 0)))
-  is_multi  <- isTRUE(x$multi_arm)
+  is_multi  <- inherits(x, "coresynth_multiarm")
 
   Y_all_parent <- x$Y_all %||% x$Y_mat  # GSC/SI uses Y_all, SDID uses Y_mat
 

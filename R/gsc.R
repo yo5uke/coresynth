@@ -313,10 +313,10 @@ fit_gsc_cpp <- function(
 #'   * `att_obs`:   Observed ATT from the original fit
 #' @export
 gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
-  if (!inherits(fit, "coresynth") || fit$method != "gsc") {
+  if (!inherits(fit, "coresynth_gsc")) {
     stop("gsc_boot() requires a coresynth object with method = 'gsc'.")
   }
-  if (isTRUE(fit$staggered)) {
+  if (inherits(fit, "coresynth_staggered")) {
     stop("gsc_boot() does not support staggered adoption fits. ",
          "Use gsc_inference() instead.", call. = FALSE)
   }
@@ -512,13 +512,13 @@ gsc_inference <- function(
   method      <- match.arg(method)
   alternative <- match.arg(alternative)
 
-  if (!inherits(fit, "coresynth") || !identical(fit$method, "gsc"))
+  if (!inherits(fit, "coresynth_gsc"))
     stop("gsc_inference() requires a coresynth fit with method = 'gsc'.",
          call. = FALSE)
 
   tau_hat   <- fit$estimate
   alpha     <- 1 - level
-  staggered <- isTRUE(fit$staggered)
+  staggered <- inherits(fit, "coresynth_staggered")
 
   if (!is.null(seed)) set.seed(seed)
 

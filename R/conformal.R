@@ -7,84 +7,80 @@
 # Internal: extract the donor matrix (T x N_co) and treated series (length T)
 # from a sharp coresynth fit. Returns NULL if the fit is unsupported.
 .conformal_extract <- function(fit) {
-  method <- fit$method
-  Yco <- if (!is.null(fit$Y_co_pre) && !is.null(fit$Y_co_post)) {
-    rbind(fit$Y_co_pre, fit$Y_co_post)        # SCM / SDID
-  } else if (!is.null(fit$Y_pre_co) && !is.null(fit$Y_post_co)) {
-    rbind(fit$Y_pre_co, fit$Y_post_co)        # SI
-  } else if (!is.null(fit$Y_co_all)) {
-    fit$Y_co_all                              # GSC / MC
-  } else {
-    NULL
-  }
+  Yco <- donor_outcomes(fit)
   if (is.null(Yco)) return(NULL)
-
-  y1 <- if (is.matrix(fit$Y_treat)) rowMeans(fit$Y_treat) else as.numeric(fit$Y_treat)
-  list(Yco = Yco, y1 = y1)
+  list(Yco = Yco, y1 = treated_outcomes(fit))
 }
 
-# Internal: re-estimate the treated counterfactual P_hat (length T) under the
-# null, using all T periods of the (null-imputed) treated series y1 and the
-# observed donor matrix Yco. Dispatches on the estimator family.
-.conformal_refit <- function(method, Yco, y1, fit) {
+# Internal generic: re-estimate the treated counterfactual P_hat (length T)
+# under the null, using all T periods of the (null-imputed) treated series y1
+# and the observed donor matrix Yco. Dispatches on the estimator class.
+.conformal_refit <- function(fit, Yco, y1) UseMethod(".conformal_refit")
+
+.conformal_refit.default <- function(fit, Yco, y1) {
+  stop(sprintf("conformal_inference(): method '%s' is not supported.",
+               fit$method), call. = FALSE)
+}
+
+.conformal_refit.coresynth_scm <- function(fit, Yco, y1) {
+  # Canonical SC over all T: simplex weights minimising ||y1 - Yco w||^2.
+  TT <- nrow(Yco)
+  V  <- rep(1 / TT, TT)
+  w  <- drop(scm_inner_weights_cpp(Yco, y1, V))
+  drop(Yco %*% w)
+}
+
+.conformal_refit.coresynth_si <- function(fit, Yco, y1) {
   TT   <- nrow(Yco)
   N_co <- ncol(Yco)
+  k <- fit$k %||% max(1L, floor(sqrt(min(TT, N_co))))
+  k <- as.integer(min(k, min(TT, N_co)))
+  res <- si_pcr_cpp(Yco, Yco, matrix(y1, ncol = 1L), k)
+  drop(res$Y_hat)
+}
 
-  if (method == "scm") {
-    # Canonical SC over all T: simplex weights minimising ||y1 - Yco w||^2.
-    V <- rep(1 / TT, TT)
-    w <- drop(scm_inner_weights_cpp(Yco, y1, V))
-    return(drop(Yco %*% w))
-  }
+.conformal_refit.coresynth_sdid <- function(fit, Yco, y1) {
+  # SDID synthetic series (omega-weighted donors + concentrated intercept),
+  # unit weights estimated over all T under the null.
+  TT    <- nrow(Yco)
+  zeta2 <- fit$zeta2 %||% (sqrt(TT) * var(diff(y1)))
+  mu_co <- colMeans(Yco)
+  mu_y1 <- mean(y1)
+  Yco_c <- sweep(Yco, 2L, mu_co, "-")
+  y1_c  <- y1 - mu_y1
+  omega  <- drop(sdid_unit_weights_cpp(Yco_c, y1_c, zeta2))
+  omega0 <- mu_y1 - sum(omega * mu_co)
+  omega0 + drop(Yco %*% omega)
+}
 
-  if (method == "si") {
-    k <- fit$k %||% max(1L, floor(sqrt(min(TT, N_co))))
-    k <- as.integer(min(k, min(TT, N_co)))
-    res <- si_pcr_cpp(Yco, Yco, matrix(y1, ncol = 1L), k)
-    return(drop(res$Y_hat))
-  }
+.conformal_refit.coresynth_gsc <- function(fit, Yco, y1) {
+  TT   <- nrow(Yco)
+  N_co <- ncol(Yco)
+  r <- fit$r %||% 2L
+  r <- as.integer(min(r, min(TT, N_co)))
+  empty_co <- array(0.0, dim = c(TT, N_co, 0L))
+  empty_tr <- array(0.0, dim = c(TT, 1L, 0L))
+  res <- gsc_ife_cpp(Yco, matrix(y1, ncol = 1L), r, empty_co, empty_tr)
+  drop(res$Y_tr_hat)
+}
 
-  if (method == "sdid") {
-    # SDID synthetic series (omega-weighted donors + concentrated intercept),
-    # unit weights estimated over all T under the null.
-    zeta2 <- fit$zeta2 %||% (sqrt(TT) * var(diff(y1)))
-    mu_co <- colMeans(Yco)
-    mu_y1 <- mean(y1)
-    Yco_c <- sweep(Yco, 2L, mu_co, "-")
-    y1_c  <- y1 - mu_y1
-    omega  <- drop(sdid_unit_weights_cpp(Yco_c, y1_c, zeta2))
-    omega0 <- mu_y1 - sum(omega * mu_co)
-    return(omega0 + drop(Yco %*% omega))
-  }
-
-  if (method == "gsc") {
-    r <- fit$r %||% 2L
-    r <- as.integer(min(r, min(TT, N_co)))
-    empty_co <- array(0.0, dim = c(TT, N_co, 0L))
-    empty_tr <- array(0.0, dim = c(TT, 1L, 0L))
-    res <- gsc_ife_cpp(Yco, matrix(y1, ncol = 1L), r, empty_co, empty_tr)
-    return(drop(res$Y_tr_hat))
-  }
-
-  if (method == "mc") {
-    M <- cbind(Yco, y1)                       # T x (N_co + 1), treated last
-    O <- matrix(1.0, nrow = TT, ncol = N_co + 1L)  # fully observed under null
-    lambda <- fit$lambda %||% (0.01 * svd(M, nu = 0, nv = 0)$d[1])
-    L <- soft_impute_cpp(M, O, lambda)
-    return(drop(L[, N_co + 1L]))
-  }
-
-  stop(sprintf("conformal_inference(): method '%s' is not supported.", method),
-       call. = FALSE)
+.conformal_refit.coresynth_mc <- function(fit, Yco, y1) {
+  TT   <- nrow(Yco)
+  N_co <- ncol(Yco)
+  M <- cbind(Yco, y1)                       # T x (N_co + 1), treated last
+  O <- matrix(1.0, nrow = TT, ncol = N_co + 1L)  # fully observed under null
+  lambda <- fit$lambda %||% (0.01 * svd(M, nu = 0, nv = 0)$d[1])
+  L <- soft_impute_cpp(M, O, lambda)
+  drop(L[, N_co + 1L])
 }
 
 # Internal: residual vector (length T) under the null H0: tau = tau0.
-.conformal_residuals <- function(method, Yco, y1_obs, T_pre, tau0, fit) {
+.conformal_residuals <- function(fit, Yco, y1_obs, T_pre, tau0) {
   TT   <- length(y1_obs)
   post <- (T_pre + 1L):TT
   y1_null <- y1_obs
   y1_null[post] <- y1_null[post] - tau0          # impute counterfactual outcome
-  P_hat <- .conformal_refit(method, Yco, y1_null, fit)
+  P_hat <- .conformal_refit(fit, Yco, y1_null)
   y1_null - P_hat
 }
 
@@ -172,7 +168,7 @@ conformal_inference <- function(
   alternative <- match.arg(alternative)
   if (!inherits(fit, "coresynth"))
     stop("conformal_inference() requires a coresynth object.", call. = FALSE)
-  if (isTRUE(fit$staggered) || isTRUE(fit$multi_arm))
+  if (inherits(fit, "coresynth_staggered") || inherits(fit, "coresynth_multiarm"))
     stop("conformal_inference() supports sharp (single-cohort) fits only.\n",
          "  For staggered/multi-arm fits use sdid_inference(), gsc_inference(), ",
          "or si_inference().", call. = FALSE)
@@ -196,7 +192,7 @@ conformal_inference <- function(
          call. = FALSE)
 
   p_at <- function(t0) {
-    u <- .conformal_residuals(method, Yco, y1_obs, T_pre, t0, fit)
+    u <- .conformal_residuals(fit, Yco, y1_obs, T_pre, t0)
     .conformal_pval(u, T_pre, q, alternative)
   }
 
@@ -210,7 +206,7 @@ conformal_inference <- function(
 
   if (isTRUE(ci)) {
     if (is.null(grid)) {
-      gap_pre <- (y1_obs - .conformal_refit(method, Yco, y1_obs, fit))[seq_len(T_pre)]
+      gap_pre <- (y1_obs - .conformal_refit(fit, Yco, y1_obs))[seq_len(T_pre)]
       s <- stats::sd(gap_pre)
       if (!is.finite(s) || s < 1e-8) s <- max(abs(fit$estimate), 1)
       half <- grid_mult * s

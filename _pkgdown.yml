@@ -66,6 +66,13 @@ reference:
   - tidy.coresynth_inference
   - glance.coresynth_inference
 
+- title: Accessors
+  desc: >
+    Extract outcome series from any fit under a uniform interface,
+    regardless of the estimation method.
+  contents:
+  - treated_outcomes
+
 - title: Visualization & export
   contents:
   - plot.coresynth

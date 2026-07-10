@@ -75,6 +75,10 @@ is faster when \code{k} is small (e.g. external predictors with k <= 15).
 }
 \value{
 An object of classes \code{c("coresynth_<method>", "coresynth")}.
+Fits with staggered adoption additionally inherit from
+\code{"coresynth_staggered"}, and multi-arm SI fits from
+\code{"coresynth_multiarm"}; S3 methods such as \code{\link[generics:tidy]{tidy()}} and \code{\link[generics:augment]{augment()}}
+dispatch on these subclasses.
 All methods return at minimum:
 \itemize{
 \item \code{method}: estimator name

@@ -91,7 +91,12 @@ export_json <- function(x, file = "coresynth_results.json",
   }
   Y_synth_out <- if (!is.null(x$Y_synth))   x$Y_synth
                  else if (!is.null(x$Y_tr_hat)) x$Y_tr_hat
-                 else if (!is.null(x$Y_hat))    x$Y_hat
+                 else if (!is.null(x$Y_hat)) {
+                   # TASC's Y_hat spans all N units; keep the treated columns
+                   if (identical(x$method, "tasc") && !is.null(x$idx_tr))
+                     x$Y_hat[, x$idx_tr, drop = FALSE]
+                   else x$Y_hat
+                 }
                  else NULL
 
   ts_section <- list(

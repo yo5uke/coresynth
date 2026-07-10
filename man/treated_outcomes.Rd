@@ -5,6 +5,7 @@
 \alias{treated_outcomes.coresynth}
 \alias{synthetic_outcomes}
 \alias{synthetic_outcomes.coresynth}
+\alias{synthetic_outcomes.coresynth_tasc}
 \alias{donor_outcomes}
 \alias{donor_outcomes.coresynth_scm}
 \alias{donor_outcomes.coresynth_sdid}
@@ -22,6 +23,8 @@ treated_outcomes(x, ...)
 synthetic_outcomes(x, ...)
 
 \method{synthetic_outcomes}{coresynth}(x, na.rm = FALSE, ...)
+
+\method{synthetic_outcomes}{coresynth_tasc}(x, na.rm = FALSE, ...)
 
 donor_outcomes(x, ...)
 

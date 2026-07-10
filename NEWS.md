@@ -50,6 +50,18 @@
   staggered fits store their series per cohort, instead of an internal
   `data.frame` length error.
 
+## Bug fixes
+
+- For `method = "tasc"`, `plot()`, `augment()`, and the `Y_synth` series of
+  `export_json()` reported the average fitted value of **all** units as the
+  counterfactual: TASC stores its fitted values as a full T x N matrix
+  (`Y_hat`), unlike the other methods, and the shared extraction code
+  averaged over every column. The treated unit's columns are now used
+  (`synthetic_outcomes()` handles this per method), so the plotted/augmented
+  counterfactual, gap, and residuals for `tasc` fits change; the ATT estimate
+  itself was always computed from the correct per-unit gaps and is
+  unaffected.
+
 ## Internal
 
 - `conformal_inference()`'s counterfactual refit now dispatches on the fit's

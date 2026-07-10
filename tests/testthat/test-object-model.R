@@ -87,6 +87,46 @@ test_that("treated - synthetic reproduces the stored gap (SCM)", {
                unname(fit$gap))
 })
 
+test_that("TASC synthetic_outcomes uses the treated columns of Y_hat", {
+  fit <- scm_fit(gdp ~ treated | unit + year, data = make_sharp_panel(),
+                 method = "tasc")
+  y0 <- synthetic_outcomes(fit)
+  expect_equal(y0, rowMeans(fit$Y_hat[, fit$idx_tr, drop = FALSE]))
+  # treated - synthetic reproduces the stored gap ...
+  expect_equal(treated_outcomes(fit) - y0, rowMeans(fit$gap))
+  # ... and differs from the all-unit average previously shown
+  expect_false(isTRUE(all.equal(y0, rowMeans(fit$Y_hat))))
+})
+
+test_that("TASC synthetic_outcomes reconstructs from the gap without idx_tr", {
+  fit <- scm_fit(gdp ~ treated | unit + year, data = make_sharp_panel(),
+                 method = "tasc")
+  legacy <- fit
+  legacy$idx_tr <- NULL
+  expect_equal(unname(synthetic_outcomes(legacy)), synthetic_outcomes(fit))
+})
+
+test_that("TASC augment() fits and residuals track the treated unit", {
+  fit <- scm_fit(gdp ~ treated | unit + year, data = make_sharp_panel(),
+                 method = "tasc")
+  au <- broom::augment(fit)
+  expect_equal(au$.fitted, unname(synthetic_outcomes(fit)))
+  expect_equal(mean(au$.resid[au$.period == "post"]), fit$estimate,
+               tolerance = 1e-8)
+})
+
+test_that("export_json exports the treated-column Y_synth for TASC", {
+  skip_if_not_installed("jsonlite")
+  fit <- scm_fit(gdp ~ treated | unit + year, data = make_sharp_panel(),
+                 method = "tasc")
+  res <- export_json(fit, file = NULL)
+  expect_length(res$time_series$Y_synth, length(fit$times))
+  expect_equal(as.numeric(res$time_series$Y_treat) -
+                 as.numeric(res$time_series$Y_synth),
+               as.numeric(res$time_series$gap),
+               tolerance = 1e-5)
+})
+
 test_that("donor_outcomes returns NULL where donors are not stored", {
   panel <- make_sharp_panel()
   fit_tasc <- scm_fit(gdp ~ treated | unit + year, data = panel,

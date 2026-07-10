@@ -80,6 +80,22 @@ synthetic_outcomes.coresynth <- function(x, na.rm = FALSE, ...) {
 
 #' @rdname treated_outcomes
 #' @export
+synthetic_outcomes.coresynth_tasc <- function(x, na.rm = FALSE, ...) {
+  # TASC's Y_hat holds fitted values for all N units (T x N), unlike every
+  # other method; the counterfactual is the treated columns, not the
+  # all-unit average.
+  if (!is.null(x$Y_hat) && !is.null(x$idx_tr))
+    return(rowMeans(x$Y_hat[, x$idx_tr, drop = FALSE], na.rm = na.rm))
+  # Fits from versions without idx_tr: reconstruct from the stored gap
+  g <- x$gap
+  y <- treated_outcomes(x, na.rm = na.rm)
+  if (is.null(g) || is.null(y)) return(NULL)
+  g <- if (is.matrix(g)) rowMeans(g, na.rm = na.rm) else as.numeric(g)
+  y - g
+}
+
+#' @rdname treated_outcomes
+#' @export
 donor_outcomes <- function(x, ...) UseMethod("donor_outcomes")
 
 #' @rdname treated_outcomes

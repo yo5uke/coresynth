@@ -22,7 +22,6 @@ URL: https://github.com/yo5uke/coresynth, https://yo5uke.com/coresynth/
 BugReports: https://github.com/yo5uke/coresynth/issues
 Encoding: UTF-8
 Config/roxygen2/markdown: TRUE
-Roxygen: list(markdown = TRUE)
 RoxygenNote: 8.0.0
 Depends: 
     R (>= 4.1.0)

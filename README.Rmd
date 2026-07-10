@@ -177,11 +177,33 @@ estimator ($\hat\beta = 0$) is used.
 
 ## Inference
 
-```{r inference, eval=FALSE}
-# SCM: MSPE ratio placebo test (Abadie et al. 2010)
-scm_p <- mspe_ratio_pval(fits$scm)
-cat("p-value:", scm_p$p_value, "\n")
+### SCM: In-Space Placebo Test
 
+`mspe_ratio_pval()` runs the in-space placebo study of Abadie, Diamond &
+Hainmueller (2010): the intervention is reassigned to each donor unit and the
+treated unit's post/pre-treatment MSPE ratio is compared against the placebo
+distribution. The result can be plotted directly.
+
+```{r placebo-gaps, fig.height=4}
+scm_p <- mspe_ratio_pval(fits$scm)
+scm_p$p_value
+
+# Treated gap vs. placebo gaps in the donor pool (ADH 2010, Figures 4-7)
+plot(scm_p, type = "gaps")
+```
+
+Placebo units with a poor pre-treatment fit can be pruned with `mspe_prune`
+(e.g. `plot(scm_p, type = "gaps", mspe_prune = 5)` excludes units whose
+pre-treatment MSPE exceeds 5 times the treated unit's).
+
+```{r placebo-ratios, fig.height=3}
+# Post/pre-treatment MSPE ratio of every unit (ADH 2010, Figure 8)
+plot(scm_p, type = "ratios")
+```
+
+### Other Inference Methods
+
+```{r inference, eval=FALSE}
 # SDID: four inference methods — placebo, bootstrap, jackknife, jackknife_global
 sdid_inf <- sdid_inference(fits$sdid, method = "placebo")
 tidy(sdid_inf)   # broom-style one-row data.frame

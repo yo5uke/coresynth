@@ -37,6 +37,20 @@ pak::pak("yo5uke/coresynth")
 
 ## Quick Start
 
+coresynth fits causal panel models through a single formula interface,
+`y ~ d | id + time`. This section walks through the classic Synthetic
+Control Method (SCM); the same formula works for five other methods
+(see [Supported Methods](#supported-methods)).
+
+Your data should be a **balanced panel in long format** (one row per
+unit × time), with:
+
+- `y` — the outcome variable
+- `d` — the treatment indicator: `0` normally, `1` for a treated unit
+  in periods at or after its treatment starts
+- `id` — the unit identifier
+- `time` — the time identifier
+
 ```{r quickstart}
 library(coresynth)
 
@@ -47,10 +61,45 @@ f   <- cumsum(rnorm(TT, 0, 0.5))
 lam <- rnorm(N, 1, 0.3)
 dat <- expand.grid(time = seq_len(TT), id = paste0("u", seq_len(N)))
 dat$y <- as.vector(outer(f, lam)) + rnorm(nrow(dat), 0, 0.3)
-dat$d <- as.integer(dat$id == "u1" & dat$time > T_pre)
-dat$y[dat$d == 1] <- dat$y[dat$d == 1] + 2.0   # true ATT = 2
+dat$d <- as.integer(dat$id == "u1" & dat$time > T_pre)   # u1 treated from t=11 on
+dat$y[dat$d == 1] <- dat$y[dat$d == 1] + 2.0              # true ATT = 2
 
-# Run all six methods
+fit_scm <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
+summary(fit_scm)
+```
+
+The key arguments of `scm_fit()`:
+
+- `formula` — `y ~ d | id + time`, matching the columns above
+- `data` — the long-format panel
+- `method` — the estimator to use (`"scm"`, `"sdid"`, `"gsc"`, `"mc"`,
+  `"tasc"`, or `"si"`); all take the same formula
+
+Many more arguments are available for covariate adjustment, donor
+selection, and staggered adoption — see the
+[Covariates](#covariates) and [Staggered Adoption](#staggered-adoption)
+sections below, or `?scm_fit`.
+
+```{r plot-trend, fig.height=4}
+# Observed vs. synthetic trend
+plot(fit_scm, type = "trend")
+```
+
+```{r plot-gap, fig.height=3}
+# Treatment effect over time
+plot(fit_scm, type = "gap")
+```
+
+```{r plot-weights, fig.height=3}
+# Donor unit weights
+plot(fit_scm, type = "weights")
+```
+
+## Supported Methods
+
+The same formula and data work for all six methods — just change `method`:
+
+```{r all-methods}
 methods <- c("scm", "sdid", "gsc", "mc", "tasc", "si")
 fits    <- lapply(methods, \(m) scm_fit(y ~ d | id + time, data = dat, method = m))
 names(fits) <- methods
@@ -61,23 +110,6 @@ data.frame(
   estimate = round(sapply(fits, `[[`, "estimate"), 3)
 )
 ```
-
-```{r plot-trend, fig.height=4}
-# SDID trend plot (observed vs. synthetic)
-plot(fits$sdid, type = "trend")
-```
-
-```{r plot-gap, fig.height=3}
-# SCM gap plot (treatment effect over time)
-plot(fits$scm, type = "gap")
-```
-
-```{r plot-weights, fig.height=3}
-# SCM donor weights
-plot(fits$scm, type = "weights")
-```
-
-## Supported Methods
 
 | Method | Reference | Treatment | Covariates | Inference |
 |--------|-----------|-----------|:----------:|-----------|

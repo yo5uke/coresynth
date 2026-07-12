@@ -3468,6 +3468,25 @@ test_that("plot.coresynth weights: fill override reaches the built plot data", {
   expect_true(all(built$data[[1]]$fill == "darkorange"))
 })
 
+test_that("plot.coresynth weights: top_n limits bars to the largest weights", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  n_all <- nrow(ggplot2::ggplot_build(plot(fit, type = "weights"))$data[[1]])
+
+  built <- ggplot2::ggplot_build(plot(fit, type = "weights", top_n = 2))
+  expect_equal(nrow(built$data[[1]]), 2L)
+  w_kept <- sort(fit$unit_weights[fit$unit_weights > 1e-4], decreasing = TRUE)
+  expect_setequal(built$data[[1]]$y, unname(w_kept[1:2]))
+
+  # top_n beyond the donor count keeps everything (default Inf unchanged)
+  expect_equal(
+    nrow(ggplot2::ggplot_build(plot(fit, type = "weights", top_n = 999))$data[[1]]),
+    n_all
+  )
+
+  expect_error(plot(fit, type = "weights", top_n = 0), "top_n")
+  expect_error(plot(fit, type = "weights", top_n = c(1, 2)), "top_n")
+})
+
 test_that("plot.scm_placebo type='gaps': color/vline/hline overrides work", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
   inf <- mspe_ratio_pval(fit)

@@ -69,6 +69,9 @@
 #'   hides the line. Ignored for other types.
 #' @param fill   For `type = "weights"`: a single color string overriding the
 #'   bar fill. Ignored for other types.
+#' @param top_n  For `type = "weights"`: show only the `top_n` donors with the
+#'   largest weights. The default `Inf` keeps every donor with a
+#'   non-negligible weight. Ignored for other types.
 #' @param ...    Ignored.
 #' @return A `ggplot2` plot object.
 #' @examples
@@ -83,6 +86,7 @@
 #' plot(fit, type = "trend")
 #' plot(fit, type = "gap")
 #' plot(fit, type = "weights")
+#' plot(fit, type = "weights", top_n = 5)
 #'
 #' # Customize series colors, legend text, and reference lines
 #' plot(fit, type = "trend",
@@ -95,7 +99,7 @@
 plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
                             colors = NULL, labels = NULL,
                             vline = list(), hline = list(),
-                            fill = NULL, ...) {
+                            fill = NULL, top_n = Inf, ...) {
   type <- match.arg(type)
 
   if(type %in% c("trend", "gap")) {
@@ -168,6 +172,10 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
     )
     df <- df[df$weight > 1e-4, ]
     if(nrow(df) == 0) stop("All unit weights are negligibly small.")
+    if(!is.numeric(top_n) || length(top_n) != 1L || is.na(top_n) || top_n < 1)
+      stop("`top_n` must be a single number >= 1 (Inf shows all donors).")
+    if(is.finite(top_n) && nrow(df) > top_n)
+      df <- df[order(df$weight, decreasing = TRUE)[seq_len(top_n)], ]
 
     p <- ggplot(df, aes(x = reorder(unit, weight), y = weight)) +
       geom_col(fill = bar_fill, alpha = 0.85) +

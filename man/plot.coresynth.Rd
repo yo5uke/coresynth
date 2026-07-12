@@ -12,6 +12,7 @@
   vline = list(),
   hline = list(),
   fill = NULL,
+  top_n = Inf,
   ...
 )
 }
@@ -42,6 +43,10 @@ hides the line. Ignored for other types.}
 \item{fill}{For \code{type = "weights"}: a single color string overriding the
 bar fill. Ignored for other types.}
 
+\item{top_n}{For \code{type = "weights"}: show only the \code{top_n} donors with the
+largest weights. The default \code{Inf} keeps every donor with a
+non-negligible weight. Ignored for other types.}
+
 \item{...}{Ignored.}
 }
 \value{
@@ -62,6 +67,7 @@ fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "scm")
 plot(fit, type = "trend")
 plot(fit, type = "gap")
 plot(fit, type = "weights")
+plot(fit, type = "weights", top_n = 5)
 
 # Customize series colors, legend text, and reference lines
 plot(fit, type = "trend",

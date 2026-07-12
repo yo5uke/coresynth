@@ -86,8 +86,8 @@ test_that("SDID demeaning shifts unit weights vs. no-intercept baseline", {
 test_that("SDID estimate matches synthdid package (California smoke data)", {
   skip_if_not_installed("synthdid")
   data("california_prop99", package = "synthdid")
-  setup <- panel.matrices(california_prop99)
-  ref <- synthdid_estimate(setup$Y, setup$N0, setup$T0)
+  setup <- synthdid::panel.matrices(california_prop99)
+  ref <- synthdid::synthdid_estimate(setup$Y, setup$N0, setup$T0)
   # Convert data to long format for coresynth
   Y_wide <- setup$Y
   df <- data.frame(

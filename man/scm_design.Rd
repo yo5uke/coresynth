@@ -98,12 +98,15 @@ Three design formulations are available:
 \itemize{
 \item \strong{\code{"base"}} (eq. 7): both the synthetic treated and the synthetic control
 independently target the population average \eqn{\bar{X}}.
-\item \strong{\code{"weakly_targeted"}} (eq. 9): the synthetic treated targets
-\eqn{\bar{X}}; the synthetic control targets the synthetic treated predictor
-vector (controlled by \code{beta}).
+\item \strong{\code{"weakly_targeted"}} (eq. 9): the treated and control weights jointly
+minimise the distance of the synthetic treated to \eqn{\bar{X}} plus
+\code{beta} times the distance between the synthetic control and the synthetic
+treated.
 \item \strong{\code{"unit_level"}} (eq. 10): each treated unit gets its own synthetic
-control; the aggregate control weight is a convex combination (controlled
-by \code{xi}).
+control; the treated weights trade off matching \eqn{\bar{X}} against \code{xi}
+times each treated unit's own synthetic-control fit, and the aggregate
+control weight is the \code{w}-weighted combination of the per-unit controls
+(eq. 11).
 }
 
 Inference uses "blank periods" — pre-experimental periods whose outcomes were

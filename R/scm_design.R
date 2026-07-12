@@ -48,12 +48,15 @@ build_design_X <- function(data, unit_var, time_var, units, predictors) {
 #'
 #' * **`"base"`** (eq. 7): both the synthetic treated and the synthetic control
 #'   independently target the population average \eqn{\bar{X}}.
-#' * **`"weakly_targeted"`** (eq. 9): the synthetic treated targets
-#'   \eqn{\bar{X}}; the synthetic control targets the synthetic treated predictor
-#'   vector (controlled by `beta`).
+#' * **`"weakly_targeted"`** (eq. 9): the treated and control weights jointly
+#'   minimise the distance of the synthetic treated to \eqn{\bar{X}} plus
+#'   `beta` times the distance between the synthetic control and the synthetic
+#'   treated.
 #' * **`"unit_level"`** (eq. 10): each treated unit gets its own synthetic
-#'   control; the aggregate control weight is a convex combination (controlled
-#'   by `xi`).
+#'   control; the treated weights trade off matching \eqn{\bar{X}} against `xi`
+#'   times each treated unit's own synthetic-control fit, and the aggregate
+#'   control weight is the `w`-weighted combination of the per-unit controls
+#'   (eq. 11).
 #'
 #' Inference uses "blank periods" — pre-experimental periods whose outcomes were
 #' *not* used to estimate the weights.  Set `T_fit` strictly smaller than the
@@ -251,42 +254,70 @@ scm_design <- function(
       X_S  <- X_mat[, S,    drop = FALSE]   # k x m
       X_co <- X_mat[, S_co, drop = FALSE]   # k x (J-m)
 
-      # Treated weights w: min ||X_S w - X_bar||^2
-      w_sub <- tryCatch(
-        scm_inner_weights_cpp(X_S, X_bar, V_unif),
-        error = function(e) NULL
-      )
-      if (is.null(w_sub)) next
-      X_Sw  <- drop(X_S %*% w_sub)
-      obj_w <- sum((X_bar - X_Sw)^2)
-
-      # Control weights v and total objective
+      w_sub <- NULL
       v_sub <- NULL
       obj   <- NA_real_
 
       if (design == "base") {
+        # eq. (7): w and v separately target X_bar
+        w_sub <- tryCatch(
+          scm_inner_weights_cpp(X_S, X_bar, V_unif),
+          error = function(e) NULL
+        )
+        if (is.null(w_sub)) next
         v_sub <- tryCatch(
           scm_inner_weights_cpp(X_co, X_bar, V_unif),
           error = function(e) NULL
         )
         if (!is.null(v_sub)) {
-          obj <- obj_w + sum((X_bar - drop(X_co %*% v_sub))^2)
+          obj <- sum((X_bar - drop(X_S %*% w_sub))^2) +
+                 sum((X_bar - drop(X_co %*% v_sub))^2)
         }
 
       } else if (design == "weakly_targeted") {
-        v_sub <- tryCatch(
-          scm_inner_weights_cpp(X_co, X_Sw, V_unif),
+        # eq. (9): (w, v) jointly minimise
+        #   ||X_bar - X_S w||^2 + beta ||X_S w - X_co v||^2.
+        # Two-block alternating minimisation of this jointly convex QP; each
+        # block subproblem is a standard synthetic-control fit (for fixed v,
+        # the optimal w targets (X_bar + beta X_co v) / (1 + beta)).
+        w_sub <- tryCatch(
+          scm_inner_weights_cpp(X_S, X_bar, V_unif),
           error = function(e) NULL
         )
-        if (!is.null(v_sub)) {
-          obj <- obj_w + beta * sum((X_Sw - drop(X_co %*% v_sub))^2)
+        if (is.null(w_sub)) next
+        obj_prev <- Inf
+        it       <- 0L
+        repeat {
+          X_Sw  <- drop(X_S %*% w_sub)
+          v_try <- tryCatch(
+            scm_inner_weights_cpp(X_co, X_Sw, V_unif),
+            error = function(e) NULL
+          )
+          if (is.null(v_try)) { v_sub <- NULL; break }
+          v_sub <- v_try
+          X_cv  <- drop(X_co %*% v_sub)
+          obj   <- sum((X_bar - X_Sw)^2) + beta * sum((X_Sw - X_cv)^2)
+          it    <- it + 1L
+          if (obj_prev - obj <= 1e-12 * max(1, obj) || it >= 200L) break
+          obj_prev <- obj
+          w_try <- tryCatch(
+            scm_inner_weights_cpp(X_S, (X_bar + beta * X_cv) / (1 + beta),
+                                  V_unif),
+            error = function(e) NULL
+          )
+          if (is.null(w_try)) break
+          w_sub <- w_try
         }
 
       } else {  # unit_level
-        v_mat    <- matrix(0, length(S_co), length(S))
-        obj_unit <- 0
-        ok       <- TRUE
-        for (jj in seq_along(S)) {
+        # eq. (10): each treated unit's synthetic control is independent of w
+        # (its term enters the objective weighted by w_j >= 0), so the per-unit
+        # fits and their losses are computed first.
+        m_S    <- length(S)
+        v_mat  <- matrix(0, length(S_co), m_S)
+        loss_j <- numeric(m_S)
+        ok     <- TRUE
+        for (jj in seq_len(m_S)) {
           X_j <- X_mat[, S[jj]]
           v_j <- tryCatch(
             scm_inner_weights_cpp(X_co, X_j, V_unif),
@@ -294,15 +325,28 @@ scm_design <- function(
           )
           if (is.null(v_j)) { ok <- FALSE; break }
           v_mat[, jj] <- v_j
-          obj_unit <- obj_unit + w_sub[jj] * sum((X_j - drop(X_co %*% v_j))^2)
+          loss_j[jj]  <- sum((X_j - drop(X_co %*% v_j))^2)
         }
         if (ok) {
-          v_sub <- drop(v_mat %*% w_sub)   # aggregate per eq. (11)
-          obj   <- obj_w + xi * obj_unit
+          # w minimises ||X_bar - X_S w||^2 + xi * sum_j w_j loss_j.  The
+          # linear term is folded into the QP target: any y with
+          # X_S'y = X_S'X_bar - (xi/2) loss yields the same argmin, and the
+          # y below satisfies this identity (tiny ridge for collinear columns).
+          w_sub <- tryCatch({
+            G <- crossprod(X_S)
+            y <- X_bar - (xi / 2) *
+              drop(X_S %*% solve(G + diag(1e-8 * mean(diag(G)), m_S), loss_j))
+            scm_inner_weights_cpp(X_S, y, V_unif)
+          }, error = function(e) NULL)
+          if (!is.null(w_sub)) {
+            v_sub <- drop(v_mat %*% w_sub)   # aggregate per eq. (11)
+            obj   <- sum((X_bar - drop(X_S %*% w_sub))^2) +
+                     xi * sum(w_sub * loss_j)
+          }
         }
       }
 
-      if (is.null(v_sub) || is.na(obj)) next
+      if (is.null(w_sub) || is.null(v_sub) || is.na(obj)) next
 
       if (obj < best_obj) {
         best_obj         <- obj

@@ -1067,6 +1067,121 @@ test_that("scm_design unit_level variant works and returns disjoint weights", {
   expect_true(all(res$w * res$v < 1e-10))
 })
 
+# Rebuild the normalised predictor matrix scm_design() uses internally
+# (fitting-period outcomes, row-wise SD scaling) to evaluate the design
+# objectives of eq. (9)/(10) from a fitted object.
+make_design_X <- function(df, TE) {
+  units <- sort(unique(df$unit))
+  times <- sort(unique(df$time))
+  Y <- matrix(NA_real_, length(times), length(units),
+              dimnames = list(NULL, units))
+  Y[cbind(match(df$time, times), match(df$unit, units))] <- df$outcome
+  X <- Y[seq_len(TE), , drop = FALSE]
+  row_sd <- apply(X, 1L, sd)
+  row_sd[row_sd < 1e-10] <- 1
+  X / row_sd
+}
+
+test_that("scm_design weakly_targeted: (w, v) are jointly optimal in eq. (9)", {
+  df    <- make_design_panel(J = 8L, TT = 20L, seed = 11)
+  X     <- make_design_X(df, TE = 12L)
+  X_bar <- rowMeans(X)
+  Vk    <- rep(1, nrow(X))
+
+  base_term  <- function(res) {
+    Xw <- drop(X[, res$treated_units, drop = FALSE] %*% res$w[res$treated_units])
+    sum((X_bar - Xw)^2)
+  }
+  match_term <- function(res) {
+    Xw <- drop(X[, res$treated_units, drop = FALSE] %*% res$w[res$treated_units])
+    Xv <- drop(X[, res$control_units, drop = FALSE] %*% res$v[res$control_units])
+    sum((Xw - Xv)^2)
+  }
+
+  fit_lo <- scm_design(df, "outcome", "unit", "time", T0 = 12L,
+                       m_min = 2L, m_max = 2L,
+                       design = "weakly_targeted", beta = 0.1)
+  fit_hi <- scm_design(df, "outcome", "unit", "time", T0 = 12L,
+                       m_min = 2L, m_max = 2L,
+                       design = "weakly_targeted", beta = 50)
+
+  # comparative statics: the treated/control matching term is non-increasing
+  # in beta across optimal solutions
+  expect_lte(match_term(fit_hi), match_term(fit_lo) + 1e-8)
+
+  # the returned objective equals eq. (9) recomputed from the returned weights
+  expect_equal(fit_hi$objective, base_term(fit_hi) + 50 * match_term(fit_hi),
+               tolerance = 1e-6)
+
+  # the joint solution is at least as good as the decoupled one (w fit to
+  # X_bar alone, v best-responding) on the same treated set
+  Xs <- X[, fit_hi$treated_units, drop = FALSE]
+  Xc <- X[, fit_hi$control_units, drop = FALSE]
+  w0 <- scm_inner_weights_cpp(Xs, X_bar, Vk)
+  v0 <- scm_inner_weights_cpp(Xc, drop(Xs %*% w0), Vk)
+  obj0 <- sum((X_bar - drop(Xs %*% w0))^2) +
+    50 * sum((drop(Xs %*% w0) - drop(Xc %*% v0))^2)
+  expect_lte(fit_hi$objective, obj0 + 1e-8)
+})
+
+test_that("scm_design unit_level: objective matches eq. (10) and responds to xi", {
+  df    <- make_design_panel(J = 8L, TT = 20L, seed = 11)
+  X     <- make_design_X(df, TE = 12L)
+  X_bar <- rowMeans(X)
+  Vk    <- rep(1, nrow(X))
+
+  loss_term <- function(res) {
+    Xc <- X[, res$control_units, drop = FALSE]
+    sum(vapply(res$treated_units, function(u) {
+      v_j <- scm_inner_weights_cpp(Xc, X[, u], Vk)
+      res$w[[u]] * sum((X[, u] - drop(Xc %*% v_j))^2)
+    }, numeric(1)))
+  }
+
+  fit_lo <- scm_design(df, "outcome", "unit", "time", T0 = 12L,
+                       m_min = 2L, m_max = 2L, design = "unit_level", xi = 0.1)
+  fit_hi <- scm_design(df, "outcome", "unit", "time", T0 = 12L,
+                       m_min = 2L, m_max = 2L, design = "unit_level", xi = 50)
+
+  # comparative statics: the w-weighted per-unit losses are non-increasing in xi
+  expect_lte(loss_term(fit_hi), loss_term(fit_lo) + 1e-8)
+
+  # the returned objective equals eq. (10) recomputed from the returned weights
+  Xw <- drop(X[, fit_hi$treated_units, drop = FALSE] %*%
+               fit_hi$w[fit_hi$treated_units])
+  expect_equal(fit_hi$objective, sum((X_bar - Xw)^2) + 50 * loss_term(fit_hi),
+               tolerance = 1e-6)
+
+  # the aggregate control weights follow eq. (11): v = sum_j w_j v_j
+  Xc    <- X[, fit_hi$control_units, drop = FALSE]
+  v_agg <- Reduce(`+`, lapply(fit_hi$treated_units, function(u) {
+    fit_hi$w[[u]] * as.numeric(scm_inner_weights_cpp(Xc, X[, u], Vk))
+  }))
+  expect_equal(unname(fit_hi$v[fit_hi$control_units]), v_agg, tolerance = 1e-6)
+})
+
+test_that("scm_design unit_level: large xi shifts the selected treated set", {
+  # Panel where the eq. (10) trade-off flips the optimal treated set: at small
+  # xi the pair best matching X_bar wins; at large xi the per-unit synthetic
+  # fits dominate and a different pair is selected.
+  set.seed(20260712)
+  J <- 8L; TT <- 20L
+  Fmat    <- matrix(rnorm(TT * 2L), TT, 2L)
+  Lam     <- matrix(rnorm(J * 2L, 1, 0.5), J, 2L)
+  delta_t <- cumsum(rnorm(TT, 0, 0.3))
+  Y  <- outer(delta_t, rep(1, J)) + Fmat %*% t(Lam) +
+    matrix(rnorm(TT * J, 0, 1), TT, J)
+  df <- data.frame(unit = rep(paste0("u", 1:J), each = TT),
+                   time = rep(1:TT, times = J),
+                   y    = as.vector(Y))
+
+  fit_lo <- scm_design(df, "y", "unit", "time", T0 = 14L, T_fit = 10L,
+                       m_min = 2L, m_max = 2L, design = "unit_level", xi = 0.1)
+  fit_hi <- scm_design(df, "y", "unit", "time", T0 = 14L, T_fit = 10L,
+                       m_min = 2L, m_max = 2L, design = "unit_level", xi = 100)
+  expect_false(setequal(fit_lo$treated_units, fit_hi$treated_units))
+})
+
 test_that("scm_design custom population weights f are normalised and applied", {
   J     <- 8L
   units <- paste0("m", seq_len(J))

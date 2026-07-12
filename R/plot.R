@@ -154,8 +154,9 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
         {if(!is.null(hline_style)) do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
         {if(!is.null(vline_style) && !is.na(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
         theme_minimal(base_size = 13) +
-        labs(title = paste0("Treatment Effect Gap  [", toupper(x$method), "]"),
-             x = "Time", y = "Y_treated - Y_synthetic")
+        labs(title    = paste0("Treatment Effect Gap  [", toupper(x$method), "]"),
+             subtitle = "Treated \u2212 synthetic control",
+             x = "Time", y = "Gap")
       return(p)
     }
   }
@@ -303,7 +304,7 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
       theme_minimal(base_size = 13) +
       labs(title = "Placebo Gaps in the Donor Pool  [SCM]",
            subtitle = subtitle,
-           x = "Time", y = "Gap (unit - synthetic control)",
+           x = "Time", y = "Gap",
            color = NULL,
            caption = if (n_pruned > 0L) {
              paste0("Pruned ", n_pruned, " placebo unit(s) with pre-treatment MSPE > ",

@@ -1,4 +1,4 @@
-# coresynth (development version)
+# coresynth 0.3.0
 
 ## New features
 
@@ -28,7 +28,10 @@
   plots the post/pre-treatment MSPE ratio for every unit (Figure 8).
 - **Plot style customization**: `plot.coresynth()` and `plot.scm_placebo()`
   gain `colors`, `labels`, `vline`, `hline`, and (for `type = "weights"`)
-  `fill` arguments. `vline`/`hline` accept a list of `geom_vline()`/`geom_hline()`
+  `fill` and `top_n` arguments. `top_n` restricts the weights bar chart to
+  the `top_n` largest-weight donors (default `Inf` keeps every donor with a
+  non-negligible weight), useful for large donor pools.
+  `vline`/`hline` accept a list of `geom_vline()`/`geom_hline()`
   aesthetic overrides merged onto the built-in defaults, or `NULL`/`FALSE` to
   suppress the reference line entirely — since a line already added to a
   returned `ggplot` object cannot be removed, only restyled or overplotted,
@@ -49,6 +52,13 @@
 - `plot()` on a staggered fit now fails with a clear message explaining that
   staggered fits store their series per cohort, instead of an internal
   `data.frame` length error.
+- The gap plot (`plot(fit, type = "gap")`) now labels its y-axis simply
+  "Gap" and states the definition ("Treated − synthetic control") in a new
+  subtitle, replacing the previous `Y_treated - Y_synthetic` axis label.
+  The placebo gaps plot (`plot(<scm_placebo>, type = "gaps")`) uses the same
+  "Gap" axis label — there each line is that unit's gap relative to its own
+  synthetic control, so the old parenthetical was dropped rather than
+  reworded. Cosmetic only; no computed values change.
 
 ## Bug fixes
 
@@ -61,6 +71,19 @@
   counterfactual, gap, and residuals for `tasc` fits change; the ATT estimate
   itself was always computed from the correct per-unit gaps and is
   unaffected.
+- `scm_design()` solved the `weakly_targeted` (eq. 9) and `unit_level`
+  (eq. 10) designs by a sequential approximation: the treated weights `w`
+  were always chosen to match the population average predictor vector alone,
+  which made the `xi` penalty of eq. 10 effectively inert and left the
+  eq. 9 objective jointly suboptimal. Both designs are now solved exactly
+  for every candidate treated set — eq. 9 by two-block alternating
+  minimisation of the jointly convex QP in `(w, v)`, eq. 10 by folding the
+  per-unit synthetic-control losses into the treated-weight QP target —
+  and the solutions have been verified against an independent exact QP
+  solver. **This changes numerical results for
+  `scm_design(design = "weakly_targeted")` and `design = "unit_level"` when
+  `m >= 2`** (the default `m = 1` selects a single treated unit, so `w` is
+  degenerate and both old and new solvers agree).
 
 ## Internal
 

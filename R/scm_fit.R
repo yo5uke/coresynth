@@ -48,6 +48,27 @@
 #'   `"bfgs"` uses R's L-BFGS-B, which requires only O(k^2) inner QP calls and
 #'   is faster when `k` is small (e.g. external predictors with k <= 15).
 #'   `"auto"` selects `"bfgs"` when `k <= 15`, otherwise `"coord_descent"`.
+#' @param nu Partial pooling parameter for **staggered** SCM fits
+#'   (Ben-Michael, Feller & Rothstein 2022, JRSS-B). `NULL` (default) keeps
+#'   the per-cohort V-optimised SCM path. A number in `[0, 1]` switches to
+#'   partially pooled SCM: all cohort weight vectors are chosen jointly to
+#'   minimise `nu * (normalised pooled pre-treatment imbalance)^2 +
+#'   (1 - nu) * (normalised per-cohort imbalance)^2`, so the aggregate ATT
+#'   is anchored by the pooled fit. `nu = 0` is separate per-cohort SCM
+#'   with uniform lag weights, `nu = 1` fully pooled, and `nu = "auto"`
+#'   uses the paper's heuristic (the ratio of the pooled to the average
+#'   per-cohort imbalance of the separate solution). The pooled path is
+#'   outcomes-only and cannot be combined with `donor_mspe_threshold`,
+#'   `lambda_pen`, or `v_selection = "oos"`. Balance diagnostics are stored
+#'   in `fit$pooling`. For `method = "scm"` on staggered panels only.
+#' @param fixedeff If `TRUE`, staggered SCM demeans every unit by its own
+#'   pre-treatment mean within each cohort before fitting (intercept shift;
+#'   Ben-Michael, Feller & Rothstein 2022, Section 5.1), which turns the
+#'   estimator into a weighted difference-in-differences and typically
+#'   improves fit when outcome levels differ across units. The reported
+#'   `Y_synth` is shifted back to the raw outcome scale. Works with both
+#'   the default and the partially pooled path. For `method = "scm"` on
+#'   staggered panels only. Default `FALSE`.
 #' @param ...     Additional arguments forwarded to the specific method
 #'                (e.g. `r`, `lambda`, `zeta2`).
 #'
@@ -92,6 +113,8 @@ scm_fit <- function(
   donor_mspe_threshold = Inf,
   lambda_pen = NULL,
   v_optim = c("coord_descent", "auto", "bfgs"),
+  nu = NULL,
+  fixedeff = FALSE,
   ...
 ) {
   v_selection <- match.arg(v_selection)
@@ -179,6 +202,8 @@ scm_fit <- function(
       donor_mspe_threshold = donor_mspe_threshold,
       lambda_pen = lambda_pen,
       v_optim = v_optim,
+      nu = nu,
+      fixedeff = fixedeff,
       ...
     ),
     "sdid" = fit_sdid_cpp(

@@ -29,11 +29,21 @@ arma::vec proj_simplex(arma::vec y) {
 // Projected Gradient Descent for Quadratic Programming on the unit simplex
 // min 0.5 * x^T Q x - c^T x
 // s.t. sum(x) = 1, x >= 0
+// x0: optional warm start (projected onto the simplex). Block coordinate
+// descent callers (partially pooled staggered SCM) resolve near-identical
+// QPs every sweep; restarting FISTA from the previous block solution cuts
+// the iteration count by orders of magnitude on ill-conditioned Q.
 // [[Rcpp::export]]
-arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter = 10000, double tol = 1e-6) {
+arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter = 10000, double tol = 1e-6,
+                           Rcpp::Nullable<Rcpp::NumericVector> x0 = R_NilValue) {
   int n = c.n_elem;
-  arma::vec x = arma::ones(n) / n; // initialize uniformly
-  
+  arma::vec x;
+  if (x0.isNotNull()) {
+    x = proj_simplex(Rcpp::as<arma::vec>(x0.get()));
+  } else {
+    x = arma::ones(n) / n; // initialize uniformly
+  }
+
   // Lipschitz constant for step size: largest eigenvalue of Q (optimal for FISTA).
   // eig_sym is O(n^3) but gives the tightest step size, minimising FISTA iterations.
   // norm_inf is cheaper to compute but yields a smaller step → more iterations;

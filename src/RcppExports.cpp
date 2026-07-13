@@ -83,8 +83,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // solve_simplex_qp
-arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter, double tol);
-RcppExport SEXP _coresynth_solve_simplex_qp(SEXP QSEXP, SEXP cSEXP, SEXP max_iterSEXP, SEXP tolSEXP) {
+arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter, double tol, Rcpp::Nullable<Rcpp::NumericVector> x0);
+RcppExport SEXP _coresynth_solve_simplex_qp(SEXP QSEXP, SEXP cSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP x0SEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -92,7 +92,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::vec& >::type c(cSEXP);
     Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
-    rcpp_result_gen = Rcpp::wrap(solve_simplex_qp(Q, c, max_iter, tol));
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type x0(x0SEXP);
+    rcpp_result_gen = Rcpp::wrap(solve_simplex_qp(Q, c, max_iter, tol, x0));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -219,7 +220,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_coresynth_scm_placebo_cpp", (DL_FUNC) &_coresynth_scm_placebo_cpp, 4},
     {"_coresynth_soft_impute_cpp", (DL_FUNC) &_coresynth_soft_impute_cpp, 5},
     {"_coresynth_proj_simplex", (DL_FUNC) &_coresynth_proj_simplex, 1},
-    {"_coresynth_solve_simplex_qp", (DL_FUNC) &_coresynth_solve_simplex_qp, 4},
+    {"_coresynth_solve_simplex_qp", (DL_FUNC) &_coresynth_solve_simplex_qp, 5},
     {"_coresynth_scm_inner_weights_cpp", (DL_FUNC) &_coresynth_scm_inner_weights_cpp, 3},
     {"_coresynth_scm_weights_cpp", (DL_FUNC) &_coresynth_scm_weights_cpp, 7},
     {"_coresynth_sdid_unit_weights_cpp", (DL_FUNC) &_coresynth_sdid_unit_weights_cpp, 3},

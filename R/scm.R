@@ -48,13 +48,30 @@ fit_scm_cpp <- function(
   v_optim = c("coord_descent", "auto", "bfgs"),
   control_group = c("clean", "never_treated"),
   scale_predictors = TRUE,
+  nu = NULL,
+  fixedeff = FALSE,
   ...
 ) {
   v_selection   <- match.arg(v_selection)
   v_optim       <- match.arg(v_optim)
   control_group <- match.arg(control_group)
+  if (!is.null(nu) && !identical(nu, "auto") &&
+      (!is.numeric(nu) || length(nu) != 1L || nu < 0 || nu > 1)) {
+    stop("nu must be NULL, \"auto\", or a single number in [0, 1].",
+         call. = FALSE)
+  }
   pan <- panel_to_matrices(y, d, id, time)
   .check_panel_complete(pan$Y, "SCM")
+
+  if (pan$is_sharp && (!is.null(nu) || isTRUE(fixedeff))) {
+    stop(
+      "nu and fixedeff apply to staggered SCM fits only ",
+      "(Ben-Michael, Feller & Rothstein 2022). ",
+      "For a single treated unit there is nothing to pool across; ",
+      "fit the sharp SCM without these arguments.",
+      call. = FALSE
+    )
+  }
 
   # -- Staggered path (cohort-by-cohort SCM) -----------------------------------
   if (!pan$is_sharp) {
@@ -80,21 +97,46 @@ fit_scm_cpp <- function(
       beta_hat <- po$beta_hat
     }
 
-    stag <- .fit_scm_staggered(
-      pan,
-      Y_matrix             = Y_work,
-      v_selection          = v_selection,
-      v_optim              = v_optim,
-      donor_mspe_threshold = donor_mspe_threshold,
-      lambda_pen           = lambda_pen,
-      control_group        = control_group
-    )
+    if (!is.null(nu)) {
+      # Partially pooled SCM (Ben-Michael, Feller & Rothstein 2022):
+      # outcomes-only with uniform lag weights, so the legacy path's
+      # V-selection / donor-filtering / penalty knobs do not apply.
+      if (!identical(donor_mspe_threshold, Inf) || !is.null(lambda_pen) ||
+          v_selection == "oos") {
+        stop(
+          "nu (partially pooled SCM) cannot be combined with ",
+          "donor_mspe_threshold, lambda_pen, or v_selection = 'oos'. ",
+          "Use nu = NULL for the per-cohort V-optimised path.",
+          call. = FALSE
+        )
+      }
+      stag <- .fit_scm_staggered_pooled(
+        pan,
+        Y_matrix      = Y_work,
+        nu            = nu,
+        fixedeff      = fixedeff,
+        control_group = control_group
+      )
+    } else {
+      stag <- .fit_scm_staggered(
+        pan,
+        Y_matrix             = Y_work,
+        v_selection          = v_selection,
+        v_optim              = v_optim,
+        donor_mspe_threshold = donor_mspe_threshold,
+        lambda_pen           = lambda_pen,
+        control_group        = control_group,
+        fixedeff             = fixedeff
+      )
+    }
     res <- list(
       method           = "scm",
       staggered        = TRUE,
       estimate         = stag$estimate,
       cohort_estimates = stag$cohort_estimates,
       cohort_fits      = stag$cohort_fits,
+      pooling          = stag$pooling,   # NULL for the legacy path
+      fixedeff         = fixedeff,
       unit_weights     = NULL,
       v_weights        = NULL,
       Y_treat          = pan$Y[, pan$idx_treat, drop = FALSE],
@@ -470,15 +512,22 @@ fit_scm_cpp <- function(
 # -- Internal: cohort-by-cohort SCM for staggered adoption -------------------
 # Cohort g ATT is averaged with weight N_treat_g * T_post_g, following the
 # same aggregation used in Arkhangelsky et al. (2021) Appendix S.8.
-# Treated units within a cohort are averaged into a single pseudo-unit.
+# Treated units within a cohort are averaged into a single pseudo-unit;
+# within-cohort pooling is justified by Ben-Michael, Feller & Rothstein
+# (2022, S.4.1): the DGP heterogeneity terms (S_rho, S_k) vanish across
+# units sharing one adoption time.
 # Only predictors = NULL is supported (all pre-treatment outcomes used as X).
+# fixedeff = TRUE demeans every unit by its own pre-treatment mean within
+# each cohort (intercept shift; Ben-Michael et al. 2022 S.5.1) and restores
+# the level in the reported Y_synth via the closed-form alpha of their Eq. 8.
 .fit_scm_staggered <- function(pan,
                                Y_matrix             = NULL,
                                v_selection          = "insample",
                                v_optim              = "coord_descent",
                                donor_mspe_threshold = Inf,
                                lambda_pen           = NULL,
-                               control_group        = "clean") {
+                               control_group        = "clean",
+                               fixedeff             = FALSE) {
   Y       <- if (!is.null(Y_matrix)) Y_matrix else pan$Y
   TT      <- nrow(Y)
   T_adopt <- pan$T_adopt
@@ -512,7 +561,17 @@ fit_scm_cpp <- function(
 
     Y1_g     <- rowMeans(Y[, idx_tr_g, drop = FALSE])
     Y_co_all <- Y[, idx_co_g, drop = FALSE]
-    Y_co_pre <- Y[pre_rows, idx_co_g, drop = FALSE]  # T_pre_g x N_co_g
+
+    # Intercept shift: fit on series demeaned by their own pre-window means
+    # (the raw copies are kept so Y_synth can be reported on the raw scale)
+    Y1_g_raw     <- Y1_g
+    Y_co_all_raw <- Y_co_all
+    if (fixedeff) {
+      Y1_g     <- Y1_g - mean(Y1_g[pre_rows])
+      Y_co_all <- sweep(Y_co_all, 2L,
+                        colMeans(Y_co_all[pre_rows, , drop = FALSE]))
+    }
+    Y_co_pre <- Y_co_all[pre_rows, , drop = FALSE]  # T_pre_g x N_co_g
     Y_tr_pre <- Y1_g[pre_rows]
 
     # Donor pool filtering per cohort (same rule as the sharp path)
@@ -521,10 +580,11 @@ fit_scm_cpp <- function(
       ind_mspe <- colMeans((Y_tr_pre - Y_co_pre)^2)
       keep     <- ind_mspe <= donor_mspe_threshold * min(ind_mspe)
       if (sum(keep) >= 2L) {
-        excl_g   <- colnames(Y_co_pre)[!keep]
-        idx_co_g <- idx_co_g[keep]
-        Y_co_all <- Y_co_all[, keep, drop = FALSE]
-        Y_co_pre <- Y_co_pre[, keep, drop = FALSE]
+        excl_g       <- colnames(Y_co_pre)[!keep]
+        idx_co_g     <- idx_co_g[keep]
+        Y_co_all     <- Y_co_all[, keep, drop = FALSE]
+        Y_co_all_raw <- Y_co_all_raw[, keep, drop = FALSE]
+        Y_co_pre     <- Y_co_pre[, keep, drop = FALSE]
       }
     }
 
@@ -585,8 +645,15 @@ fit_scm_cpp <- function(
       }
 
       names(unit_w) <- colnames(Y_co_all)
-      Y_synth_g <- drop(Y_co_all %*% unit_w)
-      ATT_g     <- mean((Y1_g - Y_synth_g)[post_rows])
+      if (fixedeff) {
+        alpha_g <- mean(Y1_g_raw[pre_rows]) -
+          sum(unit_w * colMeans(Y_co_all_raw[pre_rows, , drop = FALSE]))
+        Y_synth_g <- drop(Y_co_all_raw %*% unit_w) + alpha_g
+      } else {
+        alpha_g   <- 0
+        Y_synth_g <- drop(Y_co_all_raw %*% unit_w)
+      }
+      ATT_g <- mean((Y1_g_raw - Y_synth_g)[post_rows])
 
       list(
         cohort          = g,
@@ -597,7 +664,11 @@ fit_scm_cpp <- function(
         weight          = as.numeric(length(idx_tr_g)) * T_post_g,
         unit_weights    = unit_w,
         Y_synth         = Y_synth_g,
-        Y_treat         = Y1_g,
+        Y_treat         = Y1_g_raw,
+        Y_treat_mat     = Y[, idx_tr_g, drop = FALSE],
+        idx_tr          = idx_tr_g,
+        idx_co          = idx_co_g,
+        alpha           = alpha_g,
         excluded_donors = excl_g,
         lambda_pen      = lambda_pen_used
       )
@@ -631,6 +702,371 @@ fit_scm_cpp <- function(
   )
 
   list(estimate = att, cohort_estimates = cohort_df, cohort_fits = r)
+}
+
+# -- Internal: partially pooled SCM for staggered adoption -------------------
+# Ben-Michael, Feller & Rothstein (2022, JRSS-B) Eq. 6: choose all cohort
+# weight vectors jointly to minimise
+#   nu * (q_pool / q_pool_sep)^2 + (1 - nu) * (q_sep / q_sep_sep)^2
+# where q_sep is the root mean squared per-cohort pre-treatment imbalance and
+# q_pool the imbalance of the average placebo gap, aligned in event time with
+# missing lags zero-padded (their tau_hat_j(-l) = 0 for l > L_j convention).
+# Treated units within a cohort are averaged into one pseudo-unit (their
+# Appendix A.2 modification), so "unit" in the paper maps to "cohort" here.
+# nu = 0 is separate SCM with uniform lag weights (no V optimisation),
+# nu = 1 fully pooled, nu = "auto" the paper's heuristic
+#   nu_hat = ||pooled placebo gap||_2 / mean_g ||cohort placebo gap||_2.
+# The joint QP is solved by cyclic block coordinate descent over cohorts:
+# with the other cohorts fixed, the objective in gamma_g is a standard
+# simplex QP handled by solve_simplex_qp() (convex objective, separable
+# simplex constraints, so BCD converges to the global optimum).
+.fit_scm_staggered_pooled <- function(pan,
+                                      Y_matrix      = NULL,
+                                      nu            = "auto",
+                                      fixedeff      = FALSE,
+                                      control_group = "clean",
+                                      max_sweeps    = 200L,
+                                      tol           = 1e-7) {
+  # tol is the relative objective-improvement threshold for the BCD loop.
+  # A weight-change criterion would never trigger with warm-started FISTA
+  # blocks, whose solutions jitter at the inner solver tolerance (~1e-6);
+  # past that point extra sweeps change q_pool below the solver noise floor.
+  Y       <- if (!is.null(Y_matrix)) Y_matrix else pan$Y
+  TT      <- nrow(Y)
+  T_adopt <- pan$T_adopt
+  idx_tr  <- pan$idx_treat
+  idx_co  <- pan$idx_control
+  cohorts <- sort(unique(T_adopt[idx_tr]))
+
+  # ---- assemble per-cohort blocks in event-time (lag) order ----------------
+  blocks <- lapply(cohorts, function(g) {
+    idx_tr_g <- idx_tr[T_adopt[idx_tr] == g]
+    T_pre_g  <- g - 1L
+    T_post_g <- TT - T_pre_g
+
+    if (control_group == "never_treated") {
+      idx_co_g <- idx_co
+    } else {
+      future_tr <- idx_tr[!is.na(T_adopt[idx_tr]) & T_adopt[idx_tr] > g]
+      idx_co_g  <- c(idx_co, future_tr)
+    }
+    if (length(idx_co_g) < 2L || T_pre_g < 2L) {
+      warning(sprintf(
+        "SCM staggered: cohort g=%d skipped (T_pre=%d, N_co=%d).",
+        g, T_pre_g, length(idx_co_g)
+      ), call. = FALSE)
+      return(NULL)
+    }
+
+    pre_rows  <- seq_len(T_pre_g)
+    post_rows <- (T_pre_g + 1L):TT
+    Y1_raw    <- rowMeans(Y[, idx_tr_g, drop = FALSE])
+    Y_co_raw  <- Y[, idx_co_g, drop = FALSE]
+
+    Y1_fit   <- Y1_raw
+    Y_co_fit <- Y_co_raw
+    if (fixedeff) {
+      Y1_fit   <- Y1_raw - mean(Y1_raw[pre_rows])
+      Y_co_fit <- sweep(Y_co_raw, 2L,
+                        colMeans(Y_co_raw[pre_rows, , drop = FALSE]))
+    }
+
+    # lag l (= 1..T_pre_g) is calendar row T_pre_g + 1 - l, so that lag
+    # vectors from different cohorts align in event time for the pooled fit
+    lag_rows <- rev(pre_rows)
+    list(
+      cohort = g, idx_tr = idx_tr_g, idx_co = idx_co_g,
+      T_pre = T_pre_g, T_post = T_post_g,
+      pre_rows = pre_rows, post_rows = post_rows,
+      Y1_raw = Y1_raw, Y_co_raw = Y_co_raw,
+      b = Y1_fit[lag_rows],                       # length T_pre_g
+      X = Y_co_fit[lag_rows, , drop = FALSE]      # T_pre_g x N_co_g
+    )
+  })
+  blocks <- blocks[!vapply(blocks, is.null, logical(1L))]
+  if (length(blocks) == 0L) {
+    stop("All cohort-level SCM fits failed; see the preceding warnings for ",
+         "per-cohort reasons.", call. = FALSE)
+  }
+
+  J    <- length(blocks)
+  L_g  <- vapply(blocks, `[[`, integer(1L), "T_pre")
+  L    <- max(L_g)
+
+  # ---- separate SCM baseline (nu = 0; also the normalisation constants) ----
+  Gamma <- lapply(blocks, function(bl) {
+    as.numeric(solve_simplex_qp(crossprod(bl$X), crossprod(bl$X, bl$b)))
+  })
+
+  # zero-padded average placebo gap across cohorts at each event-time lag
+  pooled_gap <- function(Gamma) {
+    P <- numeric(L)
+    for (j in seq_len(J)) {
+      lg <- L_g[j]
+      P[seq_len(lg)] <- P[seq_len(lg)] +
+        (blocks[[j]]$b - as.numeric(blocks[[j]]$X %*% Gamma[[j]])) / J
+    }
+    P
+  }
+  sep_norms <- function(Gamma) {  # per-cohort L2 norms of the placebo gaps
+    vapply(seq_len(J), function(j) {
+      sqrt(sum((blocks[[j]]$b - as.numeric(blocks[[j]]$X %*% Gamma[[j]]))^2))
+    }, numeric(1L))
+  }
+  q_sep_of  <- function(Gamma) sqrt(mean(sep_norms(Gamma)^2 / L_g))
+  q_pool_of <- function(Gamma) sqrt(mean(pooled_gap(Gamma)^2))
+
+  C_sep  <- q_sep_of(Gamma)
+  C_pool <- q_pool_of(Gamma)
+
+  # heuristic nu (bounded above by 1 via the triangle inequality)
+  r_sep   <- sep_norms(Gamma)
+  nu_heur <- if (mean(r_sep) < .Machine$double.eps) 0 else
+    min(1, sqrt(sum(pooled_gap(Gamma)^2)) / mean(r_sep))
+  nu_num <- if (identical(nu, "auto")) nu_heur else as.numeric(nu)
+
+  # ---- block coordinate descent (skipped when the pooled term is inactive) --
+  sweeps_used <- 0L
+  if (nu_num > 0 && C_pool > .Machine$double.eps &&
+      C_sep > .Machine$double.eps) {
+    A_pool <- nu_num / (C_pool^2 * L)
+    P      <- pooled_gap(Gamma)
+    XtX_l  <- lapply(blocks, function(bl) crossprod(bl$X))
+    Xtb_l  <- lapply(blocks, function(bl) as.numeric(crossprod(bl$X, bl$b)))
+    obj_prev <- Inf
+    for (s in seq_len(max_sweeps)) {
+      obj_sep <- 0
+      for (j in seq_len(J)) {
+        bl <- blocks[[j]]
+        lg <- L_g[j]
+        gap_j <- bl$b - as.numeric(bl$X %*% Gamma[[j]])
+        R     <- P[seq_len(lg)] - gap_j / J     # other cohorts' contribution
+        A_sep <- (1 - nu_num) / (C_sep^2 * J * lg)
+        u     <- R + bl$b / J
+        Q     <- 2 * (A_pool / J^2 + A_sep) * XtX_l[[j]]
+        cvec  <- 2 * (A_pool / J * as.numeric(crossprod(bl$X, u)) +
+                        A_sep * Xtb_l[[j]])
+        # warm start from the previous block solution: successive sweeps
+        # resolve near-identical QPs, so FISTA converges in a few iterations
+        w_new <- as.numeric(solve_simplex_qp(Q, cvec, x0 = Gamma[[j]]))
+        Gamma[[j]] <- w_new
+        gap_new <- bl$b - as.numeric(bl$X %*% w_new)
+        P[seq_len(lg)] <- R + gap_new / J
+        obj_sep <- obj_sep + A_sep * sum(gap_new^2)
+      }
+      obj <- A_pool * sum(P^2) + obj_sep
+      sweeps_used <- s
+      if (obj_prev - obj < tol * max(obj_prev, .Machine$double.eps)) break
+      obj_prev <- obj
+    }
+  }
+
+  # ---- per-cohort reporting on the raw outcome scale ------------------------
+  r <- lapply(seq_len(J), function(j) {
+    bl     <- blocks[[j]]
+    unit_w <- Gamma[[j]]
+    names(unit_w) <- colnames(bl$Y_co_raw)
+    if (fixedeff) {
+      alpha_g <- mean(bl$Y1_raw[bl$pre_rows]) -
+        sum(unit_w * colMeans(bl$Y_co_raw[bl$pre_rows, , drop = FALSE]))
+    } else {
+      alpha_g <- 0
+    }
+    Y_synth_g <- drop(bl$Y_co_raw %*% unit_w) + alpha_g
+    ATT_g     <- mean((bl$Y1_raw - Y_synth_g)[bl$post_rows])
+    list(
+      cohort          = bl$cohort,
+      n_treated       = length(bl$idx_tr),
+      T_pre           = bl$T_pre,
+      T_post          = bl$T_post,
+      estimate        = ATT_g,
+      weight          = as.numeric(length(bl$idx_tr)) * bl$T_post,
+      unit_weights    = unit_w,
+      Y_synth         = Y_synth_g,
+      Y_treat         = bl$Y1_raw,
+      Y_treat_mat     = Y[, bl$idx_tr, drop = FALSE],
+      idx_tr          = bl$idx_tr,
+      idx_co          = bl$idx_co,
+      alpha           = alpha_g,
+      excluded_donors = character(0L),
+      lambda_pen      = NA_real_
+    )
+  })
+
+  w   <- vapply(r, `[[`, numeric(1L), "weight")
+  tau <- vapply(r, `[[`, numeric(1L), "estimate")
+  att <- sum(w * tau) / sum(w)
+
+  cohort_df <- data.frame(
+    cohort    = vapply(r, `[[`, integer(1L), "cohort"),
+    n_treated = vapply(r, `[[`, integer(1L), "n_treated"),
+    T_pre     = vapply(r, `[[`, integer(1L), "T_pre"),
+    T_post    = vapply(r, `[[`, integer(1L), "T_post"),
+    estimate  = tau,
+    weight    = w / sum(w),
+    stringsAsFactors = FALSE
+  )
+
+  list(
+    estimate         = att,
+    cohort_estimates = cohort_df,
+    cohort_fits      = r,
+    pooling          = list(
+      nu              = nu_num,
+      nu_heuristic    = nu_heur,
+      fixedeff        = fixedeff,
+      q_sep           = q_sep_of(Gamma),
+      q_pool          = q_pool_of(Gamma),
+      q_sep_separate  = C_sep,
+      q_pool_separate = C_pool,
+      sweeps          = sweeps_used
+    )
+  )
+}
+
+#' Wild Bootstrap Inference for Staggered SCM
+#'
+#' Confidence intervals and p-values for the aggregate ATT of a staggered
+#' SCM fit via the weighted multiplier (wild) bootstrap of Ben-Michael,
+#' Feller & Rothstein (2022, Section 5.3), adapting Otsu & Rai (2017).
+#' The aggregate ATT is written as a weighted average of per-treated-unit
+#' effect contributions; each bootstrap draw perturbs those contributions
+#' with independent golden-ratio two-point multipliers (mean 0, variance 1)
+#' while donor weights and outcomes are kept fixed.
+#'
+#' Works with both staggered SCM paths (`nu = NULL` legacy and the
+#' partially pooled path) and honours the cohort aggregation weights
+#' `N_treated x T_post`. For intercept-shifted fits (`fixedeff = TRUE`)
+#' the per-unit contributions are computed in difference-in-differences
+#' form, i.e. each treated unit is demeaned by its own pre-treatment mean.
+#'
+#' With very few treated units the multiplier distribution has few atoms,
+#' so the bootstrap is unreliable; a warning is issued below 5 treated
+#' units.
+#'
+#' @param fit A staggered SCM fit from [scm_fit()] (`method = "scm"` on a
+#'   panel with multiple adoption times). Sharp fits are rejected: use
+#'   [mspe_ratio_pval()] or [conformal_inference()] instead.
+#' @param method Only `"wild_bootstrap"` is available.
+#' @param n_boot Number of bootstrap draws. Default 1000.
+#' @param level Confidence level. Default 0.95.
+#' @param alternative Direction of the alternative hypothesis for the
+#'   p-value: `"two.sided"` (default), `"greater"`, or `"less"`.
+#' @param seed Optional RNG seed.
+#' @return A `coresynth_inference` object with the standard fields
+#'   (`estimate`, `se`, `p_value`, `ci_lower`, `ci_upper`, `method`,
+#'   `staggered`, `n_controls`, `alternative`, `boot_ests`), compatible
+#'   with [tidy.coresynth_inference()] and [glance.coresynth_inference()].
+#'   `n_treated` additionally records the number of treated units
+#'   resampled by the multipliers.
+#' @references Ben-Michael, E., Feller, A., & Rothstein, J. (2022).
+#'   Synthetic controls with staggered adoption. *JRSS-B*, 84(2), 351-381.
+#' @examples
+#' \donttest{
+#' set.seed(1)
+#' dat <- expand.grid(time = 1:20, id = paste0("u", 1:12))
+#' dat$y <- rnorm(nrow(dat)) + as.numeric(factor(dat$id))
+#' dat$d <- as.integer(
+#'   (dat$id == "u1" & dat$time > 10) | (dat$id == "u2" & dat$time > 14)
+#' )
+#' fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
+#' scm_inference(fit, n_boot = 200, seed = 1)
+#' }
+#' @export
+scm_inference <- function(fit,
+                          method      = "wild_bootstrap",
+                          n_boot      = 1000L,
+                          level       = 0.95,
+                          alternative = c("two.sided", "greater", "less"),
+                          seed        = NULL) {
+  method      <- match.arg(method)
+  alternative <- match.arg(alternative)
+
+  if (!inherits(fit, "coresynth_scm"))
+    stop("scm_inference() requires a coresynth fit with method = 'scm'.",
+         call. = FALSE)
+  if (!inherits(fit, "coresynth_staggered"))
+    stop(
+      "scm_inference() supports staggered SCM fits only.\n",
+      "For a sharp fit use mspe_ratio_pval() (in-space permutation test) ",
+      "or conformal_inference().",
+      call. = FALSE
+    )
+  cf <- fit$cohort_fits
+  if (is.null(cf[[1L]]$Y_treat_mat))
+    stop("cohort_fits lack per-unit treated outcomes (Y_treat_mat). ",
+         "Re-run scm_fit() with the current version.", call. = FALSE)
+
+  if (!is.null(seed)) set.seed(seed)
+
+  TT       <- length(fit$times)
+  fixedeff <- isTRUE(fit$fixedeff)
+
+  # per-treated-unit average post-treatment effects tau_i (BFR Eq. 12) and
+  # aggregation weights omega_i reproducing sum_g N_g * T_post_g weighting
+  tau_i   <- numeric(0)
+  omega_i <- numeric(0)
+  for (b in cf) {
+    pre  <- seq_len(b$T_pre)
+    post <- (b$T_pre + 1L):TT
+    if (fixedeff) {
+      # DiD form: each treated unit demeaned by its own pre-treatment mean
+      tau_g <- (colMeans(b$Y_treat_mat[post, , drop = FALSE]) -
+                  colMeans(b$Y_treat_mat[pre, , drop = FALSE])) -
+        (mean(b$Y_synth[post]) - mean(b$Y_synth[pre]))
+    } else {
+      tau_g <- colMeans(b$Y_treat_mat[post, , drop = FALSE] -
+                          b$Y_synth[post])
+    }
+    tau_i   <- c(tau_i, tau_g)
+    omega_i <- c(omega_i, rep(b$weight / b$n_treated, b$n_treated))
+  }
+  omega_i <- omega_i / sum(omega_i)
+  att_hat <- fit$estimate
+
+  N_tr <- length(tau_i)
+  if (N_tr < 5L)
+    warning("Wild bootstrap with fewer than 5 treated units is unreliable; ",
+            "interpret the interval with caution.", call. = FALSE)
+
+  # golden-ratio two-point multipliers: E[W] = 0, E[W^2] = 1
+  s5    <- sqrt(5)
+  w_neg <- -(s5 - 1) / 2
+  w_pos <- (s5 + 1) / 2
+  p_neg <- (s5 + 1) / (2 * s5)
+
+  dev <- tau_i - att_hat
+  S   <- replicate(n_boot, {
+    W <- sample(c(w_neg, w_pos), N_tr, replace = TRUE,
+                prob = c(p_neg, 1 - p_neg))
+    sum(omega_i * W * dev)
+  })
+
+  alpha_lv <- 1 - level
+  se       <- stats::sd(S)
+  ci_lower <- att_hat - unname(stats::quantile(S, 1 - alpha_lv / 2))
+  ci_upper <- att_hat - unname(stats::quantile(S, alpha_lv / 2))
+  p_value  <- switch(alternative,
+    two.sided = (1 + sum(abs(S) >= abs(att_hat))) / (n_boot + 1),
+    greater   = (1 + sum(S >= att_hat)) / (n_boot + 1),
+    less      = (1 + sum(S <= att_hat)) / (n_boot + 1)
+  )
+
+  n_controls <- length(unique(unlist(lapply(cf, `[[`, "idx_co"))))
+
+  structure(list(
+    estimate    = att_hat,
+    se          = se,
+    p_value     = p_value,
+    ci_lower    = ci_lower,
+    ci_upper    = ci_upper,
+    method      = method,
+    staggered   = TRUE,
+    n_controls  = n_controls,
+    n_treated   = N_tr,
+    alternative = alternative,
+    boot_ests   = att_hat + S
+  ), class = "coresynth_inference")
 }
 
 #' Permutation Inference via MSPE Ratio for SCM

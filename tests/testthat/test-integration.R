@@ -3659,3 +3659,206 @@ test_that("plot.scm_placebo: labels relabel the legend and the ratios axis tick"
   expect_error(plot(inf, type = "gaps", labels = c(Bogus = "x")),
                "unrecognized name")
 })
+
+# ── Phase 33: Partially pooled staggered SCM (Ben-Michael et al. 2022) ────────
+
+test_that("Phase 33: nu/fixedeff on a sharp fit error informatively", {
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm", nu = 0.5),
+    regexp = "staggered"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm", fixedeff = TRUE),
+    regexp = "staggered"
+  )
+})
+
+test_that("Phase 33: invalid nu is rejected", {
+  expect_error(
+    scm_fit(y ~ d | id + time, data = staggered, method = "scm", nu = 1.5),
+    regexp = "nu must be"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = staggered, method = "scm", nu = "bogus"),
+    regexp = "nu must be"
+  )
+})
+
+test_that("Phase 33: nu is incompatible with the legacy-path knobs", {
+  expect_error(
+    scm_fit(y ~ d | id + time, data = staggered, method = "scm",
+            nu = 0.5, lambda_pen = 0.1),
+    regexp = "cannot be combined"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = staggered, method = "scm",
+            nu = 0.5, v_selection = "oos"),
+    regexp = "cannot be combined"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = staggered, method = "scm",
+            nu = 0.5, donor_mspe_threshold = 20),
+    regexp = "cannot be combined"
+  )
+})
+
+test_that("Phase 33: partially pooled SCM returns a valid staggered fit", {
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm", nu = 0.5)
+  expect_s3_class(fit, "coresynth_staggered")
+  expect_true(is.finite(fit$estimate))
+  expect_lt(abs(fit$estimate - 1.5), 4.0)
+  expect_equal(sum(fit$cohort_estimates$weight), 1, tolerance = 1e-8)
+  for (cf in fit$cohort_fits) {
+    expect_equal(sum(cf$unit_weights), 1, tolerance = 1e-5)
+    expect_true(all(cf$unit_weights >= -1e-5))
+  }
+})
+
+test_that("Phase 33: pooling diagnostics are stored and consistent", {
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm", nu = 0.5)
+  p <- fit$pooling
+  expect_equal(p$nu, 0.5)
+  expect_true(p$fixedeff == FALSE)
+  expect_true(all(is.finite(c(p$q_sep, p$q_pool,
+                              p$q_sep_separate, p$q_pool_separate))))
+  # pooling can only improve the pooled fit relative to separate SCM
+  expect_lte(p$q_pool, p$q_pool_separate + 1e-10)
+  # and can only worsen the separate fit
+  expect_gte(p$q_sep, p$q_sep_separate - 1e-10)
+})
+
+test_that("Phase 33: nu = 0 equals the separate (uniform-V) solution", {
+  fit0 <- scm_fit(y ~ d | id + time, data = staggered, method = "scm", nu = 0)
+  p <- fit0$pooling
+  expect_equal(p$q_sep, p$q_sep_separate, tolerance = 1e-12)
+  expect_equal(p$q_pool, p$q_pool_separate, tolerance = 1e-12)
+})
+
+test_that("Phase 33: pooled fit improves monotonically in nu", {
+  fit0 <- scm_fit(y ~ d | id + time, data = staggered, method = "scm", nu = 0)
+  fit1 <- scm_fit(y ~ d | id + time, data = staggered, method = "scm", nu = 1)
+  expect_lte(fit1$pooling$q_pool, fit0$pooling$q_pool + 1e-10)
+  expect_gte(fit1$pooling$q_sep,  fit0$pooling$q_sep - 1e-10)
+})
+
+test_that("Phase 33: nu = 'auto' picks the heuristic in [0, 1]", {
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm",
+                 nu = "auto")
+  expect_true(fit$pooling$nu >= 0 && fit$pooling$nu <= 1)
+  expect_equal(fit$pooling$nu, fit$pooling$nu_heuristic)
+  expect_true(is.finite(fit$estimate))
+})
+
+test_that("Phase 33: fixedeff works on both staggered paths", {
+  # legacy path
+  fit_l <- scm_fit(y ~ d | id + time, data = staggered, method = "scm",
+                   fixedeff = TRUE)
+  expect_true(is.finite(fit_l$estimate))
+  expect_true(fit_l$fixedeff)
+  # pooled path
+  fit_p <- scm_fit(y ~ d | id + time, data = staggered, method = "scm",
+                   nu = 0.5, fixedeff = TRUE)
+  expect_true(is.finite(fit_p$estimate))
+  expect_true(fit_p$pooling$fixedeff)
+  # Y_synth is reported on the raw outcome scale: pre-period levels track
+  # the treated series (alpha restores the intercept)
+  for (cf in fit_p$cohort_fits) {
+    pre <- seq_len(cf$T_pre)
+    expect_lt(abs(mean(cf$Y_treat[pre]) - mean(cf$Y_synth[pre])), 1.0)
+  }
+})
+
+test_that("Phase 33: fixedeff recovers ATT under large unit intercepts", {
+  # DGP where donors share the treated units' trend but sit at shifted
+  # levels: plain SCM cannot match the level, the intercept shift can.
+  set.seed(11)
+  N <- 12; TT <- 24
+  f <- cumsum(rnorm(TT, 0, 0.5))
+  shift <- c(0, 0.5, seq(4, 14, length.out = N - 2))
+  rows <- expand.grid(time = seq_len(TT), id = paste0("u", seq_len(N)),
+                      stringsAsFactors = FALSE)
+  rows$y <- rep(f, N) + rep(shift, each = TT) + rnorm(nrow(rows), 0, 0.2)
+  rows$d <- as.integer(
+    (rows$id == "u1" & rows$time >= 9) | (rows$id == "u2" & rows$time >= 15)
+  )
+  rows$y[rows$d == 1] <- rows$y[rows$d == 1] + 1.5
+
+  fit_fe <- scm_fit(y ~ d | id + time, data = rows, method = "scm",
+                    nu = 0.5, fixedeff = TRUE)
+  expect_lt(abs(fit_fe$estimate - 1.5), 0.5)
+})
+
+test_that("Phase 33: staggered cohort_fits expose idx_tr/idx_co/Y_treat_mat", {
+  for (nu in list(NULL, 0.5)) {
+    fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm",
+                   nu = nu)
+    for (cf in fit$cohort_fits) {
+      expect_true(is.integer(cf$idx_tr) || is.numeric(cf$idx_tr))
+      expect_true(length(cf$idx_co) >= 2L)
+      expect_true(is.matrix(cf$Y_treat_mat))
+      expect_equal(ncol(cf$Y_treat_mat), cf$n_treated)
+      expect_equal(nrow(cf$Y_treat_mat), 24L)
+    }
+  }
+})
+
+# ── Phase 33: scm_inference() wild bootstrap ─────────────────────────────────
+
+test_that("Phase 33: scm_inference errors on sharp and non-SCM fits", {
+  fit_sharp <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(scm_inference(fit_sharp), regexp = "staggered")
+  fit_sdid <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid")
+  expect_error(scm_inference(fit_sdid), regexp = "method = 'scm'")
+})
+
+test_that("Phase 33: scm_inference returns a valid coresynth_inference", {
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
+  inf <- suppressWarnings(scm_inference(fit, n_boot = 200, seed = 1))
+  expect_s3_class(inf, "coresynth_inference")
+  expect_equal(inf$estimate, fit$estimate)
+  expect_true(is.finite(inf$se) && inf$se > 0)
+  expect_true(inf$p_value >= 0 && inf$p_value <= 1)
+  expect_lt(inf$ci_lower, inf$ci_upper)
+  expect_equal(length(inf$boot_ests), 200L)
+  expect_true(inf$staggered)
+  expect_equal(inf$method, "wild_bootstrap")
+  expect_equal(inf$n_treated, 2L)
+})
+
+test_that("Phase 33: scm_inference warns with fewer than 5 treated units", {
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
+  expect_warning(scm_inference(fit, n_boot = 50, seed = 1),
+                 regexp = "fewer than 5 treated units")
+})
+
+test_that("Phase 33: scm_inference is reproducible with seed and works with tidy/glance", {
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm",
+                 nu = 0.5, fixedeff = TRUE)
+  inf1 <- suppressWarnings(scm_inference(fit, n_boot = 100, seed = 42))
+  inf2 <- suppressWarnings(scm_inference(fit, n_boot = 100, seed = 42))
+  expect_equal(inf1$boot_ests, inf2$boot_ests)
+
+  td <- broom::tidy(inf1)
+  expect_equal(nrow(td), 1L)
+  expect_equal(td$method, "wild_bootstrap")
+  expect_true(td$staggered)
+  gl <- broom::glance(inf1)
+  expect_equal(gl$n_boot_valid, 100L)
+})
+
+test_that("Phase 33: scm_inference alternative directions behave sensibly", {
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
+  # true ATT = 1.5 > 0: 'greater' should not have a larger p than 'less'
+  p_g <- suppressWarnings(scm_inference(fit, n_boot = 200, seed = 3,
+                                        alternative = "greater"))$p_value
+  p_l <- suppressWarnings(scm_inference(fit, n_boot = 200, seed = 3,
+                                        alternative = "less"))$p_value
+  expect_lte(p_g, p_l)
+})
+
+test_that("Phase 33: partially pooled SCM works with covariates partial-out", {
+  fit <- scm_fit(y ~ d | id + time, data = stag_cov, method = "scm",
+                 nu = 0.5, covariates = "cov1")
+  expect_true(is.finite(fit$estimate))
+  expect_length(fit$beta_hat, 1L)
+})

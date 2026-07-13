@@ -14,6 +14,8 @@ scm_fit(
   donor_mspe_threshold = Inf,
   lambda_pen = NULL,
   v_optim = c("coord_descent", "auto", "bfgs"),
+  nu = NULL,
+  fixedeff = FALSE,
   ...
 )
 }
@@ -69,6 +71,28 @@ uses that value directly.}
 \code{"bfgs"} uses R's L-BFGS-B, which requires only O(k^2) inner QP calls and
 is faster when \code{k} is small (e.g. external predictors with k <= 15).
 \code{"auto"} selects \code{"bfgs"} when \code{k <= 15}, otherwise \code{"coord_descent"}.}
+
+\item{nu}{Partial pooling parameter for \strong{staggered} SCM fits
+(Ben-Michael, Feller & Rothstein 2022, JRSS-B). \code{NULL} (default) keeps
+the per-cohort V-optimised SCM path. A number in \verb{[0, 1]} switches to
+partially pooled SCM: all cohort weight vectors are chosen jointly to
+minimise \verb{nu * (normalised pooled pre-treatment imbalance)^2 + (1 - nu) * (normalised per-cohort imbalance)^2}, so the aggregate ATT
+is anchored by the pooled fit. \code{nu = 0} is separate per-cohort SCM
+with uniform lag weights, \code{nu = 1} fully pooled, and \code{nu = "auto"}
+uses the paper's heuristic (the ratio of the pooled to the average
+per-cohort imbalance of the separate solution). The pooled path is
+outcomes-only and cannot be combined with \code{donor_mspe_threshold},
+\code{lambda_pen}, or \code{v_selection = "oos"}. Balance diagnostics are stored
+in \code{fit$pooling}. For \code{method = "scm"} on staggered panels only.}
+
+\item{fixedeff}{If \code{TRUE}, staggered SCM demeans every unit by its own
+pre-treatment mean within each cohort before fitting (intercept shift;
+Ben-Michael, Feller & Rothstein 2022, Section 5.1), which turns the
+estimator into a weighted difference-in-differences and typically
+improves fit when outcome levels differ across units. The reported
+\code{Y_synth} is shifted back to the raw outcome scale. Works with both
+the default and the partially pooled path. For \code{method = "scm"} on
+staggered panels only. Default \code{FALSE}.}
 
 \item{...}{Additional arguments forwarded to the specific method
 (e.g. \code{r}, \code{lambda}, \code{zeta2}).}

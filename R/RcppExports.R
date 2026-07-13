@@ -97,8 +97,8 @@ proj_simplex <- function(y) {
     .Call(`_coresynth_proj_simplex`, y)
 }
 
-solve_simplex_qp <- function(Q, c, max_iter = 10000L, tol = 1e-6) {
-    .Call(`_coresynth_solve_simplex_qp`, Q, c, max_iter, tol)
+solve_simplex_qp <- function(Q, c, max_iter = 10000L, tol = 1e-6, x0 = NULL) {
+    .Call(`_coresynth_solve_simplex_qp`, Q, c, max_iter, tol, x0)
 }
 
 #' SCM Inner Weights (QP Given V)

@@ -1,3 +1,39 @@
+# coresynth (development version)
+
+## New features
+
+- **Partially pooled staggered SCM** (Ben-Michael, Feller & Rothstein 2022,
+  JRSS-B): `scm_fit(method = "scm")` on a staggered panel gains a `nu`
+  argument. `nu = NULL` (default) keeps the previous behaviour (per-cohort
+  V-optimised SCM). A numeric `nu` in `[0, 1]` minimises the convex
+  combination `nu * (pooled pre-treatment imbalance)^2 +
+  (1 - nu) * (per-cohort imbalance)^2` over all cohort weight vectors
+  jointly, so that the aggregate ATT is anchored by the pooled fit
+  (`nu = 0` reproduces separate per-cohort SCM with uniform lag weights,
+  `nu = 1` is fully pooled). `nu = "auto"` selects the paper's heuristic
+  value. The fit stores balance diagnostics in `fit$pooling`
+  (`q_sep`, `q_pool`, and their separate-SCM baselines).
+- **Intercept-shifted staggered SCM**: new `fixedeff` argument for staggered
+  SCM fits. `fixedeff = TRUE` demeans every unit by its own pre-treatment
+  mean within each cohort before fitting (Ben-Michael, Feller & Rothstein
+  2022, Section 5.1; Doudchenko & Imbens 2017; Ferman & Pinto 2021), turning
+  the estimator into a weighted difference-in-differences. Works with both
+  the default path and the partially pooled path.
+- **Wild bootstrap inference for staggered SCM**: new `scm_inference()`
+  function implements the weighted multiplier (wild) bootstrap of
+  Ben-Michael, Feller & Rothstein (2022, Section 5.3): donor weights are
+  kept fixed and per-treated-unit effect contributions are perturbed with
+  golden-ratio two-point multipliers. Returns a standard
+  `coresynth_inference` object (works with `tidy()`/`glance()`). This is the
+  first inference method available for staggered SCM fits.
+- `solve_simplex_qp()` gains an optional `x0` warm-start argument, used by
+  the partially pooled block coordinate descent to restart FISTA from the
+  previous block solution. Together with an objective-based stopping rule
+  this makes the pooled path roughly an order of magnitude faster on larger
+  donor pools (N = 100: ~0.8 s to ~0.06 s per fit). Validated against the
+  reference implementation `augsynth` (weights correlate at 1.0, identical
+  heuristic `nu`, equal pooled imbalance at `nu = 1`).
+
 # coresynth 0.3.0
 
 ## New features

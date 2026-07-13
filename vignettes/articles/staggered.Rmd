@@ -73,6 +73,14 @@ fit_nt    <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
 c(clean = fit_clean$estimate, never_treated = fit_nt$estimate)
 ```
 
+Note the trade-off: `"clean"` gives earlier cohorts a larger donor pool, but a
+future adopter's **post-adoption** outcomes enter the synthetic control of the
+periods after it adopts, which attenuates the aggregate ATT when its treatment
+effect is large. If the effect you estimate is sizeable relative to the
+outcome noise, `"never_treated"` is the safer choice (this matches the fixed
+donor-pool rule of Ben-Michael, Feller & Rothstein 2022, who exclude any unit
+treated within the evaluation window).
+
 ## Across estimators
 
 The same call works for every method:
@@ -82,6 +90,37 @@ methods <- c("scm", "sdid", "gsc", "mc", "tasc", "si")
 sapply(methods, function(m)
   scm_fit(y ~ d | id + time, data = dat, method = m)$estimate)
 ```
+
+## SCM: partially pooled synthetic controls
+
+The classic SCM was designed for a **single** treated unit, so its staggered
+extension rests on Ben-Michael, Feller & Rothstein (2022, JRSS-B). Units
+adopting at the same time are averaged into one cohort — fully pooling within
+a cohort is justified by their theory — and each cohort gets its own synthetic
+control. How the cohort fits interact is controlled by `nu`:
+
+- `nu = NULL` (default) — each cohort is fitted independently with the classic
+  V-optimised SCM (the behaviour of earlier versions).
+- `nu` in `[0, 1]` — **partially pooled SCM**: all cohort weight vectors are
+  chosen jointly, trading off per-cohort pre-treatment fit (`nu = 0`) against
+  the fit of the *average* placebo gap across cohorts (`nu = 1`), which
+  anchors the aggregate ATT.
+- `nu = "auto"` — the paper's heuristic based on how well separate synthetic
+  controls already balance the average.
+
+`fixedeff = TRUE` additionally demeans every unit by its own pre-treatment
+mean within each cohort (an intercept shift), which the paper recommends when
+outcome levels differ across units.
+
+```{r scm-pooled}
+fit_pp <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
+                  nu = "auto", fixedeff = TRUE)
+fit_pp$estimate
+fit_pp$pooling[c("nu", "q_sep", "q_pool", "q_sep_separate", "q_pool_separate")]
+```
+
+`q_pool` (the pooled imbalance) improves relative to the separate solution at
+the cost of a small increase in `q_sep` (the average per-cohort imbalance).
 
 ## Inference under staggered adoption
 
@@ -94,6 +133,16 @@ capturing cross-cohort correlation.
 library(broom)
 tidy(sdid_inference(fit, method = "bootstrap", n_boot = 100, seed = 1))
 tidy(sdid_inference(fit, method = "jackknife_global"))
+```
+
+Staggered **SCM** fits use `scm_inference()`, the wild bootstrap of
+Ben-Michael, Feller & Rothstein (2022): donor weights stay fixed and
+per-treated-unit effect contributions are perturbed with mean-zero
+multipliers. With only a couple of treated units the interval is unreliable
+(a warning is issued below 5).
+
+```{r scm-inf, warning=FALSE}
+tidy(scm_inference(fit_pp, n_boot = 500, seed = 1))
 ```
 
 ## Notes

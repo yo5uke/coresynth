@@ -113,7 +113,7 @@ data.frame(
 
 | Method | Reference | Treatment | Covariates | Inference |
 |--------|-----------|-----------|:----------:|-----------|
-| `scm`  | Abadie, Diamond & Hainmueller (2010) | Sharp & Staggered | `pred()` list | `mspe_ratio_pval()`, `conformal_inference()` |
+| `scm`  | Abadie, Diamond & Hainmueller (2010); staggered: Ben-Michael, Feller & Rothstein (2022) | Sharp & Staggered | `pred()` list | `mspe_ratio_pval()`, `scm_inference()`, `conformal_inference()` |
 | `sdid` | Arkhangelsky et al. (2021) | Sharp & Staggered | `covariates=` | `sdid_inference()`, `conformal_inference()` |
 | `gsc`  | Xu (2017) | Sharp & Staggered | `covariates=` time-varying | `gsc_boot()`, `gsc_inference()`, `conformal_inference()` |
 | `mc`   | Athey et al. (2021) | Sharp & Staggered | — | `conformal_inference()` |
@@ -153,6 +153,34 @@ fit_sdid$cohort_estimates
 fit_sdid_clean <- scm_fit(y ~ d | id + time, data = dat_s, method = "sdid",
                           control_group = "never_treated")
 ```
+
+### SCM: Partially Pooled Synthetic Controls
+
+The original SCM targets a single treated unit, so its staggered extension
+deserves a note. coresynth follows Ben-Michael, Feller & Rothstein (2022):
+units adopting at the same time are averaged into one cohort (fully pooling
+within a cohort is justified by their theory, since the data-generating
+process cannot vary across units sharing one adoption time), and each cohort
+is matched to its own synthetic control before aggregation. Two arguments
+control how the cohort fits interact:
+
+```{r staggered-scm, eval=FALSE}
+# nu in [0, 1] trades off per-cohort fit (nu = 0) against the fit of the
+# *average* placebo gap across cohorts (nu = 1), which anchors the aggregate
+# ATT. nu = "auto" uses the paper's heuristic.
+fit_pp <- scm_fit(y ~ d | id + time, data = dat_s, method = "scm",
+                  nu = "auto", fixedeff = TRUE)
+fit_pp$pooling   # balance diagnostics: q_sep / q_pool vs. separate SCM
+
+# fixedeff = TRUE demeans each unit by its own pre-treatment mean
+# (an intercept shift), helpful when outcome levels differ across units.
+
+# Wild bootstrap inference (weights held fixed, multiplier resampling)
+scm_inference(fit_pp, n_boot = 1000, seed = 1)
+```
+
+With `nu = NULL` (default) each cohort is fitted independently with the
+classic V-optimised SCM, which reproduces the behaviour of earlier versions.
 
 ## Covariates
 
@@ -294,6 +322,7 @@ A full SCM fit on a 100-donor pool completes in a few seconds.
 - Abadie, A., Diamond, A., & Hainmueller, J. (2010). Synthetic control methods for comparative case studies. *JASA*, 105(490), 493–505.
 - Agarwal, A., Shah, D., & Shen, D. (2025). Synthetic interventions: extending synthetic controls to multiple treatments. *Operations Research*. doi:10.1287/opre.2025.1590
 - Arkhangelsky, D., Athey, S., Hirshberg, D. A., Imbens, G. W., & Wager, S. (2021). Synthetic difference-in-differences. *AER*, 111(12), 4088–4118.
+- Ben-Michael, E., Feller, A., & Rothstein, J. (2022). Synthetic controls with staggered adoption. *JRSS-B*, 84(2), 351–381.
 - Athey, S., Bayati, M., Doudchenko, N., Imbens, G., & Khosravi, K. (2021). Matrix completion methods for causal panel data models. *JASA*, 116(536), 1716–1730.
 - Chernozhukov, V., Wüthrich, K., & Zhu, Y. (2021). An exact and robust conformal inference method for counterfactual and synthetic controls. *JASA*, 116(536), 1849–1864.
 - Rho, H., et al. (2026). Time-aware synthetic control. *Working paper*.

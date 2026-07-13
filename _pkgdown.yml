@@ -46,6 +46,7 @@ reference:
   contents:
   - conformal_inference
   - mspe_ratio_pval
+  - scm_inference
   - sdid_inference
   - gsc_boot
   - gsc_inference

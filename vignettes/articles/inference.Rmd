@@ -74,6 +74,10 @@ pruning cutoff by construction:
 plot(mspe, type = "ratios")
 ```
 
+For **staggered** SCM fits, use `scm_inference()` — the wild bootstrap of
+Ben-Michael, Feller & Rothstein (2022) — described in the
+[Staggered adoption](staggered.html) article.
+
 Series colors, legend text, and the reference lines are customizable via
 `colors`, `labels` (e.g. `labels = c(Treated = "California")`), `vline`, and
 `hline` — see `?plot.scm_placebo`.

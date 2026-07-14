@@ -86,14 +86,14 @@ data.frame(
 )
 ```
 
-| Method | Reference |
-|----|----|
-| `scm`  | Abadie, Diamond & Hainmueller (2010) |
-| `sdid` | Arkhangelsky et al. (2021) |
-| `gsc`  | Xu (2017) |
-| `mc`   | Athey et al. (2021) |
-| `tasc` | Rho et al. (2026) |
-| `si`   | Agarwal et al. (2025) |
+| Method | Full name | Reference |
+|----|----|----|
+| `scm`  | Synthetic Control Method | Abadie, Diamond & Hainmueller (2010) |
+| `sdid` | Synthetic Difference-in-Differences | Arkhangelsky et al. (2021) |
+| `gsc`  | Generalized Synthetic Control | Xu (2017) |
+| `mc`   | Matrix Completion | Athey et al. (2021) |
+| `tasc` | Time-Aware Synthetic Control | Rho et al. (2026) |
+| `si`   | Synthetic Interventions | Agarwal et al. (2025) |
 
 ## Visualizing a fit
 

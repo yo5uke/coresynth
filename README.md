@@ -139,14 +139,14 @@ data.frame(
 #> si       si    2.346
 ```
 
-| Method | Reference | Treatment | Covariates | Inference |
-|--------|-----------|-----------|:----------:|-----------|
-| `scm`  | Abadie, Diamond & Hainmueller (2010); staggered: Ben-Michael, Feller & Rothstein (2022) | Sharp & Staggered | `pred()` list | `mspe_ratio_pval()`, `scm_inference()`, `conformal_inference()` |
-| `sdid` | Arkhangelsky et al. (2021) | Sharp & Staggered | `covariates=` | `sdid_inference()`, `conformal_inference()` |
-| `gsc`  | Xu (2017) | Sharp & Staggered | `covariates=` time-varying | `gsc_boot()`, `gsc_inference()`, `conformal_inference()` |
-| `mc`   | Athey et al. (2021) | Sharp & Staggered | — | `conformal_inference()` |
-| `tasc` | Rho et al. (2026) | Sharp & Staggered | — | — |
-| `si`   | Agarwal et al. (2025) | Sharp, Staggered & Multi-arm | — | `si_inference()`, `conformal_inference()` |
+| Method | Full name | Reference | Treatment | Covariates | Inference |
+|--------|-----------|-----------|-----------|:----------:|-----------|
+| `scm`  | Synthetic Control Method | Abadie, Diamond & Hainmueller (2010); staggered: Ben-Michael, Feller & Rothstein (2022) | Sharp & Staggered | `pred()` list | `mspe_ratio_pval()`, `scm_inference()`, `conformal_inference()` |
+| `sdid` | Synthetic Difference-in-Differences | Arkhangelsky et al. (2021) | Sharp & Staggered | `covariates=` | `sdid_inference()`, `conformal_inference()` |
+| `gsc`  | Generalized Synthetic Control | Xu (2017) | Sharp & Staggered | `covariates=` time-varying | `gsc_boot()`, `gsc_inference()`, `conformal_inference()` |
+| `mc`   | Matrix Completion | Athey et al. (2021) | Sharp & Staggered | — | `conformal_inference()` |
+| `tasc` | Time-Aware Synthetic Control | Rho et al. (2026) | Sharp & Staggered | — | — |
+| `si`   | Synthetic Interventions | Agarwal et al. (2025) | Sharp, Staggered & Multi-arm | — | `si_inference()`, `conformal_inference()` |
 
 `conformal_inference()` (Chernozhukov, Wüthrich & Zhu 2021) provides permutation-based p-values and confidence intervals for **sharp** fits across `scm`/`sdid`/`gsc`/`mc`/`si`.
 

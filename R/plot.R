@@ -229,7 +229,7 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
         labs(title    = paste0("Synthetic Control Trend  [", toupper(x$method), "]"),
              subtitle = if (isTRUE(align)) {
                if (is_sdid)
-                 "Synthetic control shifted by the \u03bb-weighted pre-period gap"
+                 "Synthetic control shifted by the lambda-weighted pre-period gap"
                else
                  "Synthetic control shifted by the mean pre-period gap"
              },
@@ -244,11 +244,11 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
       df  <- data.frame(time = times, gap = gap)
       subtitle <- if (isTRUE(align)) {
         if (is_sdid)
-          "Treated \u2212 synthetic control, \u03bb-aligned on the pre-period\n(post-period mean = SDID estimate)"
+          "Treated - synthetic control, lambda-aligned on the pre-period\n(post-period mean = SDID estimate)"
         else
-          "Treated \u2212 synthetic control, aligned on the pre-period mean"
+          "Treated - synthetic control, aligned on the pre-period mean"
       } else {
-        "Treated \u2212 synthetic control"
+        "Treated - synthetic control"
       }
       p <- ggplot(df, aes(x = time, y = gap)) +
         geom_line(color = gap_color, linewidth = 0.9) +
@@ -303,8 +303,8 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
     if (any(df_t$label %in% df$unit))
       df_t$label <- paste0("t = ", df_t$label)
 
-    panel_u <- "Unit weights (\u03c9)"
-    panel_t <- "Time weights (\u03bb)"
+    panel_u <- "Unit weights (omega)"
+    panel_t <- "Time weights (lambda)"
     df_u <- data.frame(label = df$unit, weight = df$weight, panel = panel_u,
                        stringsAsFactors = FALSE)
     df_t$panel <- panel_t

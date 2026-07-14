@@ -58,6 +58,13 @@
   reference implementation `augsynth` (weights correlate at 1.0, identical
   heuristic `nu`, equal pooled imbalance at `nu = 1`).
 
+## Bug fixes
+
+- `plot.coresynth()` no longer embeds non-ASCII characters (Greek letters,
+  the Unicode minus sign) in plot titles and subtitles. Some platforms
+  cannot compute text metrics for these characters outside a UTF-8 locale,
+  which crashed `R CMD check --run-donttest` on macOS.
+
 # coresynth 0.3.0
 
 ## New features

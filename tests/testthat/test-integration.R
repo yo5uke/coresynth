@@ -1876,8 +1876,9 @@ test_that("Phase 15a: sdid_inference(placebo) returns valid structure", {
   expect_equal(inf$estimate, fit$estimate)
   expect_true(inf$p_value >= 0 && inf$p_value <= 1)
   expect_length(inf$placebo_effects, 9L)  # N_co = 9
-  expect_null(inf$se)
-  expect_null(inf$ci_lower)
+  # Phase 34: placebo now reports the placebo-distribution SE and a normal CI
+  expect_true(is.finite(inf$se) && inf$se > 0)
+  expect_true(is.finite(inf$ci_lower))
   expect_equal(inf$n_controls, 9L)
 })
 
@@ -2692,9 +2693,10 @@ test_that("Phase 20: sdid_inference staggered placebo returns sdid_inference", {
   expect_s3_class(inf, "sdid_inference")
   expect_true(isTRUE(inf$staggered))
   expect_true(inf$p_value >= 0 && inf$p_value <= 1)
-  expect_null(inf$se)
-  expect_null(inf$ci_lower)
-  expect_null(inf$ci_upper)
+  # Phase 34: placebo now reports the placebo-distribution SE and a normal CI
+  expect_true(is.finite(inf$se) && inf$se > 0)
+  expect_true(is.finite(inf$ci_lower))
+  expect_true(is.finite(inf$ci_upper))
   expect_null(inf$boot_ests)
 })
 
@@ -3015,13 +3017,13 @@ test_that("Phase 24: glance.coresynth_inference returns one-row summary", {
   expect_gte(g$n_boot_valid, 1L)
 })
 
-test_that("Phase 24: tidy.coresynth_inference placebo SE/CI are NA", {
+test_that("Phase 24: tidy.coresynth_inference carries placebo SE/CI (finite since Phase 34)", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
   inf <- sdid_inference(fit, method = "placebo")
   td  <- broom::tidy(inf)
-  expect_true(is.na(td$std.error))
-  expect_true(is.na(td$conf.low))
-  expect_true(is.na(td$conf.high))
+  expect_true(is.finite(td$std.error))
+  expect_true(is.finite(td$conf.low))
+  expect_true(is.finite(td$conf.high))
   expect_true(is.finite(td$p.value))
 })
 
@@ -3861,4 +3863,116 @@ test_that("Phase 33: partially pooled SCM works with covariates partial-out", {
                  nu = 0.5, covariates = "cov1")
   expect_true(is.finite(fit$estimate))
   expect_length(fit$beta_hat, 1L)
+})
+
+# ── Phase 34: plot align / show_donors / SDID weight panels / placebo SE ─────
+
+test_that("Phase 34: plot(align=TRUE) makes the SDID post-period mean gap equal the estimate", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  d   <- ggplot2::ggplot_build(plot(fit, type = "gap", align = TRUE))$data[[1]]
+  expect_equal(mean(d$y[d$x > fit$T_pre]), fit$estimate, tolerance = 1e-8)
+  # the raw gap plot lacks this property (SDID has a free intercept)
+  d0 <- ggplot2::ggplot_build(plot(fit, type = "gap"))$data[[1]]
+  expect_false(isTRUE(all.equal(mean(d0$y[d0$x > fit$T_pre]), fit$estimate,
+                                tolerance = 1e-8)))
+})
+
+test_that("Phase 34: plot(align=TRUE) shifts only the synthetic series, by the lambda-weighted pre-gap", {
+  fit  <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  pre  <- seq_len(fit$T_pre)
+  off  <- sum(fit$time_weights * (fit$Y_treat[pre] - fit$Y_synth[pre]))
+  base <- ggplot2::ggplot_build(plot(fit, type = "trend"))$data[[1]]
+  al   <- ggplot2::ggplot_build(plot(fit, type = "trend", align = TRUE))$data[[1]]
+  shift <- al$y - base$y
+  expect_true(all(abs(shift) < 1e-10 | abs(shift - off) < 1e-10))
+  expect_true(any(abs(shift - off) < 1e-10))  # synthetic series moved
+  expect_true(any(abs(shift) < 1e-10))        # treated series did not
+})
+
+test_that("Phase 34: plot(align=TRUE) centers the pre-period gap at zero for non-SDID fits", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  d   <- ggplot2::ggplot_build(plot(fit, type = "gap", align = TRUE))$data[[1]]
+  expect_equal(mean(d$y[d$x <= fit$T_pre]), 0, tolerance = 1e-10)
+})
+
+test_that("Phase 34: plot align argument is validated", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(plot(fit, type = "trend", align = "yes"), "align")
+  expect_error(plot(fit, type = "gap", align = 1), "align")
+})
+
+test_that("Phase 34: show_donors overlays top-weight donor paths", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  p0  <- plot(fit, type = "trend")
+  p2  <- plot(fit, type = "trend", show_donors = 2)
+  expect_equal(length(p2$layers), length(p0$layers) + 1L)
+  don <- ggplot2::ggplot_build(p2)$data[[1]]  # donor layer is drawn first
+  expect_equal(length(unique(don$group)), 2L)
+  don_all <- ggplot2::ggplot_build(
+    plot(fit, type = "trend", show_donors = Inf))$data[[1]]
+  expect_equal(length(unique(don_all$group)), length(fit$unit_weights))
+})
+
+test_that("Phase 34: Donors series accepts color/label overrides only when shown", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  p <- plot(fit, type = "trend", show_donors = 3,
+            colors = c(Donors = "black"), labels = c(Donors = "Donor pool"))
+  expect_s3_class(p, "ggplot")
+  expect_error(plot(fit, type = "trend", colors = c(Donors = "black")),
+               "unrecognized")
+})
+
+test_that("Phase 34: show_donors validation and unsupported methods", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(plot(fit, type = "trend", show_donors = -1), "show_donors")
+  expect_error(plot(fit, type = "trend", show_donors = c(1, 2)), "show_donors")
+  fit_mc <- scm_fit(y ~ d | id + time, data = panel, method = "mc")
+  expect_error(plot(fit_mc, type = "trend", show_donors = 2), "show_donors")
+})
+
+test_that("Phase 34: SDID weights plot shows unit and time weight panels", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  p <- plot(fit, type = "weights")
+  expect_s3_class(p, "ggplot")
+  built <- ggplot2::ggplot_build(p)
+  expect_equal(length(unique(built$data[[1]]$PANEL)), 2L)
+  n_units <- sum(fit$unit_weights > 1e-4)
+  n_times <- sum(fit$time_weights > 1e-4)
+  expect_equal(nrow(built$data[[1]]), n_units + n_times)
+  # top_n prunes only the unit panel
+  built2 <- ggplot2::ggplot_build(plot(fit, type = "weights", top_n = 2))
+  expect_equal(nrow(built2$data[[1]]), 2L + n_times)
+})
+
+test_that("Phase 34: non-SDID weights plot keeps the single unit panel", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  built <- ggplot2::ggplot_build(plot(fit, type = "weights"))
+  expect_equal(length(unique(built$data[[1]]$PANEL)), 1L)
+})
+
+test_that("Phase 34: sdid_inference placebo returns SE and normal CI (Clarke Alg. 4)", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  inf <- sdid_inference(fit, method = "placebo")
+  eff <- inf$placebo_effects
+  expect_equal(inf$se, sqrt(mean((eff - mean(eff))^2)), tolerance = 1e-12)
+  expect_true(inf$se > 0)
+  expect_equal(inf$ci_lower, inf$estimate - qnorm(0.975) * inf$se,
+               tolerance = 1e-12)
+  expect_equal(inf$ci_upper, inf$estimate + qnorm(0.975) * inf$se,
+               tolerance = 1e-12)
+  inf80 <- sdid_inference(fit, method = "placebo", level = 0.80)
+  expect_equal(inf80$ci_upper, inf80$estimate + qnorm(0.90) * inf80$se,
+               tolerance = 1e-12)
+  td <- broom::tidy(inf)
+  expect_true(is.finite(td$std.error))
+  expect_true(is.finite(td$conf.low) && is.finite(td$conf.high))
+})
+
+test_that("Phase 34: sdid_inference staggered placebo also returns SE and CI", {
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid")
+  inf <- sdid_inference(fit, method = "placebo")
+  eff <- inf$placebo_effects
+  expect_equal(inf$se, sqrt(mean((eff - mean(eff))^2)), tolerance = 1e-12)
+  expect_true(is.finite(inf$ci_lower) && is.finite(inf$ci_upper))
+  expect_lt(inf$ci_lower, inf$ci_upper)
 })

@@ -47,20 +47,39 @@
                    what = "labels", example = "c(Treated = \"California\")")
 }
 
+# Pre-treatment level offset between the treated and synthetic series.
+# SDID matches trends only up to a free intercept (omega_0 is concentrated
+# out of the QP), so its raw trend plot shows the two series at different
+# levels; shifting by the lambda-weighted pre-period gap makes the average
+# post-period gap equal the SDID estimate exactly. Other methods already
+# match levels, so the plain pre-period mean gap is used.
+.align_offset <- function(x, Y_treat, Y_synth) {
+  pre   <- seq_len(x$T_pre)
+  d_pre <- Y_treat[pre] - Y_synth[pre]
+  lam   <- x$time_weights
+  if (identical(x$method, "sdid") && !is.null(lam) && length(lam) == x$T_pre)
+    sum(lam * d_pre)
+  else
+    mean(d_pre)
+}
+
 #' Plot a coresynth model
 #'
 #' @param x      A `coresynth` object.
 #' @param type   One of `"trend"` (observed vs synthetic), `"gap"` (ATT over time),
-#'               or `"weights"` (donor unit weight bar chart).
+#'               or `"weights"` (donor unit weight bar chart; SDID fits get a
+#'               second panel with the time weight profile).
 #' @param colors For `type = "trend"`: a named vector overriding series colors,
-#'   e.g. `c(Treated = "black")` (valid names: `"Treated"`, `"Synthetic Control"`).
+#'   e.g. `c(Treated = "black")` (valid names: `"Treated"`, `"Synthetic Control"`,
+#'   plus `"Donors"` when `show_donors > 0`).
 #'   For `type = "gap"`: a single color string for the gap line. Ignored for
 #'   `type = "weights"` (use `fill` instead).
 #' @param labels For `type = "trend"`: a named vector overriding the legend
 #'   text of individual series, e.g. `c(Treated = "California")` (valid names:
-#'   `"Treated"`, `"Synthetic Control"`). Series not mentioned keep their
-#'   default label, and `colors` keys always refer to the original series
-#'   names regardless of relabeling. Ignored for other types (no legend).
+#'   `"Treated"`, `"Synthetic Control"`, plus `"Donors"` when
+#'   `show_donors > 0`). Series not mentioned keep their default label, and
+#'   `colors` keys always refer to the original series names regardless of
+#'   relabeling. Ignored for other types (no legend).
 #' @param vline  Aesthetic overrides for the vertical treatment-time line, as a
 #'   list passed to [ggplot2::geom_vline()] (e.g. `list(color = "red")`).
 #'   `NULL` or `FALSE` hides the line entirely. Applies to `"trend"` and `"gap"`.
@@ -71,7 +90,21 @@
 #'   bar fill. Ignored for other types.
 #' @param top_n  For `type = "weights"`: show only the `top_n` donors with the
 #'   largest weights. The default `Inf` keeps every donor with a
-#'   non-negligible weight. Ignored for other types.
+#'   non-negligible weight. Ignored for other types (and for the SDID time
+#'   weight panel, which is always shown in full).
+#' @param align  For `type = "trend"` and `"gap"`: when `TRUE`, shift the
+#'   synthetic series by its pre-treatment level gap to the treated series so
+#'   that both are drawn on the same level. SDID matches trends only up to a
+#'   free intercept, so its raw trend plot shows the synthetic control at a
+#'   different level; with `align = TRUE` the offset is the time-weighted
+#'   (\eqn{\lambda}) pre-period gap, which makes the average post-period gap
+#'   in the plot equal the SDID estimate exactly. Other methods use the plain
+#'   pre-period mean gap (usually a negligible shift, since they already
+#'   match levels). Default `FALSE` (raw series).
+#' @param show_donors For `type = "trend"`: also draw the outcome paths of the
+#'   `show_donors` donor units with the largest weights as thin background
+#'   lines (`Inf` shows every donor). Requires a fit that stores donor unit
+#'   weights and outcomes (sharp SCM/SDID/SI). Default `0` (no donor paths).
 #' @param ...    Ignored.
 #' @return A `ggplot2` plot object.
 #' @examples
@@ -88,6 +121,14 @@
 #' plot(fit, type = "weights")
 #' plot(fit, type = "weights", top_n = 5)
 #'
+#' # Overlay the five largest donors behind the treated/synthetic series
+#' plot(fit, type = "trend", show_donors = 5)
+#'
+#' # SDID: align the synthetic series on the lambda-weighted pre-period level
+#' fit_sdid <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "sdid")
+#' plot(fit_sdid, type = "trend", align = TRUE)
+#' plot(fit_sdid, type = "gap",   align = TRUE)
+#'
 #' # Customize series colors, legend text, and reference lines
 #' plot(fit, type = "trend",
 #'      colors = c(Treated = "black"),
@@ -99,8 +140,15 @@
 plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
                             colors = NULL, labels = NULL,
                             vline = list(), hline = list(),
-                            fill = NULL, top_n = Inf, ...) {
+                            fill = NULL, top_n = Inf,
+                            align = FALSE, show_donors = 0, ...) {
   type <- match.arg(type)
+  if (!isTRUE(align) && !isFALSE(align))
+    stop("`align` must be TRUE or FALSE.", call. = FALSE)
+  if (!is.numeric(show_donors) || length(show_donors) != 1L ||
+      is.na(show_donors) || show_donors < 0)
+    stop("`show_donors` must be a single number >= 0 (Inf shows all donors).",
+         call. = FALSE)
 
   if(type %in% c("trend", "gap")) {
     if(is.null(x$times) || is.null(x$Y_treat))
@@ -118,14 +166,47 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
       stop("fit object does not contain a synthetic/counterfactual series ",
            "to plot (staggered fits store their series per cohort).",
            call. = FALSE)
+    if (isTRUE(align)) {
+      if (is.null(x$T_pre) || x$T_pre < 1L)
+        stop("align = TRUE requires a fit with pre-treatment periods.",
+             call. = FALSE)
+      Y_synth <- Y_synth + .align_offset(x, Y_treat, Y_synth)
+    }
     treat_time  <- if(!is.null(x$T_pre)) times[x$T_pre + 1] else NA
     vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
+    is_sdid     <- identical(x$method, "sdid")
 
     if(type == "trend") {
-      series_colors <- .merge_named_colors(
-        c(Treated = "#2166ac", `Synthetic Control` = "#d73027"), colors
-      )
-      series_labels <- .merge_named_labels(c("Treated", "Synthetic Control"), labels)
+      df_donors <- NULL
+      if (show_donors >= 1) {
+        w    <- x$unit_weights
+        Y_co <- donor_outcomes(x)
+        if (is.null(w) || all(is.na(w)) || is.null(Y_co))
+          stop("show_donors requires donor unit weights and outcomes ",
+               "(available for sharp SCM/SDID/SI fits).", call. = FALSE)
+        k   <- as.integer(min(length(w), show_donors))
+        sel <- order(w, decreasing = TRUE)[seq_len(k)]
+        donor_names <- (names(w) %||% sprintf("Donor %d", seq_along(w)))[sel]
+        df_donors <- data.frame(
+          time  = rep(times, times = k),
+          value = as.vector(Y_co[, sel, drop = FALSE]),
+          unit  = rep(donor_names, each = length(times))
+        )
+      }
+
+      series         <- c("Treated", "Synthetic Control")
+      color_defaults <- c(Treated = "#2166ac", `Synthetic Control` = "#d73027")
+      ltype_values   <- c(Treated = "solid", `Synthetic Control` = "dashed")
+      if (!is.null(df_donors)) {
+        series         <- c(series, "Donors")
+        color_defaults <- c(color_defaults, Donors = "grey70")
+        ltype_values   <- c(ltype_values, Donors = "solid")
+      }
+      series_colors <- .merge_named_colors(color_defaults, colors)
+      series_labels <- .merge_named_labels(series, labels)
+      # Without donors the default (alphabetical) legend order is kept for
+      # backwards compatibility; with donors the breaks pin them last.
+      series_breaks <- if (!is.null(df_donors)) series else waiver()
       df <- data.frame(
         time     = c(times, times),
         value    = c(Y_treat, Y_synth),
@@ -133,13 +214,25 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
       )
       # labels must be identical on both scales or the merged legend splits in two
       p <- ggplot(df, aes(x = time, y = value, color = series, linetype = series)) +
+        {if(!is.null(df_donors)) geom_line(
+          data = df_donors,
+          aes(x = time, y = value, group = unit,
+              color = "Donors", linetype = "Donors"),
+          linewidth = 0.4, alpha = 0.5, inherit.aes = FALSE)} +
         geom_line(linewidth = 0.9) +
-        scale_color_manual(values = series_colors, labels = series_labels) +
-        scale_linetype_manual(values = c("Treated" = "solid", "Synthetic Control" = "dashed"),
+        scale_color_manual(values = series_colors, breaks = series_breaks,
+                           labels = series_labels) +
+        scale_linetype_manual(values = ltype_values, breaks = series_breaks,
                               labels = series_labels) +
         {if(!is.null(vline_style) && !is.na(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
         theme_minimal(base_size = 13) +
         labs(title    = paste0("Synthetic Control Trend  [", toupper(x$method), "]"),
+             subtitle = if (isTRUE(align)) {
+               if (is_sdid)
+                 "Synthetic control shifted by the \u03bb-weighted pre-period gap"
+               else
+                 "Synthetic control shifted by the mean pre-period gap"
+             },
              x = "Time", y = "Outcome", color = NULL, linetype = NULL)
       return(p)
     }
@@ -149,13 +242,21 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
       hline_style <- .line_style(list(color = "gray50", linetype = "dashed"), hline)
       gap <- Y_treat - Y_synth
       df  <- data.frame(time = times, gap = gap)
+      subtitle <- if (isTRUE(align)) {
+        if (is_sdid)
+          "Treated \u2212 synthetic control, \u03bb-aligned on the pre-period\n(post-period mean = SDID estimate)"
+        else
+          "Treated \u2212 synthetic control, aligned on the pre-period mean"
+      } else {
+        "Treated \u2212 synthetic control"
+      }
       p <- ggplot(df, aes(x = time, y = gap)) +
         geom_line(color = gap_color, linewidth = 0.9) +
         {if(!is.null(hline_style)) do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
         {if(!is.null(vline_style) && !is.na(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
         theme_minimal(base_size = 13) +
         labs(title    = paste0("Treatment Effect Gap  [", toupper(x$method), "]"),
-             subtitle = "Treated \u2212 synthetic control",
+             subtitle = subtitle,
              x = "Time", y = "Gap")
       return(p)
     }
@@ -178,11 +279,49 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
     if(is.finite(top_n) && nrow(df) > top_n)
       df <- df[order(df$weight, decreasing = TRUE)[seq_len(top_n)], ]
 
-    p <- ggplot(df, aes(x = reorder(unit, weight), y = weight)) +
+    lam <- x$time_weights
+    two_panel <- identical(x$method, "sdid") && !is.null(lam) &&
+      !is.null(x$T_pre) && length(lam) == x$T_pre
+
+    if (!two_panel) {
+      p <- ggplot(df, aes(x = reorder(unit, weight), y = weight)) +
+        geom_col(fill = bar_fill, alpha = 0.85) +
+        coord_flip() +
+        theme_minimal(base_size = 13) +
+        labs(title = "Donor Unit Weights", x = NULL, y = "Weight")
+      return(p)
+    }
+
+    # SDID: the estimator is defined by unit weights (omega) AND time weights
+    # (lambda); show both, side by side, in the same bar style.
+    t_lab <- as.character((x$times %||% seq_len(x$T_pre))[seq_len(x$T_pre)])
+    df_t  <- data.frame(label = t_lab, weight = as.numeric(lam),
+                        stringsAsFactors = FALSE)
+    df_t  <- df_t[df_t$weight > 1e-4, ]
+    # A pre-period label that collides with a donor name would duplicate the
+    # shared factor levels below
+    if (any(df_t$label %in% df$unit))
+      df_t$label <- paste0("t = ", df_t$label)
+
+    panel_u <- "Unit weights (\u03c9)"
+    panel_t <- "Time weights (\u03bb)"
+    df_u <- data.frame(label = df$unit, weight = df$weight, panel = panel_u,
+                       stringsAsFactors = FALSE)
+    df_t$panel <- panel_t
+    both <- rbind(df_u, df_t)
+    # Units ordered by weight (largest on top), pre-periods chronologically
+    # (earliest on top); the panel factor keeps unit weights on the left.
+    both$label <- factor(both$label,
+                         levels = c(df_u$label[order(df_u$weight)],
+                                    rev(df_t$label)))
+    both$panel <- factor(both$panel, levels = c(panel_u, panel_t))
+
+    p <- ggplot(both, aes(x = weight, y = label)) +
       geom_col(fill = bar_fill, alpha = 0.85) +
-      coord_flip() +
+      facet_wrap(~ panel, scales = "free_y") +
       theme_minimal(base_size = 13) +
-      labs(title = "Donor Unit Weights", x = NULL, y = "Weight")
+      labs(title = "Donor Unit and Time Weights  [SDID]",
+           x = "Weight", y = NULL)
     return(p)
   }
 }

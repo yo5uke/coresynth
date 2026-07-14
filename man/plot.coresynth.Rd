@@ -13,6 +13,8 @@
   hline = list(),
   fill = NULL,
   top_n = Inf,
+  align = FALSE,
+  show_donors = 0,
   ...
 )
 }
@@ -20,18 +22,21 @@
 \item{x}{A \code{coresynth} object.}
 
 \item{type}{One of \code{"trend"} (observed vs synthetic), \code{"gap"} (ATT over time),
-or \code{"weights"} (donor unit weight bar chart).}
+or \code{"weights"} (donor unit weight bar chart; SDID fits get a
+second panel with the time weight profile).}
 
 \item{colors}{For \code{type = "trend"}: a named vector overriding series colors,
-e.g. \code{c(Treated = "black")} (valid names: \code{"Treated"}, \code{"Synthetic Control"}).
+e.g. \code{c(Treated = "black")} (valid names: \code{"Treated"}, \code{"Synthetic Control"},
+plus \code{"Donors"} when \code{show_donors > 0}).
 For \code{type = "gap"}: a single color string for the gap line. Ignored for
 \code{type = "weights"} (use \code{fill} instead).}
 
 \item{labels}{For \code{type = "trend"}: a named vector overriding the legend
 text of individual series, e.g. \code{c(Treated = "California")} (valid names:
-\code{"Treated"}, \code{"Synthetic Control"}). Series not mentioned keep their
-default label, and \code{colors} keys always refer to the original series
-names regardless of relabeling. Ignored for other types (no legend).}
+\code{"Treated"}, \code{"Synthetic Control"}, plus \code{"Donors"} when
+\code{show_donors > 0}). Series not mentioned keep their default label, and
+\code{colors} keys always refer to the original series names regardless of
+relabeling. Ignored for other types (no legend).}
 
 \item{vline}{Aesthetic overrides for the vertical treatment-time line, as a
 list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}} (e.g. \code{list(color = "red")}).
@@ -45,7 +50,23 @@ bar fill. Ignored for other types.}
 
 \item{top_n}{For \code{type = "weights"}: show only the \code{top_n} donors with the
 largest weights. The default \code{Inf} keeps every donor with a
-non-negligible weight. Ignored for other types.}
+non-negligible weight. Ignored for other types (and for the SDID time
+weight panel, which is always shown in full).}
+
+\item{align}{For \code{type = "trend"} and \code{"gap"}: when \code{TRUE}, shift the
+synthetic series by its pre-treatment level gap to the treated series so
+that both are drawn on the same level. SDID matches trends only up to a
+free intercept, so its raw trend plot shows the synthetic control at a
+different level; with \code{align = TRUE} the offset is the time-weighted
+(\eqn{\lambda}) pre-period gap, which makes the average post-period gap
+in the plot equal the SDID estimate exactly. Other methods use the plain
+pre-period mean gap (usually a negligible shift, since they already
+match levels). Default \code{FALSE} (raw series).}
+
+\item{show_donors}{For \code{type = "trend"}: also draw the outcome paths of the
+\code{show_donors} donor units with the largest weights as thin background
+lines (\code{Inf} shows every donor). Requires a fit that stores donor unit
+weights and outcomes (sharp SCM/SDID/SI). Default \code{0} (no donor paths).}
 
 \item{...}{Ignored.}
 }
@@ -68,6 +89,14 @@ plot(fit, type = "trend")
 plot(fit, type = "gap")
 plot(fit, type = "weights")
 plot(fit, type = "weights", top_n = 5)
+
+# Overlay the five largest donors behind the treated/synthetic series
+plot(fit, type = "trend", show_donors = 5)
+
+# SDID: align the synthetic series on the lambda-weighted pre-period level
+fit_sdid <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "sdid")
+plot(fit_sdid, type = "trend", align = TRUE)
+plot(fit_sdid, type = "gap",   align = TRUE)
 
 # Customize series colors, legend text, and reference lines
 plot(fit, type = "trend",

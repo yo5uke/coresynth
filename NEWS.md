@@ -2,6 +2,30 @@
 
 ## New features
 
+- **Level-aligned trend and gap plots**: `plot.coresynth()` gains an `align`
+  argument for `type = "trend"` and `"gap"`. `align = TRUE` shifts the
+  synthetic series by its pre-treatment level gap to the treated series, so
+  both are drawn on the same level. SDID's unit weights are estimated with
+  the intercept concentrated out of the QP (Arkhangelsky et al. 2021), so its
+  raw trend plot can show the synthetic control at a different level than the
+  treated unit; `align = TRUE` uses the time-weight (lambda) weighted
+  pre-period gap, which makes the average post-period gap in the plot equal
+  the SDID estimate exactly.
+- **Donor paths in trend plots**: `plot.coresynth(type = "trend")` gains a
+  `show_donors` argument that draws the outcome paths of the `show_donors`
+  donor units with the largest weights as thin background lines (`Inf` shows
+  all). The new `"Donors"` series participates in `colors`/`labels`
+  overrides.
+- **SDID time weights in the weights plot**: for SDID fits,
+  `plot.coresynth(type = "weights")` now shows two panels — donor unit
+  weights (omega) and pre-period time weights (lambda) — in the same bar
+  style. Other methods keep the single unit-weight panel.
+- **Placebo SE and CI for SDID**: `sdid_inference(method = "placebo")` now
+  also reports the placebo-distribution standard error (Clarke et al. 2023,
+  Algorithm 4) and the corresponding normal-approximation confidence
+  interval, for both sharp and staggered fits. The p-value is unchanged
+  (permutation-based). `tidy()`/`glance()` pick the new columns up
+  automatically.
 - **Partially pooled staggered SCM** (Ben-Michael, Feller & Rothstein 2022,
   JRSS-B): `scm_fit(method = "scm")` on a staggered panel gains a `nu`
   argument. `nu = NULL` (default) keeps the previous behaviour (per-cohort

@@ -98,7 +98,7 @@ glance.coresynth <- function(x, ...) {
 #' @param x A `coresynth_inference` (or `sdid_inference`) object returned by
 #'   [sdid_inference()], [gsc_inference()], or [si_inference()].
 #' @param conf.int Logical. Include `conf.low`/`conf.high` columns when CI is
-#'   available (default `TRUE`). Permutation placebo SE/CI are `NA`.
+#'   available (default `TRUE`). Methods without a CI report `NA`.
 #' @param ... Unused.
 #' @return A one-row `data.frame` with columns `term`, `estimate`, `std.error`,
 #'   `statistic`, `p.value`, `conf.low`, `conf.high`, `method`, `alternative`,

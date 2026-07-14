@@ -11,7 +11,7 @@
 \code{\link[=sdid_inference]{sdid_inference()}}, \code{\link[=gsc_inference]{gsc_inference()}}, or \code{\link[=si_inference]{si_inference()}}.}
 
 \item{conf.int}{Logical. Include \code{conf.low}/\code{conf.high} columns when CI is
-available (default \code{TRUE}). Permutation placebo SE/CI are \code{NA}.}
+available (default \code{TRUE}). Methods without a CI report \code{NA}.}
 
 \item{...}{Unused.}
 }

@@ -14,15 +14,14 @@ sdid_inference(
 )
 }
 \arguments{
-\item{fit}{A \code{coresynth} object with \code{method = "sdid"} (sharp adoption only).}
+\item{fit}{A \code{coresynth} object with \code{method = "sdid"} (sharp or staggered).}
 
-\item{method}{Inference method: \code{"placebo"} (permutation), \code{"bootstrap"}, or
-\code{"jackknife"}.}
+\item{method}{Inference method: \code{"placebo"} (permutation), \code{"bootstrap"},
+\code{"jackknife"}, or \code{"jackknife_global"} (staggered only).}
 
 \item{n_boot}{Number of bootstrap replications (only for \code{method = "bootstrap"}).}
 
-\item{level}{Confidence level for the interval (only for \code{method = "bootstrap"}
-or \code{"jackknife"}).}
+\item{level}{Confidence level for the interval (all methods).}
 
 \item{alternative}{Direction of the alternative hypothesis: \code{"two.sided"},
 \code{"greater"}, or \code{"less"}.}
@@ -33,9 +32,9 @@ or \code{"jackknife"}).}
 A list with:
 \itemize{
 \item \code{estimate}: The SDID point estimate.
-\item \code{se}: Standard error (bootstrap / jackknife only).
+\item \code{se}: Standard error (placebo: placebo-distribution SD, Algorithm 4).
 \item \code{p_value}: Permutation or normal-approximation p-value.
-\item \code{ci_lower}, \code{ci_upper}: Confidence interval bounds (bootstrap / jackknife).
+\item \code{ci_lower}, \code{ci_upper}: Confidence interval bounds.
 \item \code{method}: The inference method used.
 \item \code{n_controls}: Number of control units.
 \item \code{alternative}: The alternative hypothesis direction.
@@ -45,7 +44,16 @@ A list with:
 }
 \description{
 Computes standard errors and p-values for a SDID estimate using one of
-three methods: permutation placebo test (Algorithm 4), cluster bootstrap
-(Algorithm 2), or leave-one-out jackknife (Algorithm 3), following
-Clarke et al. (2023).
+four methods, following Clarke et al. (2023): permutation placebo test
+(Algorithm 4), cluster bootstrap (Algorithm 2), leave-one-out jackknife
+(Algorithm 3), or (staggered fits only) a global jackknife across the
+unique control units of all cohorts.
+}
+\details{
+For \code{method = "placebo"}, the p-value is the permutation p-value, while
+the standard error is the dispersion of the placebo distribution
+(Clarke et al. 2023, Algorithm 4) and the confidence interval is the
+normal approximation around the estimate with that SE. The placebo SE
+assumes the treated unit's noise is comparable to the control units';
+interpret it with caution when the donor pool is small.
 }

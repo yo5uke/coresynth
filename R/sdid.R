@@ -411,25 +411,32 @@ fit_sdid_cpp <- function(y, d, id, time,
 #' Inference for Synthetic Difference-in-Differences
 #'
 #' Computes standard errors and p-values for a SDID estimate using one of
-#' three methods: permutation placebo test (Algorithm 4), cluster bootstrap
-#' (Algorithm 2), or leave-one-out jackknife (Algorithm 3), following
-#' Clarke et al. (2023).
+#' four methods, following Clarke et al. (2023): permutation placebo test
+#' (Algorithm 4), cluster bootstrap (Algorithm 2), leave-one-out jackknife
+#' (Algorithm 3), or (staggered fits only) a global jackknife across the
+#' unique control units of all cohorts.
 #'
-#' @param fit A `coresynth` object with `method = "sdid"` (sharp adoption only).
-#' @param method Inference method: `"placebo"` (permutation), `"bootstrap"`, or
-#'   `"jackknife"`.
+#' For `method = "placebo"`, the p-value is the permutation p-value, while
+#' the standard error is the dispersion of the placebo distribution
+#' (Clarke et al. 2023, Algorithm 4) and the confidence interval is the
+#' normal approximation around the estimate with that SE. The placebo SE
+#' assumes the treated unit's noise is comparable to the control units';
+#' interpret it with caution when the donor pool is small.
+#'
+#' @param fit A `coresynth` object with `method = "sdid"` (sharp or staggered).
+#' @param method Inference method: `"placebo"` (permutation), `"bootstrap"`,
+#'   `"jackknife"`, or `"jackknife_global"` (staggered only).
 #' @param n_boot Number of bootstrap replications (only for `method = "bootstrap"`).
-#' @param level Confidence level for the interval (only for `method = "bootstrap"`
-#'   or `"jackknife"`).
+#' @param level Confidence level for the interval (all methods).
 #' @param alternative Direction of the alternative hypothesis: `"two.sided"`,
 #'   `"greater"`, or `"less"`.
 #' @param seed Integer seed for reproducibility (only for `method = "bootstrap"`).
 #'
 #' @return A list with:
 #' * `estimate`: The SDID point estimate.
-#' * `se`: Standard error (bootstrap / jackknife only).
+#' * `se`: Standard error (placebo: placebo-distribution SD, Algorithm 4).
 #' * `p_value`: Permutation or normal-approximation p-value.
-#' * `ci_lower`, `ci_upper`: Confidence interval bounds (bootstrap / jackknife).
+#' * `ci_lower`, `ci_upper`: Confidence interval bounds.
 #' * `method`: The inference method used.
 #' * `n_controls`: Number of control units.
 #' * `alternative`: The alternative hypothesis direction.
@@ -516,12 +523,18 @@ sdid_inference <- function(
         less      = (1 + sum(placebo_effects <= tau_hat))           / (length(never_co) + 1)
       )
 
+      # Placebo variance (Clarke et al. 2023 Alg. 4): dispersion of the
+      # placebo distribution, 1/B normalization
+      se       <- sqrt(mean((placebo_effects - mean(placebo_effects))^2))
+      ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
+      ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
+
       return(structure(list(
         estimate        = tau_hat,
-        se              = NULL,
+        se              = se,
         p_value         = p_value,
-        ci_lower        = NULL,
-        ci_upper        = NULL,
+        ci_lower        = ci_lower,
+        ci_upper        = ci_upper,
         method          = method,
         n_controls      = length(never_co),
         alternative     = alternative,
@@ -678,12 +691,18 @@ sdid_inference <- function(
       less      = (1 + sum(effects <= tau_hat))           / (N_co + 1)
     )
 
+    # Placebo variance (Clarke et al. 2023 Alg. 4): dispersion of the
+    # placebo distribution, 1/B normalization
+    se       <- sqrt(mean((effects - mean(effects))^2))
+    ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
+    ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
+
     return(structure(list(
       estimate        = tau_hat,
-      se              = NULL,
+      se              = se,
       p_value         = p_value,
-      ci_lower        = NULL,
-      ci_upper        = NULL,
+      ci_lower        = ci_lower,
+      ci_upper        = ci_upper,
       method          = method,
       n_controls      = N_co,
       alternative     = alternative,

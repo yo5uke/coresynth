@@ -2,6 +2,18 @@
 
 ## New features
 
+- **Treatment-line placement in plots**: `plot.coresynth()` (`type = "trend"`
+  and `"gap"`) and `plot.scm_placebo()` (`type = "gaps"`) gain a
+  `vline_offset` argument controlling where the vertical treatment line is
+  drawn, in periods relative to the first post-treatment period (the previous
+  fixed position). `vline_offset = -1` moves it to the last pre-treatment
+  period, and fractional values such as `-0.5` interpolate between adjacent
+  observed times, on numeric, `Date`, and `POSIXct` axes alike. The `vline`
+  style list now also accepts an `xintercept` element for one or more
+  absolute positions (previously an error), e.g.
+  `vline = list(xintercept = "1989-01-01")` on a `Date` axis. Hiding the line
+  still works via `vline = FALSE`.
+
 - **Level-aligned trend and gap plots**: `plot.coresynth()` gains an `align`
   argument for `type = "trend"` and `"gap"`. `align = TRUE` shifts the
   synthetic series by its pre-treatment level gap to the treated series, so

@@ -10,6 +10,7 @@
   colors = NULL,
   labels = NULL,
   vline = list(),
+  vline_offset = 0,
   hline = list(),
   fill = NULL,
   top_n = Inf,
@@ -40,7 +41,21 @@ relabeling. Ignored for other types (no legend).}
 
 \item{vline}{Aesthetic overrides for the vertical treatment-time line, as a
 list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}} (e.g. \code{list(color = "red")}).
-\code{NULL} or \code{FALSE} hides the line entirely. Applies to \code{"trend"} and \code{"gap"}.}
+\code{NULL} or \code{FALSE} hides the line entirely. The list may also carry an
+\code{xintercept} element giving one or more absolute positions on the time
+axis (e.g. \code{list(xintercept = 1988)}, or a date string such as
+\code{"1989-01-01"} on a \code{Date} axis), replacing the default treatment-time
+position; for placement relative to the treatment period use
+\code{vline_offset} instead. Applies to \code{"trend"} and \code{"gap"}.}
+
+\item{vline_offset}{For \code{type = "trend"} and \code{"gap"}: where to draw the
+vertical treatment line, in periods relative to the first post-treatment
+period. The default \code{0} keeps the line at the first post-treatment
+period; \code{-1} moves it to the last pre-treatment period, and fractional
+values interpolate between adjacent observed times (\code{-0.5} is midway
+between the last pre- and first post-treatment period), which works on
+numeric, \code{Date}, and \code{POSIXct} axes alike. Cannot be combined with an
+\code{xintercept} element in \code{vline}.}
 
 \item{hline}{Aesthetic overrides for the horizontal zero line in \code{type = "gap"}, as a list passed to \code{\link[ggplot2:geom_hline]{ggplot2::geom_hline()}}. \code{NULL} or \code{FALSE}
 hides the line. Ignored for other types.}
@@ -103,5 +118,11 @@ plot(fit, type = "trend",
      colors = c(Treated = "black"),
      labels = c(Treated = "Unit 5"),
      vline  = list(color = "red", linetype = "dashed"))
+
+# Move the treatment line one period earlier (last pre-treatment period),
+# pin it to an absolute time, or drop it entirely
+plot(fit, type = "trend", vline_offset = -1)
+plot(fit, type = "trend", vline = list(xintercept = 15.5))
+plot(fit, type = "trend", vline = FALSE)
 }
 }

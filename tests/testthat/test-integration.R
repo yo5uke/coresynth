@@ -3976,3 +3976,78 @@ test_that("Phase 34: sdid_inference staggered placebo also returns SE and CI", {
   expect_true(is.finite(inf$ci_lower) && is.finite(inf$ci_upper))
   expect_lt(inf$ci_lower, inf$ci_upper)
 })
+
+# ── Phase 35: vline positioning (vline_offset / vline xintercept) ─────────────
+
+# xintercept values of every geom_vline layer in a built plot
+.vline_x <- function(p) {
+  d  <- ggplot2::ggplot_build(p)$data
+  xs <- lapply(d, function(l) l[["xintercept"]])
+  as.numeric(unlist(xs[!vapply(xs, is.null, logical(1))]))
+}
+
+test_that("plot.coresynth: vline_offset moves the treatment line", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  # panel: times 1:20, T_pre = 10, first post-treatment period = 11
+  expect_equal(.vline_x(plot(fit, type = "trend")), 11)
+  expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = -1)), 10)
+  # fractional offsets interpolate between adjacent observed times
+  expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = -0.5)), 10.5)
+  expect_equal(.vline_x(plot(fit, type = "gap", vline_offset = -1)), 10)
+})
+
+test_that("plot.coresynth: vline_offset is validated and range-checked", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(plot(fit, type = "trend", vline_offset = "a"), "single finite")
+  expect_error(plot(fit, type = "trend", vline_offset = c(-1, 0)), "single finite")
+  expect_error(plot(fit, type = "trend", vline_offset = Inf), "single finite")
+  # out of range: warn and drop the line (layer count shrinks by one)
+  n_default <- length(plot(fit, type = "trend")$layers)
+  expect_warning(p <- plot(fit, type = "trend", vline_offset = 99),
+                 "outside the observed time range")
+  expect_equal(length(p$layers), n_default - 1L)
+})
+
+test_that("plot.coresynth: vline xintercept pins the line to an absolute time", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_equal(.vline_x(plot(fit, type = "trend",
+                             vline = list(xintercept = 15.5))), 15.5)
+  # aesthetics in the same list still apply
+  p <- plot(fit, type = "gap", vline = list(xintercept = 5, color = "red"))
+  expect_equal(.vline_x(p), 5)
+  # several positions draw several lines
+  expect_equal(.vline_x(plot(fit, type = "trend",
+                             vline = list(xintercept = c(5, 11)))), c(5, 11))
+  expect_error(plot(fit, type = "trend", vline_offset = -1,
+                    vline = list(xintercept = 5)), "not both")
+  expect_error(plot(fit, type = "trend", vline = list(xintercept = NA)),
+               "non-missing")
+})
+
+test_that("plot.coresynth: vline_offset works on a Date time axis", {
+  dpanel <- panel
+  dpanel$time <- as.Date("2000-01-01") + 30 * (dpanel$time - 1L)
+  fit <- scm_fit(y ~ d | id + time, data = dpanel, method = "scm")
+
+  d0 <- as.numeric(as.Date("2000-01-01") + 30 * 10) # 11th period
+  expect_equal(.vline_x(plot(fit, type = "trend")), d0)
+  expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = -1)), d0 - 30)
+  expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = -0.5)), d0 - 15)
+  # absolute positions accept a date string on a Date axis
+  expect_equal(
+    .vline_x(plot(fit, type = "trend",
+                  vline = list(xintercept = "2000-03-01"))),
+    as.numeric(as.Date("2000-03-01"))
+  )
+})
+
+test_that("plot.scm_placebo gaps: vline_offset and xintercept work", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+  expect_equal(.vline_x(plot(inf, type = "gaps")), 11)
+  expect_equal(.vline_x(plot(inf, type = "gaps", vline_offset = -1)), 10)
+  expect_equal(.vline_x(plot(inf, type = "gaps",
+                             vline = list(xintercept = 4))), 4)
+  expect_error(plot(inf, type = "gaps", vline_offset = 2.5,
+                    vline = list(xintercept = 4)), "not both")
+})

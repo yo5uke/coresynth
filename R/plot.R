@@ -37,6 +37,58 @@
   default
 }
 
+# `vline_offset` counts periods relative to the first post-treatment period
+# (offset 0, the historical fixed position of the treatment line).
+.check_vline_offset <- function(offset) {
+  if (!is.numeric(offset) || length(offset) != 1L || !is.finite(offset))
+    stop("`vline_offset` must be a single finite number of periods relative ",
+         "to the first post-treatment period (e.g. -1 = one period earlier).",
+         call. = FALSE)
+}
+
+# Resolve where the treatment vline is drawn: -1 is the last pre-treatment
+# period, and fractional offsets interpolate linearly between adjacent
+# observed times, so -0.5 lands midway on numeric, Date, and POSIXct axes
+# alike. Out-of-range offsets return NA (line skipped), matching how a fit
+# without post-treatment periods has always been handled.
+.vline_position <- function(times, T_pre, offset) {
+  idx <- T_pre + 1 + offset
+  if (idx < 1 || idx > length(times)) {
+    if (offset != 0)
+      warning("`vline_offset = ", offset, "` places the treatment line ",
+              "outside the observed time range; the line is not drawn.",
+              call. = FALSE)
+    return(times[NA_integer_])
+  }
+  lo   <- floor(idx)
+  frac <- idx - lo
+  if (frac == 0) return(times[lo])
+  times[lo] + frac * (times[lo + 1L] - times[lo])
+}
+
+# Split a user-supplied absolute position (`xintercept`) out of the merged
+# vline style list, so `vline = list(xintercept = ...)` places the line
+# instead of the treatment time. Character positions are coerced to the axis
+# class on Date/POSIXct axes, letting users write "1989-01-01" directly.
+.vline_split <- function(style, times, offset) {
+  if (is.null(style) || !("xintercept" %in% names(style)))
+    return(list(style = style, at = NULL))
+  if (offset != 0)
+    stop("supply either `vline_offset` or `vline = list(xintercept = ...)`, ",
+         "not both.", call. = FALSE)
+  at <- style$xintercept
+  style$xintercept <- NULL
+  if (is.character(at)) {
+    if (inherits(times, "Date")) at <- as.Date(at)
+    else if (inherits(times, "POSIXct"))
+      at <- as.POSIXct(at, tz = attr(times, "tzone") %||% "")
+  }
+  if (length(at) < 1L || anyNA(at))
+    stop("`vline` xintercept must be one or more non-missing positions on ",
+         "the time axis.", call. = FALSE)
+  list(style = style, at = at)
+}
+
 .merge_named_colors <- function(default, override) {
   .merge_named_vec(default, override, what = "colors")
 }
@@ -82,7 +134,20 @@
 #'   relabeling. Ignored for other types (no legend).
 #' @param vline  Aesthetic overrides for the vertical treatment-time line, as a
 #'   list passed to [ggplot2::geom_vline()] (e.g. `list(color = "red")`).
-#'   `NULL` or `FALSE` hides the line entirely. Applies to `"trend"` and `"gap"`.
+#'   `NULL` or `FALSE` hides the line entirely. The list may also carry an
+#'   `xintercept` element giving one or more absolute positions on the time
+#'   axis (e.g. `list(xintercept = 1988)`, or a date string such as
+#'   `"1989-01-01"` on a `Date` axis), replacing the default treatment-time
+#'   position; for placement relative to the treatment period use
+#'   `vline_offset` instead. Applies to `"trend"` and `"gap"`.
+#' @param vline_offset For `type = "trend"` and `"gap"`: where to draw the
+#'   vertical treatment line, in periods relative to the first post-treatment
+#'   period. The default `0` keeps the line at the first post-treatment
+#'   period; `-1` moves it to the last pre-treatment period, and fractional
+#'   values interpolate between adjacent observed times (`-0.5` is midway
+#'   between the last pre- and first post-treatment period), which works on
+#'   numeric, `Date`, and `POSIXct` axes alike. Cannot be combined with an
+#'   `xintercept` element in `vline`.
 #' @param hline  Aesthetic overrides for the horizontal zero line in `type =
 #'   "gap"`, as a list passed to [ggplot2::geom_hline()]. `NULL` or `FALSE`
 #'   hides the line. Ignored for other types.
@@ -134,12 +199,18 @@
 #'      colors = c(Treated = "black"),
 #'      labels = c(Treated = "Unit 5"),
 #'      vline  = list(color = "red", linetype = "dashed"))
+#'
+#' # Move the treatment line one period earlier (last pre-treatment period),
+#' # pin it to an absolute time, or drop it entirely
+#' plot(fit, type = "trend", vline_offset = -1)
+#' plot(fit, type = "trend", vline = list(xintercept = 15.5))
+#' plot(fit, type = "trend", vline = FALSE)
 #' }
 #' @import ggplot2
 #' @export
 plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
                             colors = NULL, labels = NULL,
-                            vline = list(), hline = list(),
+                            vline = list(), vline_offset = 0, hline = list(),
                             fill = NULL, top_n = Inf,
                             align = FALSE, show_donors = 0, ...) {
   type <- match.arg(type)
@@ -172,8 +243,13 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
              call. = FALSE)
       Y_synth <- Y_synth + .align_offset(x, Y_treat, Y_synth)
     }
-    treat_time  <- if(!is.null(x$T_pre)) times[x$T_pre + 1] else NA
+    .check_vline_offset(vline_offset)
     vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
+    vl          <- .vline_split(vline_style, times, vline_offset)
+    vline_style <- vl$style
+    treat_time  <- if (!is.null(vl$at)) vl$at
+                   else if (!is.null(x$T_pre)) .vline_position(times, x$T_pre, vline_offset)
+                   else NA
     is_sdid     <- identical(x$method, "sdid")
 
     if(type == "trend") {
@@ -224,7 +300,7 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
                            labels = series_labels) +
         scale_linetype_manual(values = ltype_values, breaks = series_breaks,
                               labels = series_labels) +
-        {if(!is.null(vline_style) && !is.na(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
+        {if(!is.null(vline_style) && !anyNA(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
         theme_minimal(base_size = 13) +
         labs(title    = paste0("Synthetic Control Trend  [", toupper(x$method), "]"),
              subtitle = if (isTRUE(align)) {
@@ -253,7 +329,7 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
       p <- ggplot(df, aes(x = time, y = gap)) +
         geom_line(color = gap_color, linewidth = 0.9) +
         {if(!is.null(hline_style)) do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
-        {if(!is.null(vline_style) && !is.na(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
+        {if(!is.null(vline_style) && !anyNA(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
         theme_minimal(base_size = 13) +
         labs(title    = paste0("Treatment Effect Gap  [", toupper(x$method), "]"),
              subtitle = subtitle,
@@ -360,7 +436,15 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
 #'   of relabeling.
 #' @param vline Only for `type = "gaps"`: aesthetic overrides for the vertical
 #'   treatment-time line, as a list passed to [ggplot2::geom_vline()].
-#'   `NULL` or `FALSE` hides the line entirely.
+#'   `NULL` or `FALSE` hides the line entirely. The list may also carry an
+#'   `xintercept` element giving one or more absolute positions on the time
+#'   axis, replacing the default treatment-time position.
+#' @param vline_offset Only for `type = "gaps"`: where to draw the vertical
+#'   treatment line, in periods relative to the first post-treatment period.
+#'   The default `0` keeps the line at the first post-treatment period; `-1`
+#'   moves it to the last pre-treatment period, and fractional values
+#'   interpolate between adjacent observed times. Cannot be combined with an
+#'   `xintercept` element in `vline`.
 #' @param hline Only for `type = "gaps"`: aesthetic overrides for the
 #'   horizontal zero line, as a list passed to [ggplot2::geom_hline()].
 #'   `NULL` or `FALSE` hides the line entirely.
@@ -383,6 +467,9 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
 #' plot(placebo, type = "gaps", mspe_prune = 5,
 #'      labels = c(Treated = "Unit 5"))
 #'
+#' # Move the treatment line one period earlier
+#' plot(placebo, type = "gaps", vline_offset = -1)
+#'
 #' # Post/pre-treatment MSPE ratios (ADH 2010, Fig. 8)
 #' plot(placebo, type = "ratios")
 #' }
@@ -390,7 +477,8 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
 #' @export
 plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
                               colors = NULL, labels = NULL,
-                              vline = list(), hline = list(), ...) {
+                              vline = list(), vline_offset = 0,
+                              hline = list(), ...) {
   type <- match.arg(type)
   series_labels <- .merge_named_labels(c("Treated", "Placebo (donor pool)"), labels)
   if (!is.numeric(mspe_prune) || length(mspe_prune) != 1L || mspe_prune <= 0)
@@ -405,7 +493,7 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
     times <- x$times
     if (is.character(times) || is.factor(times))
       times <- as.numeric(as.character(times))
-    treat_time <- times[x$T_pre + 1L]
+    .check_vline_offset(vline_offset)
 
     keep <- is.finite(x$mspe_pre_placebo) &
       x$mspe_pre_placebo <= mspe_prune * x$mspe_pre_treated
@@ -429,6 +517,9 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
     )
     vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
     hline_style <- .line_style(list(color = "gray50", linetype = "dashed"), hline)
+    vl          <- .vline_split(vline_style, times, vline_offset)
+    vline_style <- vl$style
+    treat_time  <- vl$at %||% .vline_position(times, x$T_pre, vline_offset)
 
     p <- ggplot() +
       geom_line(data = df_pl,
@@ -437,7 +528,7 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
       geom_line(data = df_tr, aes(x = time, y = gap, color = "Treated"),
                 linewidth = 1.0) +
       {if(!is.null(hline_style)) do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
-      {if(!is.null(vline_style)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
+      {if(!is.null(vline_style) && !anyNA(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
       scale_color_manual(values = series_colors, breaks = names(series_colors),
                          labels = series_labels) +
       theme_minimal(base_size = 13) +

@@ -11,6 +11,7 @@
   colors = NULL,
   labels = NULL,
   vline = list(),
+  vline_offset = 0,
   hline = list(),
   ...
 )
@@ -38,7 +39,16 @@ of relabeling.}
 
 \item{vline}{Only for \code{type = "gaps"}: aesthetic overrides for the vertical
 treatment-time line, as a list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}}.
-\code{NULL} or \code{FALSE} hides the line entirely.}
+\code{NULL} or \code{FALSE} hides the line entirely. The list may also carry an
+\code{xintercept} element giving one or more absolute positions on the time
+axis, replacing the default treatment-time position.}
+
+\item{vline_offset}{Only for \code{type = "gaps"}: where to draw the vertical
+treatment line, in periods relative to the first post-treatment period.
+The default \code{0} keeps the line at the first post-treatment period; \code{-1}
+moves it to the last pre-treatment period, and fractional values
+interpolate between adjacent observed times. Cannot be combined with an
+\code{xintercept} element in \code{vline}.}
 
 \item{hline}{Only for \code{type = "gaps"}: aesthetic overrides for the
 horizontal zero line, as a list passed to \code{\link[ggplot2:geom_hline]{ggplot2::geom_hline()}}.
@@ -82,6 +92,9 @@ plot(placebo, type = "gaps")
 # Prune poorly fitting placebos and relabel the legend
 plot(placebo, type = "gaps", mspe_prune = 5,
      labels = c(Treated = "Unit 5"))
+
+# Move the treatment line one period earlier
+plot(placebo, type = "gaps", vline_offset = -1)
 
 # Post/pre-treatment MSPE ratios (ADH 2010, Fig. 8)
 plot(placebo, type = "ratios")

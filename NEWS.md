@@ -1,5 +1,38 @@
 # coresynth (development version)
 
+## Breaking changes
+
+- **`mspe_ratio_pval()` placebo refits now mirror the treated fit's
+  predictor specification by default**: `use_covariates` defaults to `NULL`
+  (auto) instead of `FALSE`. When the fit was estimated with a `predictors`
+  specification, each placebo unit is now refit with that same specification
+  -- the Abadie et al. (2010) / `Synth` convention, under which the treated
+  and placebo test statistics are computed under one common spec. Previously
+  the default silently switched the placebo refits to the outcomes-only
+  spec, which (a) made the permutation compare statistics that were not
+  exchangeable with the treated one, and (b) was extremely slow for long
+  pre-periods because each placebo re-ran a `T_pre`-dimensional V
+  optimisation. Outcomes-only fits are unaffected (auto resolves to the
+  outcomes-only placebo path, as before). Pass `use_covariates = FALSE`
+  explicitly to reproduce the old behaviour on covariate fits.
+
+## Performance
+
+- **The nested V/W coordinate descent is orders of magnitude faster.** The
+  solver behind `scm_weights_cpp()` and the outcomes-only placebo loop in
+  `scm_placebo_cpp()` now solves each inner simplex QP with a warm-started
+  active-set method (KKT-verified exact solve, with FISTA fallback), applies
+  V-coordinate changes to the Gram matrix as implicit rank-1 updates instead
+  of rebuilding `X0' V X0` per grid point, and computes the Lipschitz
+  constant once per coordinate-descent sweep instead of once per QP. On a
+  monthly panel with `T_pre = 139`, `T_post = 19`, and 75 donors, the full
+  75-unit outcomes-only placebo run drops from roughly an hour to about
+  2 seconds, and a single outcomes-only `scm_fit()` from ~75 s to ~0.1 s.
+  Per-unit results agree with the previous implementation within the
+  coordinate-descent convergence tolerance: the estimator and its
+  grid/accept/normalisation semantics are unchanged, and the inner QP
+  solutions are now exact rather than first-order-approximate.
+
 ## New features
 
 - **Treatment-line placement in plots**: `plot.coresynth()` (`type = "trend"`

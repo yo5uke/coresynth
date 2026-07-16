@@ -9,7 +9,7 @@ mspe_ratio_pval(
   mspe_threshold = 0,
   max_iter = 100L,
   tol = 1e-04,
-  use_covariates = FALSE,
+  use_covariates = NULL,
   alternative = c("two.sided", "greater", "less")
 )
 }
@@ -24,9 +24,16 @@ Default: 0 (no filtering).}
 
 \item{tol}{Passed to \code{\link[=scm_placebo_cpp]{scm_placebo_cpp()}}. Default 1e-4.}
 
-\item{use_covariates}{If \code{TRUE} and the fit used predictor covariates,
-applies the same covariate spec to each placebo unit (R-level loop).
-Default \code{FALSE} (faster C++ outcomes-only placebos).}
+\item{use_covariates}{Controls which predictor specification the placebo
+refits use. Default \code{NULL} (recommended) mirrors the treated fit: if the
+fit was estimated with a \code{predictors} specification, each placebo unit is
+refit with that same specification (the Abadie et al. 2010 / \code{Synth}
+convention -- treated and placebo statistics are computed under one
+common spec); outcomes-only fits use the fast C++ outcomes-only placebo.
+Set \code{TRUE}/\code{FALSE} to force either path; note that \code{FALSE} on a
+covariate fit compares a covariate-based treated statistic against
+outcomes-only placebo statistics, which breaks the exchangeability
+logic of the permutation test.}
 
 \item{alternative}{Direction of the alternative hypothesis:
 \code{"two.sided"} (default) uses the MSPE ratio statistic;

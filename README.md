@@ -1,14 +1,9 @@
----
-output: github_document
----
-
 <!-- README.md is generated from README.Rmd. Please do not edit README.md directly. -->
-
-
 
 # coresynth <img src="man/figures/logo.png" align="right" height="140" />
 
 <!-- badges: start -->
+
 [![CRAN status](https://www.r-pkg.org/badges/version/coresynth)](https://CRAN.R-project.org/package=coresynth)
 [![R-CMD-check](https://github.com/yo5uke/coresynth/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/yo5uke/coresynth/actions/workflows/R-CMD-check.yaml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -19,7 +14,6 @@ output: github_document
 All core optimizations (QP solving, SVD, Kalman filtering) are implemented in C++ via RcppArmadillo, so estimation stays fast even on larger donor pools (see the [Performance](#performance) section for timings).
 
 ## Installation
-
 
 ``` r
 # From CRAN
@@ -44,7 +38,6 @@ unit × time), with:
   in periods at or after its treatment starts
 - `id` — the unit identifier
 - `time` — the time identifier
-
 
 ``` r
 library(coresynth)
@@ -82,43 +75,30 @@ selection, and staggered adoption — see the
 [Covariates](#covariates) and [Staggered Adoption](#staggered-adoption)
 sections below, or `?scm_fit`.
 
-
 ``` r
 # Observed vs. synthetic trend
 plot(fit_scm, type = "trend")
 ```
 
-<div class="figure">
-<img src="man/figures/README-plot-trend-1.png" alt="plot of chunk plot-trend" width="100%" />
-<p class="caption">plot of chunk plot-trend</p>
-</div>
-
+<img src="man/figures/README-plot-trend-1.png" width="100%" />
 
 ``` r
 # Treatment effect over time
 plot(fit_scm, type = "gap")
 ```
 
-<div class="figure">
-<img src="man/figures/README-plot-gap-1.png" alt="plot of chunk plot-gap" width="100%" />
-<p class="caption">plot of chunk plot-gap</p>
-</div>
-
+<img src="man/figures/README-plot-gap-1.png" width="100%" />
 
 ``` r
 # Donor unit weights
 plot(fit_scm, type = "weights")
 ```
 
-<div class="figure">
-<img src="man/figures/README-plot-weights-1.png" alt="plot of chunk plot-weights" width="100%" />
-<p class="caption">plot of chunk plot-weights</p>
-</div>
+<img src="man/figures/README-plot-weights-1.png" width="100%" />
 
 ## Supported Methods
 
 The same formula and data work for all six methods — just change `method`:
-
 
 ``` r
 methods <- c("scm", "sdid", "gsc", "mc", "tasc", "si")
@@ -139,23 +119,22 @@ data.frame(
 #> si       si    2.346
 ```
 
-| Method | Full name | Reference | Treatment | Covariates | Inference |
-|--------|-----------|-----------|-----------|:----------:|-----------|
-| `scm`  | Synthetic Control Method | Abadie, Diamond & Hainmueller (2010); staggered: Ben-Michael, Feller & Rothstein (2022) | Sharp & Staggered | `pred()` list | `mspe_ratio_pval()`, `scm_inference()`, `conformal_inference()` |
-| `sdid` | Synthetic Difference-in-Differences | Arkhangelsky et al. (2021) | Sharp & Staggered | `covariates=` | `sdid_inference()`, `conformal_inference()` |
-| `gsc`  | Generalized Synthetic Control | Xu (2017) | Sharp & Staggered | `covariates=` time-varying | `gsc_boot()`, `gsc_inference()`, `conformal_inference()` |
-| `mc`   | Matrix Completion | Athey et al. (2021) | Sharp & Staggered | — | `conformal_inference()` |
-| `tasc` | Time-Aware Synthetic Control | Rho et al. (2026) | Sharp & Staggered | — | — |
-| `si`   | Synthetic Interventions | Agarwal et al. (2025) | Sharp, Staggered & Multi-arm | — | `si_inference()`, `conformal_inference()` |
+| Method | Full name                           | Reference                                                                               | Treatment                    |         Covariates         | Inference                                                       |
+|--------|-------------------------------------|-----------------------------------------------------------------------------------------|------------------------------|:--------------------------:|-----------------------------------------------------------------|
+| `scm`  | Synthetic Control Method            | Abadie, Diamond & Hainmueller (2010); staggered: Ben-Michael, Feller & Rothstein (2022) | Sharp & Staggered            |       `pred()` list        | `mspe_ratio_pval()`, `scm_inference()`, `conformal_inference()` |
+| `sdid` | Synthetic Difference-in-Differences | Arkhangelsky et al. (2021)                                                              | Sharp & Staggered            |       `covariates=`        | `sdid_inference()`, `conformal_inference()`                     |
+| `gsc`  | Generalized Synthetic Control       | Xu (2017)                                                                               | Sharp & Staggered            | `covariates=` time-varying | `gsc_boot()`, `gsc_inference()`, `conformal_inference()`        |
+| `mc`   | Matrix Completion                   | Athey et al. (2021)                                                                     | Sharp & Staggered            |             —              | `conformal_inference()`                                         |
+| `tasc` | Time-Aware Synthetic Control        | Rho et al. (2026)                                                                       | Sharp & Staggered            |             —              | —                                                               |
+| `si`   | Synthetic Interventions             | Agarwal et al. (2025)                                                                   | Sharp, Staggered & Multi-arm |             —              | `si_inference()`, `conformal_inference()`                       |
 
 `conformal_inference()` (Chernozhukov, Wüthrich & Zhu 2021) provides permutation-based p-values and confidence intervals for **sharp** fits across `scm`/`sdid`/`gsc`/`mc`/`si`.
 
 ## Staggered Adoption
 
-All six methods support staggered adoption using a cohort-based approach (Clarke et al. 2023):
+All six methods support staggered adoption using a cohort-based approach (Clarke et al. 2023):
 each adoption cohort is fitted separately and the cohort ATTs are aggregated with weights
 proportional to `N_treated × T_post`.
-
 
 ``` r
 # u1: treated from t=11, u2: treated from t=16
@@ -193,7 +172,6 @@ process cannot vary across units sharing one adoption time), and each cohort
 is matched to its own synthetic control before aggregation. Two arguments
 control how the cohort fits interact:
 
-
 ``` r
 # nu in [0, 1] trades off per-cohort fit (nu = 0) against the fit of the
 # *average* placebo gap across cohorts (nu = 1), which anchors the aggregate
@@ -216,10 +194,9 @@ classic V-optimised SCM, which reproduces the behaviour of earlier versions.
 
 ### SCM: Predictor Variables via `pred()`
 
-SCM supports covariate-based matching following Abadie et al. (2010) S.2.3.
+SCM supports covariate-based matching following Abadie et al. (2010) S.2.3.
 Use `pred(vars, times, op)` to specify which variables and time windows to
 include in the predictor matrix:
-
 
 ``` r
 # Assume dat has extra columns: income, unemp
@@ -245,7 +222,6 @@ different windows can be combined freely in the list.
 GSC supports time-varying covariate adjustment via the full EM algorithm of
 Xu (2017). Pass a character vector of column names as `covariates`:
 
-
 ``` r
 # Assume dat has a time-varying column: gdp_growth
 fit_gsc_cov <- scm_fit(
@@ -260,12 +236,12 @@ fit_gsc_cov$beta   # estimated beta coefficient(s)
 
 The EM loop alternates between:
 
-- **E-step**: SVD of $\tilde{Y}_{it} = Y_{it} - x_{it}'\hat\beta$ to update factors $\hat{F}$, $\hat\Lambda$
-- **M-step**: Ridge OLS of residuals on $x_{it}$ to update $\hat\beta$
+- **E-step**: SVD of $`\tilde{Y}_{it} = Y_{it} - x_{it}'\hat\beta`$ to update factors $`\hat{F}`$, $`\hat\Lambda`$
+- **M-step**: Ridge OLS of residuals on $`x_{it}`$ to update $`\hat\beta`$
 
 Treated unit loadings are estimated from covariate-demeaned pre-treatment data
 per Xu (2017) Step 2. When `covariates = NULL` (default), the plain 3-step SVD
-estimator ($\hat\beta = 0$) is used.
+estimator ($`\hat\beta = 0`$) is used.
 
 ## Inference
 
@@ -273,9 +249,8 @@ estimator ($\hat\beta = 0$) is used.
 
 `mspe_ratio_pval()` runs the in-space placebo study of Abadie, Diamond &
 Hainmueller (2010): the intervention is reassigned to each donor unit and the
-treated unit's post/pre-treatment MSPE ratio is compared against the placebo
+treated unit’s post/pre-treatment MSPE ratio is compared against the placebo
 distribution. The result can be plotted directly.
-
 
 ``` r
 scm_p <- mspe_ratio_pval(fits$scm)
@@ -286,28 +261,20 @@ scm_p$p_value
 plot(scm_p, type = "gaps")
 ```
 
-<div class="figure">
-<img src="man/figures/README-placebo-gaps-1.png" alt="plot of chunk placebo-gaps" width="100%" />
-<p class="caption">plot of chunk placebo-gaps</p>
-</div>
+<img src="man/figures/README-placebo-gaps-1.png" width="100%" />
 
 Placebo units with a poor pre-treatment fit can be pruned with `mspe_prune`
-(e.g. `plot(scm_p, type = "gaps", mspe_prune = 5)` excludes units whose
-pre-treatment MSPE exceeds 5 times the treated unit's).
-
+(e.g. `plot(scm_p, type = "gaps", mspe_prune = 5)` excludes units whose
+pre-treatment MSPE exceeds 5 times the treated unit’s).
 
 ``` r
 # Post/pre-treatment MSPE ratio of every unit (ADH 2010, Figure 8)
 plot(scm_p, type = "ratios")
 ```
 
-<div class="figure">
-<img src="man/figures/README-placebo-ratios-1.png" alt="plot of chunk placebo-ratios" width="100%" />
-<p class="caption">plot of chunk placebo-ratios</p>
-</div>
+<img src="man/figures/README-placebo-ratios-1.png" width="100%" />
 
 ### Other Inference Methods
-
 
 ``` r
 # SDID: four inference methods — placebo, bootstrap, jackknife, jackknife_global
@@ -336,7 +303,6 @@ tidy(conf)
 
 ## tidyverse / broom Integration
 
-
 ``` r
 library(broom)
 
@@ -357,20 +323,20 @@ Estimation stays fast even as the donor pool grows. SCM fit times
 
 | N_co | T_pre | coresynth |
 |-----:|------:|----------:|
-| 16   | 10    | 105 ms    |
-| 20   | 20    | 72 ms     |
-| 50   | 30    | 916 ms    |
-| 100  | 40    | 6,300 ms  |
+|   16 |    10 |    105 ms |
+|   20 |    20 |     72 ms |
+|   50 |    30 |    916 ms |
+|  100 |    40 |  6,300 ms |
 
 A full SCM fit on a 100-donor pool completes in a few seconds.
 
 ## References
 
 - Abadie, A., Diamond, A., & Hainmueller, J. (2010). Synthetic control methods for comparative case studies. *JASA*, 105(490), 493–505.
-- Agarwal, A., Shah, D., & Shen, D. (2025). Synthetic interventions: extending synthetic controls to multiple treatments. *Operations Research*. doi:10.1287/opre.2025.1590
+- Agarwal, A., Shah, D., & Shen, D. (2025). Synthetic interventions: extending synthetic controls to multiple treatments. *Operations Research*. <doi:10.1287/opre.2025.1590>
 - Arkhangelsky, D., Athey, S., Hirshberg, D. A., Imbens, G. W., & Wager, S. (2021). Synthetic difference-in-differences. *AER*, 111(12), 4088–4118.
 - Ben-Michael, E., Feller, A., & Rothstein, J. (2022). Synthetic controls with staggered adoption. *JRSS-B*, 84(2), 351–381.
 - Athey, S., Bayati, M., Doudchenko, N., Imbens, G., & Khosravi, K. (2021). Matrix completion methods for causal panel data models. *JASA*, 116(536), 1716–1730.
 - Chernozhukov, V., Wüthrich, K., & Zhu, Y. (2021). An exact and robust conformal inference method for counterfactual and synthetic controls. *JASA*, 116(536), 1849–1864.
-- Rho, H., et al. (2026). Time-aware synthetic control. *Working paper*.
+- Rho, H., et al. (2026). Time-aware synthetic control. *Working paper*.
 - Xu, Y. (2017). Generalized synthetic control method. *Political Analysis*, 25(1), 57–76.

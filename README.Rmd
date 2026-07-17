@@ -1,7 +1,5 @@
 ---
-output:
-  github_document:
-    pandoc_args: ["--wrap=preserve"]
+output: github_document
 ---
 
 <!-- README.md is generated from README.Rmd. Please do not edit README.md directly. -->
@@ -230,12 +228,12 @@ fit_gsc_cov$beta   # estimated beta coefficient(s)
 
 The EM loop alternates between:
 
-- **E-step**: SVD of $`\tilde{Y}_{it} = Y_{it} - x_{it}'\hat\beta`$ to update factors $`\hat{F}`$, $`\hat\Lambda`$
-- **M-step**: Ridge OLS of residuals on $`x_{it}`$ to update $`\hat\beta`$
+- **E-step**: SVD of $\tilde{Y}_{it} = Y_{it} - x_{it}'\hat\beta$ to update factors $\hat{F}$, $\hat\Lambda$
+- **M-step**: Ridge OLS of residuals on $x_{it}$ to update $\hat\beta$
 
 Treated unit loadings are estimated from covariate-demeaned pre-treatment data
 per Xu (2017) Step 2. When `covariates = NULL` (default), the plain 3-step SVD
-estimator ($`\hat\beta = 0`$) is used.
+estimator ($\hat\beta = 0$) is used.
 
 ## Inference
 
@@ -307,17 +305,17 @@ export_json(fits$scm, file = "scm_result.json")
 
 ## Performance
 
-Estimation stays fast even as the donor pool grows. SCM fit times
-(Windows 11 / R 4.6.0 / GCC 14.2.0):
+On a 100-donor, 10-year monthly panel, a full SCM fit and its in-space
+placebo test across all 100 donors both complete in well under a second;
+Synth takes about a minute and a half for the fit alone, and roughly two
+hours for the placebo test, on the same data and predictor specification
+(outcomes-only, matching solutions). Measured against Synth 1.1.10 on
+Windows 11 / R 4.6.1.
 
-| N_co | T_pre | coresynth |
-|-----:|------:|----------:|
-| 16   | 10    | 105 ms    |
-| 20   | 20    | 72 ms     |
-| 50   | 30    | 916 ms    |
-| 100  | 40    | 6,300 ms  |
-
-A full SCM fit on a 100-donor pool completes in a few seconds.
+| Panel | Synth fit | coresynth fit | Synth placebo (all donors) | coresynth placebo (all donors) |
+|---|---:|---:|---:|---:|
+| 40 donors, 2 yr pre / 5 mo post   | 6.8 s | 3 ms  | 4.2 min  | 10 ms |
+| 100 donors, 8 yr pre / 2 yr post (monthly) | 81 s  | 30 ms | ~115 min | 0.3 s |
 
 ## References
 

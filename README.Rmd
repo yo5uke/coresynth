@@ -1,5 +1,7 @@
 ---
-output: github_document
+output:
+  github_document:
+    pandoc_args: ["--wrap=preserve"]
 ---
 
 <!-- README.md is generated from README.Rmd. Please do not edit README.md directly. -->
@@ -228,12 +230,12 @@ fit_gsc_cov$beta   # estimated beta coefficient(s)
 
 The EM loop alternates between:
 
-- **E-step**: SVD of $\tilde{Y}_{it} = Y_{it} - x_{it}'\hat\beta$ to update factors $\hat{F}$, $\hat\Lambda$
-- **M-step**: Ridge OLS of residuals on $x_{it}$ to update $\hat\beta$
+- **E-step**: SVD of $`\tilde{Y}_{it} = Y_{it} - x_{it}'\hat\beta`$ to update factors $`\hat{F}`$, $`\hat\Lambda`$
+- **M-step**: Ridge OLS of residuals on $`x_{it}`$ to update $`\hat\beta`$
 
 Treated unit loadings are estimated from covariate-demeaned pre-treatment data
 per Xu (2017) Step 2. When `covariates = NULL` (default), the plain 3-step SVD
-estimator ($\hat\beta = 0$) is used.
+estimator ($`\hat\beta = 0`$) is used.
 
 ## Inference
 

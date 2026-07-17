@@ -79,7 +79,7 @@ Ben-Michael, Feller & Rothstein (2022) — described in the
 [Staggered adoption](staggered.html) article.
 
 Series colors, legend text, and the reference lines are customizable via
-`colors`, `labels` (e.g. `labels = c(Treated = "California")`), `vline`, and
+`colors`, `labels` (e.g. `labels = c(treated = "California")`), `vline`, and
 `hline` — see `?plot.scm_placebo`.
 
 ## SDID — four inference methods

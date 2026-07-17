@@ -2,6 +2,17 @@
 
 ## Breaking changes
 
+- **`colors`/`labels` in `plot.coresynth()` and `plot.scm_placebo()` are now
+  keyed by one-word series identifiers**: `treated`, `synthetic`, and (with
+  `show_donors > 0`) `donors` for trend plots; `treated` and `placebo` for
+  the placebo plots. The previous keys were the displayed legend strings
+  (`Treated`, `Synthetic Control`, `Placebo (donor pool)`), which required
+  quoting for the multi-word names and conflated series identity with the
+  legend text that `labels` itself relabels. Write
+  `colors = c(treated = "black")` instead of `c(Treated = "black")`; an
+  unknown key errors with the list of valid keys. The displayed legend text
+  is unchanged.
+
 - **`mspe_ratio_pval()` placebo refits now mirror the treated fit's
   predictor specification by default**: `use_covariates` defaults to `NULL`
   (auto) instead of `FALSE`. When the fit was estimated with a `predictors`

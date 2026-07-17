@@ -27,17 +27,17 @@ or \code{"weights"} (donor unit weight bar chart; SDID fits get a
 second panel with the time weight profile).}
 
 \item{colors}{For \code{type = "trend"}: a named vector overriding series colors,
-e.g. \code{c(Treated = "black")} (valid names: \code{"Treated"}, \code{"Synthetic Control"},
-plus \code{"Donors"} when \code{show_donors > 0}).
+e.g. \code{c(treated = "black")} (valid keys: \code{"treated"}, \code{"synthetic"},
+plus \code{"donors"} when \code{show_donors > 0}).
 For \code{type = "gap"}: a single color string for the gap line. Ignored for
 \code{type = "weights"} (use \code{fill} instead).}
 
 \item{labels}{For \code{type = "trend"}: a named vector overriding the legend
-text of individual series, e.g. \code{c(Treated = "California")} (valid names:
-\code{"Treated"}, \code{"Synthetic Control"}, plus \code{"Donors"} when
-\code{show_donors > 0}). Series not mentioned keep their default label, and
-\code{colors} keys always refer to the original series names regardless of
-relabeling. Ignored for other types (no legend).}
+text of individual series, e.g. \code{c(treated = "California")} (valid keys:
+\code{"treated"}, \code{"synthetic"}, plus \code{"donors"} when \code{show_donors > 0}).
+Series not mentioned keep their default label; \code{colors} and \code{labels}
+address series by the same keys, independent of the displayed legend
+text. Ignored for other types (no legend).}
 
 \item{vline}{Aesthetic overrides for the vertical treatment-time line, as a
 list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}} (e.g. \code{list(color = "red")}).
@@ -115,8 +115,8 @@ plot(fit_sdid, type = "gap",   align = TRUE)
 
 # Customize series colors, legend text, and reference lines
 plot(fit, type = "trend",
-     colors = c(Treated = "black"),
-     labels = c(Treated = "Unit 5"),
+     colors = c(treated = "black"),
+     labels = c(treated = "Unit 5"),
      vline  = list(color = "red", linetype = "dashed"))
 
 # Move the treatment line one period earlier (last pre-treatment period),

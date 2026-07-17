@@ -3542,7 +3542,7 @@ test_that("plot.coresynth trend: color override reaches the built plot data", {
   p_default <- plot(fit, type = "trend")
   expect_equal(length(p_default$layers), 2L) # geom_line + geom_vline
 
-  p_custom <- plot(fit, type = "trend", colors = c(Treated = "black"))
+  p_custom <- plot(fit, type = "trend", colors = c(treated = "black"))
   built <- ggplot2::ggplot_build(p_custom)
   expect_true("black" %in% built$data[[1]]$colour)
   expect_true("#d73027" %in% built$data[[1]]$colour) # Synthetic Control unchanged
@@ -3613,7 +3613,7 @@ test_that("plot.scm_placebo type='gaps': color/vline/hline overrides work", {
                n_default - 2L)
 
   p_custom <- plot(inf, type = "gaps",
-                    colors = c(`Placebo (donor pool)` = "lightblue"))
+                    colors = c(placebo = "lightblue"))
   built <- ggplot2::ggplot_build(p_custom)
   expect_true("lightblue" %in% built$data[[1]]$colour)
   expect_true("#2166ac" %in% built$data[[2]]$colour) # Treated unchanged
@@ -3630,7 +3630,7 @@ test_that("plot.scm_placebo: unknown color name errors", {
 
 test_that("plot.coresynth trend: labels relabel the legend on both scales", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
-  p <- plot(fit, type = "trend", labels = c(Treated = "California"))
+  p <- plot(fit, type = "trend", labels = c(treated = "California"))
   expect_equal(p$scales$get_scales("colour")$labels[["Treated"]], "California")
   expect_equal(p$scales$get_scales("linetype")$labels[["Treated"]], "California")
   # unmentioned series keeps its default label
@@ -3649,11 +3649,11 @@ test_that("plot.scm_placebo: labels relabel the legend and the ratios axis tick"
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
   inf <- mspe_ratio_pval(fit)
 
-  p_gaps <- plot(inf, type = "gaps", labels = c(`Placebo (donor pool)` = "Donors"))
+  p_gaps <- plot(inf, type = "gaps", labels = c(placebo = "Donors"))
   expect_equal(p_gaps$scales$get_scales("colour")$labels[["Placebo (donor pool)"]],
                "Donors")
 
-  p_ratios <- plot(inf, type = "ratios", labels = c(Treated = "California"))
+  p_ratios <- plot(inf, type = "ratios", labels = c(treated = "California"))
   expect_equal(p_ratios$scales$get_scales("colour")$labels[["Treated"]], "California")
   built <- ggplot2::ggplot_build(p_ratios)
   expect_true("California" %in% built$layout$panel_params[[1]]$y$get_labels())
@@ -3916,9 +3916,9 @@ test_that("Phase 34: show_donors overlays top-weight donor paths", {
 test_that("Phase 34: Donors series accepts color/label overrides only when shown", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
   p <- plot(fit, type = "trend", show_donors = 3,
-            colors = c(Donors = "black"), labels = c(Donors = "Donor pool"))
+            colors = c(donors = "black"), labels = c(donors = "Donor pool"))
   expect_s3_class(p, "ggplot")
-  expect_error(plot(fit, type = "trend", colors = c(Donors = "black")),
+  expect_error(plot(fit, type = "trend", colors = c(donors = "black")),
                "unrecognized")
 })
 

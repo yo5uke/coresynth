@@ -29,13 +29,13 @@ tidysynth's "2 times the treated unit's pre-period RMSPE", corresponds
 to the squared multiple (\code{mspe_prune = 4}).}
 
 \item{colors}{A named vector overriding series colors, e.g.
-\code{c(Treated = "black")}. Valid names: \code{"Treated"}, \code{"Placebo (donor pool)"}.}
+\code{c(treated = "black")}. Valid keys: \code{"treated"}, \code{"placebo"}.}
 
 \item{labels}{A named vector overriding the legend text of individual
-series, e.g. \code{c(Treated = "California")}. Valid names: \code{"Treated"},
-\code{"Placebo (donor pool)"}. Series not mentioned keep their default label,
-and \code{colors} keys always refer to the original series names regardless
-of relabeling.}
+series, e.g. \code{c(treated = "California")}. Valid keys: \code{"treated"},
+\code{"placebo"}. Series not mentioned keep their default label; \code{colors}
+and \code{labels} address series by the same keys, independent of the
+displayed legend text.}
 
 \item{vline}{Only for \code{type = "gaps"}: aesthetic overrides for the vertical
 treatment-time line, as a list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}}.
@@ -91,7 +91,7 @@ plot(placebo, type = "gaps")
 
 # Prune poorly fitting placebos and relabel the legend
 plot(placebo, type = "gaps", mspe_prune = 5,
-     labels = c(Treated = "Unit 5"))
+     labels = c(treated = "Unit 5"))
 
 # Move the treatment line one period earlier
 plot(placebo, type = "gaps", vline_offset = -1)

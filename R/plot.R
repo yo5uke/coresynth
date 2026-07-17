@@ -22,7 +22,7 @@
 # value. Keys are always the canonical series names, so colors and labels can
 # be overridden independently.
 .merge_named_vec <- function(default, override, what = "colors",
-                             example = "c(Treated = \"black\")") {
+                             example = "c(treated = \"black\")") {
   if (is.null(override)) return(default)
   if (is.null(names(override)) || !all(nzchar(names(override))))
     stop(what, " must be a named vector, e.g. ", example, ". ",
@@ -93,10 +93,12 @@
   .merge_named_vec(default, override, what = "colors")
 }
 
-# Legend labels default to the canonical series names themselves.
-.merge_named_labels <- function(series, override) {
-  .merge_named_vec(stats::setNames(series, series), override,
-                   what = "labels", example = "c(Treated = \"California\")")
+# Legend labels default to the display series names. `key_map` maps the
+# user-facing one-word keys (names) to the display names (values), so users
+# address series by identifier while the plot keeps its full legend text.
+.merge_named_labels <- function(key_map, override) {
+  .merge_named_vec(key_map, override,
+                   what = "labels", example = "c(treated = \"California\")")
 }
 
 # Pre-treatment level offset between the treated and synthetic series.
@@ -122,16 +124,16 @@
 #'               or `"weights"` (donor unit weight bar chart; SDID fits get a
 #'               second panel with the time weight profile).
 #' @param colors For `type = "trend"`: a named vector overriding series colors,
-#'   e.g. `c(Treated = "black")` (valid names: `"Treated"`, `"Synthetic Control"`,
-#'   plus `"Donors"` when `show_donors > 0`).
+#'   e.g. `c(treated = "black")` (valid keys: `"treated"`, `"synthetic"`,
+#'   plus `"donors"` when `show_donors > 0`).
 #'   For `type = "gap"`: a single color string for the gap line. Ignored for
 #'   `type = "weights"` (use `fill` instead).
 #' @param labels For `type = "trend"`: a named vector overriding the legend
-#'   text of individual series, e.g. `c(Treated = "California")` (valid names:
-#'   `"Treated"`, `"Synthetic Control"`, plus `"Donors"` when
-#'   `show_donors > 0`). Series not mentioned keep their default label, and
-#'   `colors` keys always refer to the original series names regardless of
-#'   relabeling. Ignored for other types (no legend).
+#'   text of individual series, e.g. `c(treated = "California")` (valid keys:
+#'   `"treated"`, `"synthetic"`, plus `"donors"` when `show_donors > 0`).
+#'   Series not mentioned keep their default label; `colors` and `labels`
+#'   address series by the same keys, independent of the displayed legend
+#'   text. Ignored for other types (no legend).
 #' @param vline  Aesthetic overrides for the vertical treatment-time line, as a
 #'   list passed to [ggplot2::geom_vline()] (e.g. `list(color = "red")`).
 #'   `NULL` or `FALSE` hides the line entirely. The list may also carry an
@@ -196,8 +198,8 @@
 #'
 #' # Customize series colors, legend text, and reference lines
 #' plot(fit, type = "trend",
-#'      colors = c(Treated = "black"),
-#'      labels = c(Treated = "Unit 5"),
+#'      colors = c(treated = "black"),
+#'      labels = c(treated = "Unit 5"),
 #'      vline  = list(color = "red", linetype = "dashed"))
 #'
 #' # Move the treatment line one period earlier (last pre-treatment period),
@@ -270,16 +272,21 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
         )
       }
 
-      series         <- c("Treated", "Synthetic Control")
-      color_defaults <- c(Treated = "#2166ac", `Synthetic Control` = "#d73027")
+      key_map        <- c(treated = "Treated", synthetic = "Synthetic Control")
+      color_defaults <- c(treated = "#2166ac", synthetic = "#d73027")
       ltype_values   <- c(Treated = "solid", `Synthetic Control` = "dashed")
       if (!is.null(df_donors)) {
-        series         <- c(series, "Donors")
-        color_defaults <- c(color_defaults, Donors = "grey70")
+        key_map        <- c(key_map, donors = "Donors")
+        color_defaults <- c(color_defaults, donors = "grey70")
         ltype_values   <- c(ltype_values, Donors = "solid")
       }
-      series_colors <- .merge_named_colors(color_defaults, colors)
-      series_labels <- .merge_named_labels(series, labels)
+      series <- unname(key_map)
+      # user overrides are keyed by the one-word identifiers; the ggplot scales
+      # need the display names the data frame carries
+      series_colors <- stats::setNames(
+        .merge_named_colors(color_defaults, colors), series)
+      series_labels <- stats::setNames(
+        .merge_named_labels(key_map, labels), series)
       # Without donors the default (alphabetical) legend order is kept for
       # backwards compatibility; with donors the breaks pin them last.
       series_breaks <- if (!is.null(df_donors)) series else waiver()
@@ -428,12 +435,12 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
 #'   tidysynth's "2 times the treated unit's pre-period RMSPE", corresponds
 #'   to the squared multiple (`mspe_prune = 4`).
 #' @param colors A named vector overriding series colors, e.g.
-#'   `c(Treated = "black")`. Valid names: `"Treated"`, `"Placebo (donor pool)"`.
+#'   `c(treated = "black")`. Valid keys: `"treated"`, `"placebo"`.
 #' @param labels A named vector overriding the legend text of individual
-#'   series, e.g. `c(Treated = "California")`. Valid names: `"Treated"`,
-#'   `"Placebo (donor pool)"`. Series not mentioned keep their default label,
-#'   and `colors` keys always refer to the original series names regardless
-#'   of relabeling.
+#'   series, e.g. `c(treated = "California")`. Valid keys: `"treated"`,
+#'   `"placebo"`. Series not mentioned keep their default label; `colors`
+#'   and `labels` address series by the same keys, independent of the
+#'   displayed legend text.
 #' @param vline Only for `type = "gaps"`: aesthetic overrides for the vertical
 #'   treatment-time line, as a list passed to [ggplot2::geom_vline()].
 #'   `NULL` or `FALSE` hides the line entirely. The list may also carry an
@@ -465,7 +472,7 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
 #'
 #' # Prune poorly fitting placebos and relabel the legend
 #' plot(placebo, type = "gaps", mspe_prune = 5,
-#'      labels = c(Treated = "Unit 5"))
+#'      labels = c(treated = "Unit 5"))
 #'
 #' # Move the treatment line one period earlier
 #' plot(placebo, type = "gaps", vline_offset = -1)
@@ -480,7 +487,9 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
                               vline = list(), vline_offset = 0,
                               hline = list(), ...) {
   type <- match.arg(type)
-  series_labels <- .merge_named_labels(c("Treated", "Placebo (donor pool)"), labels)
+  key_map <- c(treated = "Treated", placebo = "Placebo (donor pool)")
+  series_labels <- stats::setNames(
+    .merge_named_labels(key_map, labels), unname(key_map))
   if (!is.numeric(mspe_prune) || length(mspe_prune) != 1L || mspe_prune <= 0)
     stop("mspe_prune must be a single positive number (Inf = no pruning).")
 
@@ -512,9 +521,9 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
     )
     df_tr <- data.frame(time = times, gap = x$treated_gap)
 
-    series_colors <- .merge_named_colors(
-      c(Treated = "#2166ac", `Placebo (donor pool)` = "grey70"), colors
-    )
+    series_colors <- stats::setNames(.merge_named_colors(
+      c(treated = "#2166ac", placebo = "grey70"), colors
+    ), unname(key_map))
     vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
     hline_style <- .line_style(list(color = "gray50", linetype = "dashed"), hline)
     vl          <- .vline_split(vline_style, times, vline_offset)
@@ -538,7 +547,7 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
            color = NULL,
            caption = if (n_pruned > 0L) {
              paste0("Pruned ", n_pruned, " placebo unit(s) with pre-treatment MSPE > ",
-                    mspe_prune, "x the treated unit's (ADH 2010, Figures 5-7).")
+                    mspe_prune, "x the treated unit's.")
            })
     return(p)
   }
@@ -558,9 +567,9 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
   df <- df[is.finite(df$ratio), ]
   if (nrow(df) == 0L) stop("No finite MSPE ratios to plot.")
 
-  series_colors <- .merge_named_colors(
-    c(Treated = "#2166ac", `Placebo (donor pool)` = "grey60"), colors
-  )
+  series_colors <- stats::setNames(.merge_named_colors(
+    c(treated = "#2166ac", placebo = "grey60"), colors
+  ), unname(key_map))
 
   p <- ggplot(df, aes(x = ratio, y = reorder(unit, ratio), color = series)) +
     geom_point(size = 2.5) +

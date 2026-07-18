@@ -44,6 +44,18 @@
   grid/accept/normalisation semantics are unchanged, and the inner QP
   solutions are now exact rather than first-order-approximate.
 
+- **Covariate-spec placebo refits now run in parallel.** When the fit was
+  estimated with a `predictors` specification, `mspe_ratio_pval()`
+  previously refit each placebo unit in a sequential R loop; the loop now
+  runs in C++ under OpenMP (new low-level routine `scm_placebo_x_cpp()`,
+  the covariate counterpart of `scm_placebo_cpp()`). Each leave-one-out
+  problem is solved by the same coordinate-descent core as before, so
+  per-unit results are identical to machine precision -- only the wall
+  time changes. The speedup is bounded by the slowest single placebo unit
+  (iterations are distributed dynamically across cores), so it approaches
+  the core count when per-unit costs are uniform and is smaller when one
+  hard-to-fit donor dominates.
+
 ## New features
 
 - **Treatment-line placement in plots**: `plot.coresynth()` (`type = "trend"`

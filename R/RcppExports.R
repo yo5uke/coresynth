@@ -74,6 +74,33 @@ scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4) {
     .Call(`_coresynth_scm_placebo_cpp`, Y_pre, Y_post, max_iter, tol)
 }
 
+#' Fast Leave-One-Out Placebo Test for SCM with a Predictor Specification
+#'
+#' Covariate-spec counterpart of [scm_placebo_cpp()]: for each control unit,
+#' treats it as pseudo-treated with its own predictor column `X0[, i]` and
+#' fits the nested V/W optimisation against the remaining donors' predictors
+#' `X0[, -i]`, evaluating the prediction loss on pre-treatment outcomes.
+#' Each leave-one-out problem is identical to a [scm_weights_cpp()] call on
+#' the same submatrices; iterations are independent and run in parallel
+#' under OpenMP.
+#'
+#' @param X0      Predictor matrix for control units (k x N_co), on the same
+#'   scale as the treated fit (SD-scaled when `scale_predictors = TRUE`)
+#' @param Y_pre   Control pre-treatment outcomes (T_pre x N_co)
+#' @param Y_post  Control post-treatment outcomes (T_post x N_co)
+#' @param max_iter Outer coordinate-descent iterations (default 100)
+#' @param tol      Convergence tolerance for V updates (default 1e-4)
+#' @return A list with:
+#'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
+#'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
+#'   * `effects`:   N_co-vector of mean post-period gap per placebo unit
+#'   * `gaps`:      (T_pre + T_post) x N_co matrix of placebo gap paths
+#'   A placebo unit whose solver fails yields NaN entries.
+#' @export
+scm_placebo_x_cpp <- function(X0, Y_pre, Y_post, max_iter = 100L, tol = 1e-4) {
+    .Call(`_coresynth_scm_placebo_x_cpp`, X0, Y_pre, Y_post, max_iter, tol)
+}
+
 #' Fast Matrix Completion using Soft-Impute Algorithm
 #'
 #' Solves: min_L (1/2) ||O o (Y - L)||_F^2 + lambda * ||L||_*

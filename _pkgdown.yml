@@ -93,6 +93,7 @@ reference:
   - scm_weights_cpp
   - scm_inner_weights_cpp
   - scm_placebo_cpp
+  - scm_placebo_x_cpp
   - sdid_unit_weights_cpp
   - sdid_time_weights_cpp
   - sdid_estimate_cpp

@@ -56,6 +56,21 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// scm_placebo_x_cpp
+Rcpp::List scm_placebo_x_cpp(const arma::mat& X0, const arma::mat& Y_pre, const arma::mat& Y_post, int max_iter, double tol);
+RcppExport SEXP _coresynth_scm_placebo_x_cpp(SEXP X0SEXP, SEXP Y_preSEXP, SEXP Y_postSEXP, SEXP max_iterSEXP, SEXP tolSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X0(X0SEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Y_pre(Y_preSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Y_post(Y_postSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    rcpp_result_gen = Rcpp::wrap(scm_placebo_x_cpp(X0, Y_pre, Y_post, max_iter, tol));
+    return rcpp_result_gen;
+END_RCPP
+}
 // soft_impute_cpp
 arma::mat soft_impute_cpp(const arma::mat& Y, const arma::mat& O, double lambda, int max_iter, double tol);
 RcppExport SEXP _coresynth_soft_impute_cpp(SEXP YSEXP, SEXP OSEXP, SEXP lambdaSEXP, SEXP max_iterSEXP, SEXP tolSEXP) {
@@ -218,6 +233,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_coresynth_gsc_ife_cpp", (DL_FUNC) &_coresynth_gsc_ife_cpp, 7},
     {"_coresynth_sdid_placebo_cpp", (DL_FUNC) &_coresynth_sdid_placebo_cpp, 4},
     {"_coresynth_scm_placebo_cpp", (DL_FUNC) &_coresynth_scm_placebo_cpp, 4},
+    {"_coresynth_scm_placebo_x_cpp", (DL_FUNC) &_coresynth_scm_placebo_x_cpp, 5},
     {"_coresynth_soft_impute_cpp", (DL_FUNC) &_coresynth_soft_impute_cpp, 5},
     {"_coresynth_proj_simplex", (DL_FUNC) &_coresynth_proj_simplex, 1},
     {"_coresynth_solve_simplex_qp", (DL_FUNC) &_coresynth_solve_simplex_qp, 5},

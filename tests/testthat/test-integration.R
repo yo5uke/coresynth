@@ -885,6 +885,36 @@ test_that("mspe_ratio_pval use_covariates=TRUE: mspe_ratios_all correct length",
   expect_true(is.numeric(inf$n_placebo_used))
 })
 
+test_that("mspe_ratio_pval covariate placebo matches a per-donor scm_weights_cpp loop", {
+  # The covariate placebo path runs scm_placebo_x_cpp (OpenMP batch). Each
+  # leave-one-out problem must be identical to an individual scm_weights_cpp
+  # call on the same submatrices -- same solver core, so results agree to
+  # machine precision regardless of parallel execution order.
+  fit <- scm_fit(
+    y ~ d | id + time,
+    data = panel_cov,
+    method = "scm",
+    predictors = list(pred(c("cov1", "cov2"), 1:10))
+  )
+  inf <- mspe_ratio_pval(fit, use_covariates = TRUE)
+
+  N_co <- ncol(fit$Y_co_pre)
+  for (i in seq_len(N_co)) {
+    res_i <- scm_weights_cpp(
+      fit$X0_mat[, -i, drop = FALSE], fit$X0_mat[, i],
+      fit$Y_co_pre[, -i, drop = FALSE], fit$Y_co_pre[, i]
+    )
+    synth_post <- fit$Y_co_post[, -i, drop = FALSE] %*% res_i$W
+    expect_equal(unname(inf$placebo_effects[i]),
+                 mean(fit$Y_co_post[, i] - synth_post),
+                 tolerance = 1e-10)
+    synth_pre <- fit$Y_co_pre[, -i, drop = FALSE] %*% res_i$W
+    expect_equal(unname(inf$mspe_pre_placebo[i]),
+                 mean((fit$Y_co_pre[, i] - synth_pre)^2),
+                 tolerance = 1e-10)
+  }
+})
+
 test_that("mspe_ratio_pval use_covariates=TRUE warns and falls back for no-cov fit", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
   expect_null(fit$X0_mat)

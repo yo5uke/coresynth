@@ -20,9 +20,11 @@ mspe_ratio_pval(
 unit in the two-sided test. Ignored for one-sided tests.
 Default: 0 (no filtering).}
 
-\item{max_iter}{Passed to \code{\link[=scm_placebo_cpp]{scm_placebo_cpp()}}. Default 100L.}
+\item{max_iter}{Passed to \code{\link[=scm_placebo_cpp]{scm_placebo_cpp()}} (outcomes-only fits) or
+\code{\link[=scm_placebo_x_cpp]{scm_placebo_x_cpp()}} (covariate fits). Default 100L.}
 
-\item{tol}{Passed to \code{\link[=scm_placebo_cpp]{scm_placebo_cpp()}}. Default 1e-4.}
+\item{tol}{Passed to \code{\link[=scm_placebo_cpp]{scm_placebo_cpp()}} or \code{\link[=scm_placebo_x_cpp]{scm_placebo_x_cpp()}}.
+Default 1e-4.}
 
 \item{use_covariates}{Controls which predictor specification the placebo
 refits use. Default \code{NULL} (recommended) mirrors the treated fit: if the

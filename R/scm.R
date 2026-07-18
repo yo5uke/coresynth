@@ -1085,8 +1085,10 @@ scm_inference <- function(fit,
 #' @param mspe_threshold Minimum pre-treatment MSPE for including a control
 #'   unit in the two-sided test. Ignored for one-sided tests.
 #'   Default: 0 (no filtering).
-#' @param max_iter Passed to [scm_placebo_cpp()]. Default 100L.
-#' @param tol      Passed to [scm_placebo_cpp()]. Default 1e-4.
+#' @param max_iter Passed to [scm_placebo_cpp()] (outcomes-only fits) or
+#'   [scm_placebo_x_cpp()] (covariate fits). Default 100L.
+#' @param tol      Passed to [scm_placebo_cpp()] or [scm_placebo_x_cpp()].
+#'   Default 1e-4.
 #' @param use_covariates Controls which predictor specification the placebo
 #'   refits use. Default `NULL` (recommended) mirrors the treated fit: if the
 #'   fit was estimated with a `predictors` specification, each placebo unit is
@@ -1170,43 +1172,16 @@ mspe_ratio_pval <- function(
   }
 
   if (use_covariates) {
-    N_co         <- ncol(fit$Y_co_pre)
-    mspe_pre_vec <- numeric(N_co)
-    mspe_post_vec <- numeric(N_co)
-    effects_vec  <- numeric(N_co)
-    gaps_mat     <- matrix(NA_real_, nrow = T_all, ncol = N_co)
-
-    for (i in seq_len(N_co)) {
-      X0_loo <- fit$X0_mat[, -i, drop = FALSE]
-      X1_loo <- fit$X0_mat[, i]
-      Z0_loo <- fit$Y_co_pre[, -i, drop = FALSE]
-      Z1_loo <- fit$Y_co_pre[, i]
-
-      res_loo <- tryCatch(
-        scm_weights_cpp(X0_loo, X1_loo, Z0_loo, Z1_loo,
-                        max_iter = max_iter, tol = tol),
-        error = function(e) NULL
-      )
-      if (is.null(res_loo)) {
-        mspe_pre_vec[i]  <- NA_real_
-        mspe_post_vec[i] <- NA_real_
-        effects_vec[i]   <- NA_real_
-        next
-      }
-      W_loo      <- res_loo$W
-      synth_pre  <- fit$Y_co_pre[, -i, drop = FALSE]  %*% W_loo
-      synth_post <- fit$Y_co_post[, -i, drop = FALSE] %*% W_loo
-
-      mspe_pre_vec[i]  <- mean((Z1_loo - synth_pre)^2)
-      mspe_post_vec[i] <- mean((fit$Y_co_post[, i] - synth_post)^2)
-      effects_vec[i]   <- mean(fit$Y_co_post[, i] - synth_post)
-      gaps_mat[, i]    <- c(Z1_loo - synth_pre, fit$Y_co_post[, i] - synth_post)
-    }
-
-    keep      <- !is.na(mspe_pre_vec) & mspe_pre_vec > mspe_threshold
-    ratios_co <- ifelse(keep, mspe_post_vec / mspe_pre_vec, NA_real_)
-    co_effects <- effects_vec
-    mspe_pre_co <- mspe_pre_vec
+    plac <- scm_placebo_x_cpp(fit$X0_mat, fit$Y_co_pre, fit$Y_co_post,
+                              max_iter = max_iter, tol = tol)
+    # Armadillo vectors come back as N_co x 1 matrices; flatten for naming.
+    # A placebo unit whose solver failed carries NaN through all fields.
+    mspe_pre_co  <- as.numeric(plac$mspe_pre)
+    mspe_post_co <- as.numeric(plac$mspe_post)
+    keep      <- !is.na(mspe_pre_co) & mspe_pre_co > mspe_threshold
+    ratios_co <- ifelse(keep, mspe_post_co / mspe_pre_co, NA_real_)
+    co_effects <- as.numeric(plac$effects)
+    gaps_mat  <- plac$gaps
   } else {
     plac      <- scm_placebo_cpp(fit$Y_co_pre, fit$Y_co_post,
                                   max_iter = max_iter, tol = tol)

@@ -45,7 +45,8 @@ fit_scm_cpp <- function(
   v_selection = c("insample", "oos"),
   donor_mspe_threshold = Inf,
   lambda_pen = NULL,
-  v_optim = c("coord_descent", "auto", "bfgs"),
+  v_optim = c("auto", "coord_descent", "bfgs", "multistart"),
+  v_window = NULL,
   control_group = c("clean", "never_treated"),
   scale_predictors = TRUE,
   nu = NULL,
@@ -75,6 +76,22 @@ fit_scm_cpp <- function(
 
   # -- Staggered path (cohort-by-cohort SCM) -----------------------------------
   if (!pan$is_sharp) {
+    if (!is.null(v_window)) {
+      stop(
+        "v_window applies to sharp (single-cohort) SCM fits only. ",
+        "Cohorts have different pre-treatment windows, so a single ",
+        "evaluation window is not well defined for staggered fits.",
+        call. = FALSE
+      )
+    }
+    if (v_optim == "multistart") {
+      stop(
+        "v_optim = 'multistart' requires a predictor specification, and ",
+        "staggered SCM is outcomes-only. Use v_optim = 'auto' or ",
+        "'coord_descent'.",
+        call. = FALSE
+      )
+    }
     if (!is.null(predictors) && length(predictors) > 0L)
       stop(
         "SCM staggered adoption does not support 'predictors'.\n",
@@ -259,6 +276,36 @@ fit_scm_cpp <- function(
   Z0 <- Y_co_pre
   Z1 <- drop(Y_tr_pre)
 
+  # -- Outer evaluation window (v_window) --------------------------------------
+  # Restricts only the rows of Z on which the outer V optimisation evaluates
+  # the pre-treatment fit; X and the reported full-window loss are untouched.
+  z_rows <- NULL
+  if (!is.null(v_window)) {
+    if (v_selection == "oos") {
+      stop(
+        "v_window cannot be combined with v_selection = 'oos', which manages ",
+        "its own train/validation split of the pre-treatment window.",
+        call. = FALSE
+      )
+    }
+    pre_times <- pan$times[seq_len(T_pre)]
+    idx <- match(v_window, pre_times)
+    if (anyNA(idx)) {
+      stop(
+        "v_window contains values outside the pre-treatment window: ",
+        paste(utils::head(v_window[is.na(idx)], 5L), collapse = ", "),
+        ". Pre-treatment times run from ", pre_times[1L], " to ",
+        pre_times[T_pre], ".",
+        call. = FALSE
+      )
+    }
+    z_rows <- sort(unique(as.integer(idx)))
+    if (length(z_rows) < 2L) {
+      stop("v_window must cover at least 2 pre-treatment periods.",
+           call. = FALSE)
+    }
+  }
+
   # OOS handling (Abadie 2021 S.3.2):
   #  * outcomes-only: proper train/validation split via .scm_oos_outcomes()
   #    (candidate W(V) must not see validation-period outcomes).
@@ -267,13 +314,25 @@ fit_scm_cpp <- function(
   oos_outcomes <- (v_selection == "oos") && !use_cov
   t_train      <- if (v_selection == "oos" && use_cov) T_pre %/% 2L else -1L
 
-  # Determine effective outer optimiser
-  k_dim <- if (oos_outcomes) max(T_pre %/% 2L, 1L) else nrow(X0)
+  # Determine effective outer optimiser. The outer problem is non-convex;
+  # with user predictors a single start can settle in a poor basin, so
+  # "auto" runs the deterministic multi-start there. Outcomes-only fits keep
+  # the single-start coordinate descent (empirically matches the Synth
+  # reference solution, and multi-start would multiply the hot path's cost).
   effective_outer <- switch(v_optim,
-    "auto"          = if (k_dim <= 15L) "bfgs" else "coord_descent",
+    "auto"          = if (use_cov) "multistart" else "coord_descent",
+    "multistart"    = "multistart",
     "bfgs"          = "bfgs",
     "coord_descent" = "coord_descent"
   )
+  if (effective_outer == "multistart" && !use_cov) {
+    stop(
+      "v_optim = 'multistart' requires a predictor specification ",
+      "(predictors = list(pred(...))). The outcomes-only path uses the ",
+      "single-start coordinate descent.",
+      call. = FALSE
+    )
+  }
 
   v_rows_used <- if (use_cov) NULL else seq_len(T_pre)
   if (oos_outcomes) {
@@ -290,9 +349,10 @@ fit_scm_cpp <- function(
     res <- if (oos_outcomes) {
       oos
     } else if (effective_outer == "bfgs") {
-      .scm_bfgs_outer(X0, X1, Z0, Z1, t_train = t_train)
+      .scm_bfgs_outer(X0, X1, Z0, Z1, t_train = t_train, z_rows = z_rows)
     } else {
-      scm_weights_cpp(X0, X1, Z0, Z1, t_train = t_train)
+      scm_weights_cpp(X0, X1, Z0, Z1, t_train = t_train, z_rows = z_rows,
+                      multistart = (effective_outer == "multistart"))
     }
     unit_w <- drop(res$W)
     V_final <- drop(res$V)
@@ -303,9 +363,10 @@ fit_scm_cpp <- function(
     res_v <- if (oos_outcomes) {
       oos
     } else if (effective_outer == "bfgs") {
-      .scm_bfgs_outer(X0, X1, Z0, Z1, t_train = t_train)
+      .scm_bfgs_outer(X0, X1, Z0, Z1, t_train = t_train, z_rows = z_rows)
     } else {
-      scm_weights_cpp(X0, X1, Z0, Z1, t_train = t_train)
+      scm_weights_cpp(X0, X1, Z0, Z1, t_train = t_train, z_rows = z_rows,
+                      multistart = (effective_outer == "multistart"))
     }
     V_star <- drop(res_v$V)
 
@@ -368,6 +429,9 @@ fit_scm_cpp <- function(
     X0_mat          = if (use_cov) X0 else NULL,
     X1_vec          = if (use_cov) X1 else NULL,
     v_rows          = v_rows_used,
+    v_window        = if (!is.null(z_rows)) pan$times[z_rows] else NULL,
+    z_rows          = z_rows,
+    v_optim_effective = effective_outer,
     Y_co_pre        = Y_co_pre,
     Y_co_post       = Y[-(seq_len(T_pre)), idx_co, drop = FALSE],
     excluded_donors = excluded_donors,
@@ -420,13 +484,17 @@ fit_scm_cpp <- function(
 # Internal: L-BFGS-B outer V optimisation.
 # ~O(k^2) inner QP calls vs coord_descent's k*11*iter calls.
 # Mirrors scm_weights_cpp semantics (OOS window, full-data W refit).
-.scm_bfgs_outer <- function(X0, X1, Z0, Z1, t_train = -1L) {
+.scm_bfgs_outer <- function(X0, X1, Z0, Z1, t_train = -1L, z_rows = NULL) {
   k     <- nrow(X0)
   T_pre <- nrow(Z0)
 
-  # OOS evaluation window -- same split as scm_weights_cpp
-  do_oos <- (t_train > 0L && t_train < T_pre)
-  if (do_oos) {
+  # Evaluation window -- same precedence as scm_weights_cpp
+  # (explicit v_window rows, else the OOS split, else the full window).
+  do_oos <- is.null(z_rows) && (t_train > 0L && t_train < T_pre)
+  if (!is.null(z_rows)) {
+    Z0_eval <- Z0[z_rows, , drop = FALSE]
+    Z1_eval <- Z1[z_rows]
+  } else if (do_oos) {
     idx     <- (t_train + 1L):T_pre
     Z0_eval <- Z0[idx, , drop = FALSE]
     Z1_eval <- Z1[idx]
@@ -589,9 +657,10 @@ fit_scm_cpp <- function(
     }
 
     t_train_g <- if (v_selection == "oos") T_pre_g %/% 2L else -1L
-    k_dim_g   <- T_pre_g  # predictors = NULL => k = T_pre_g
+    # Staggered SCM is outcomes-only, so "auto" resolves to the single-start
+    # coordinate descent ("multistart" is rejected at the fit entry point).
     effective_outer_g <- switch(v_optim,
-      "auto"          = if (k_dim_g <= 15L) "bfgs" else "coord_descent",
+      "auto"          = "coord_descent",
       "bfgs"          = "bfgs",
       "coord_descent" = "coord_descent"
     )
@@ -1081,6 +1150,12 @@ scm_inference <- function(fit,
 #' recommended by Abadie (2021) S.3.5 for improved power when the direction
 #' of the treatment effect is known.
 #'
+#' The placebo refits mirror the treated fit's outer optimiser and evaluation
+#' window: a fit estimated with the multi-start outer search (`v_optim =
+#' "multistart"`, or the `"auto"` default with predictors) or with a
+#' `v_window` runs every placebo unit through the same configuration, keeping
+#' the permutation statistic exchangeable across units.
+#'
 #' @param fit A `coresynth` object from [scm_fit()] with `method = "scm"`.
 #' @param mspe_threshold Minimum pre-treatment MSPE for including a control
 #'   unit in the two-sided test. Ignored for one-sided tests.
@@ -1171,9 +1246,18 @@ mspe_ratio_pval <- function(
     use_covariates <- FALSE
   }
 
+  # Mirror the treated fit's optimiser and evaluation window in every placebo
+  # refit -- the permutation test is only valid when all units run the same
+  # algorithm. Old fit objects lack these fields and fall back to the
+  # single-start, full-window path (their own fitting configuration).
+  multistart_fit <- identical(fit$v_optim_effective, "multistart")
+  z_rows_fit     <- fit$z_rows
+
   if (use_covariates) {
     plac <- scm_placebo_x_cpp(fit$X0_mat, fit$Y_co_pre, fit$Y_co_post,
-                              max_iter = max_iter, tol = tol)
+                              max_iter = max_iter, tol = tol,
+                              z_rows = z_rows_fit,
+                              multistart = multistart_fit)
     # Armadillo vectors come back as N_co x 1 matrices; flatten for naming.
     # A placebo unit whose solver failed carries NaN through all fields.
     mspe_pre_co  <- as.numeric(plac$mspe_pre)
@@ -1184,7 +1268,8 @@ mspe_ratio_pval <- function(
     gaps_mat  <- plac$gaps
   } else {
     plac      <- scm_placebo_cpp(fit$Y_co_pre, fit$Y_co_post,
-                                  max_iter = max_iter, tol = tol)
+                                  max_iter = max_iter, tol = tol,
+                                  z_rows = z_rows_fit)
     keep      <- plac$mspe_pre > mspe_threshold
     ratios_co <- ifelse(keep, plac$mspe_post / plac$mspe_pre, NA_real_)
     co_effects <- plac$effects

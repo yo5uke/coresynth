@@ -4,7 +4,7 @@
 \alias{scm_placebo_cpp}
 \title{Fast Leave-One-Out Placebo Test for SCM (Abadie et al. 2010)}
 \usage{
-scm_placebo_cpp(Y_pre, Y_post, max_iter = 100L, tol = 1e-04)
+scm_placebo_cpp(Y_pre, Y_post, max_iter = 100L, tol = 1e-04, z_rows = NULL)
 }
 \arguments{
 \item{Y_pre}{Control pre-treatment outcomes (T_pre x N_co)}
@@ -14,6 +14,11 @@ scm_placebo_cpp(Y_pre, Y_post, max_iter = 100L, tol = 1e-04)
 \item{max_iter}{Outer coordinate-descent iterations (default 100)}
 
 \item{tol}{Convergence tolerance for V updates (default 1e-4)}
+
+\item{z_rows}{Optional 1-based pre-period row indices of the outer
+evaluation window (the \code{v_window} of the treated fit), so each placebo
+refit optimises V on the same window. \code{NULL} (default) uses all rows.
+MSPE components are always computed on the full pre/post windows.}
 }
 \value{
 A list with:

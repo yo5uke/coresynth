@@ -900,9 +900,12 @@ test_that("mspe_ratio_pval covariate placebo matches a per-donor scm_weights_cpp
 
   N_co <- ncol(fit$Y_co_pre)
   for (i in seq_len(N_co)) {
+    # The default predictor-path fit runs the multi-start outer search, and
+    # the placebo batch mirrors it -- so the reference loop must too.
     res_i <- scm_weights_cpp(
       fit$X0_mat[, -i, drop = FALSE], fit$X0_mat[, i],
-      fit$Y_co_pre[, -i, drop = FALSE], fit$Y_co_pre[, i]
+      fit$Y_co_pre[, -i, drop = FALSE], fit$Y_co_pre[, i],
+      multistart = identical(fit$v_optim_effective, "multistart")
     )
     synth_post <- fit$Y_co_post[, -i, drop = FALSE] %*% res_i$W
     expect_equal(unname(inf$placebo_effects[i]),
@@ -4080,4 +4083,119 @@ test_that("plot.scm_placebo gaps: vline_offset and xintercept work", {
                              vline = list(xintercept = 4))), 4)
   expect_error(plot(inf, type = "gaps", vline_offset = 2.5,
                     vline = list(xintercept = 4)), "not both")
+})
+
+# ── Phase 36: multi-start outer V optimisation & v_window ─────────────────────
+
+test_that("Phase 36: predictor-path default resolves to multistart", {
+  fit <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                 predictors = list(pred(c("cov1", "cov2"), 1:10)))
+  expect_identical(fit$v_optim_effective, "multistart")
+})
+
+test_that("Phase 36: outcomes-only default keeps single-start coord descent", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_identical(fit$v_optim_effective, "coord_descent")
+  fit_cd <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                    v_optim = "coord_descent")
+  expect_equal(fit$unit_weights, fit_cd$unit_weights, tolerance = 1e-12)
+})
+
+test_that("Phase 36: multistart is never worse than coord_descent in pre-loss", {
+  spec <- list(pred(c("cov1", "cov2"), 1:10))
+  fit_ms <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                    predictors = spec, v_optim = "multistart")
+  fit_cd <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                    predictors = spec, v_optim = "coord_descent")
+  expect_lte(fit_ms$loss, fit_cd$loss + 1e-8)
+})
+
+test_that("Phase 36: multistart is deterministic and leaves the R RNG alone", {
+  spec <- list(pred(c("cov1", "cov2"), 1:10), pred("y", c(3, 6, 9)))
+  set.seed(123)
+  seed_before <- get(".Random.seed", envir = globalenv())
+  fit1 <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                  predictors = spec, v_optim = "multistart")
+  expect_identical(get(".Random.seed", envir = globalenv()), seed_before)
+  fit2 <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                  predictors = spec, v_optim = "multistart")
+  expect_identical(fit1$unit_weights, fit2$unit_weights)
+  expect_identical(fit1$v_weights, fit2$v_weights)
+})
+
+test_that("Phase 36: multistart errors on outcomes-only fits", {
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            v_optim = "multistart"),
+    regexp = "predictor"
+  )
+})
+
+test_that("Phase 36: mspe_ratio_pval mirrors the multistart fit", {
+  fit <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                 predictors = list(pred(c("cov1", "cov2"), 1:10)))
+  inf <- mspe_ratio_pval(fit)
+  expect_true(inf$p_value >= 0 && inf$p_value <= 1)
+  expect_equal(length(inf$mspe_ratios_all), 10L)
+})
+
+test_that("Phase 36: v_window equal to the full pre-period reproduces default", {
+  fit_def <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  fit_win <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                     v_window = 1:10)
+  expect_equal(fit_def$unit_weights, fit_win$unit_weights, tolerance = 1e-12)
+  expect_equal(fit_win$v_window, fit_def$times[1:10])
+  expect_equal(fit_win$z_rows, 1:10)
+})
+
+test_that("Phase 36: v_window subset restricts the outer evaluation", {
+  fit_win <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                     v_window = 4:10)
+  expect_equal(fit_win$z_rows, 4:10)
+  expect_equal(sum(fit_win$unit_weights), 1, tolerance = 1e-4)
+  expect_true(is.finite(fit_win$estimate))
+  # loss is still reported on the full pre-treatment window
+  gap_pre <- (fit_win$Y_treat - fit_win$Y_synth)[seq_len(fit_win$T_pre)]
+  expect_equal(fit_win$loss, sqrt(sum(gap_pre^2)), tolerance = 1e-8)
+})
+
+test_that("Phase 36: v_window works with predictors and mspe_ratio_pval", {
+  fit <- scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+                 predictors = list(pred(c("cov1", "cov2"), 1:10)),
+                 v_window = 5:10)
+  expect_equal(fit$z_rows, 5:10)
+  inf <- mspe_ratio_pval(fit)
+  expect_true(inf$p_value >= 0 && inf$p_value <= 1)
+})
+
+test_that("Phase 36: v_window validation errors", {
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "sdid", v_window = 1:5),
+    regexp = "method"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm", v_window = 5:12),
+    regexp = "pre-treatment"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm", v_window = 5),
+    regexp = "at least 2"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            v_window = 1:8, v_selection = "oos"),
+    regexp = "oos"
+  )
+})
+
+test_that("Phase 36: v_window errors on staggered fits", {
+  set.seed(99)
+  sp <- expand.grid(id = paste0("u", 1:8), time = 1:12)
+  sp$d <- as.integer((sp$id == "u1" & sp$time >= 7) |
+                     (sp$id == "u2" & sp$time >= 9))
+  sp$y <- rnorm(nrow(sp)) + as.numeric(sub("u", "", sp$id)) + 0.3 * sp$time
+  expect_error(
+    scm_fit(y ~ d | id + time, data = sp, method = "scm", v_window = 1:6),
+    regexp = "sharp"
+  )
 })

@@ -4,7 +4,15 @@
 \alias{scm_placebo_x_cpp}
 \title{Fast Leave-One-Out Placebo Test for SCM with a Predictor Specification}
 \usage{
-scm_placebo_x_cpp(X0, Y_pre, Y_post, max_iter = 100L, tol = 1e-04)
+scm_placebo_x_cpp(
+  X0,
+  Y_pre,
+  Y_post,
+  max_iter = 100L,
+  tol = 1e-04,
+  z_rows = NULL,
+  multistart = FALSE
+)
 }
 \arguments{
 \item{X0}{Predictor matrix for control units (k x N_co), on the same
@@ -17,6 +25,15 @@ scale as the treated fit (SD-scaled when \code{scale_predictors = TRUE})}
 \item{max_iter}{Outer coordinate-descent iterations (default 100)}
 
 \item{tol}{Convergence tolerance for V updates (default 1e-4)}
+
+\item{z_rows}{Optional 1-based pre-period row indices of the outer
+evaluation window (the \code{v_window} of the treated fit), so each placebo
+refit optimises V on the same window. \code{NULL} (default) uses all rows.
+MSPE components are always computed on the full pre/post windows.}
+
+\item{multistart}{If \code{TRUE}, each placebo refit uses the same
+deterministic multi-start outer search as the treated fit, keeping the
+permutation test symmetric.}
 }
 \value{
 A list with:

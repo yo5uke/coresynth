@@ -71,6 +71,11 @@ post/pre MSPE ratio, following Abadie et al. (2010). When
 average post-treatment gap (ATT), giving a one-sided permutation test as
 recommended by Abadie (2021) S.3.5 for improved power when the direction
 of the treatment effect is known.
+
+The placebo refits mirror the treated fit's outer optimiser and evaluation
+window: a fit estimated with the multi-start outer search (\code{v_optim = "multistart"}, or the \code{"auto"} default with predictors) or with a
+\code{v_window} runs every placebo unit through the same configuration, keeping
+the permutation statistic exchangeable across units.
 }
 \seealso{
 \code{\link[=plot.scm_placebo]{plot.scm_placebo()}} for the placebo gap and MSPE ratio plots.

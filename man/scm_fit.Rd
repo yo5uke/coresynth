@@ -13,7 +13,8 @@ scm_fit(
   v_selection = c("insample", "oos"),
   donor_mspe_threshold = Inf,
   lambda_pen = NULL,
-  v_optim = c("coord_descent", "auto", "bfgs"),
+  v_optim = c("auto", "coord_descent", "bfgs", "multistart"),
+  v_window = NULL,
   nu = NULL,
   fixedeff = FALSE,
   ...
@@ -66,11 +67,33 @@ same validation window as \code{v_selection = "oos"}. A non-negative number
 uses that value directly.}
 
 \item{v_optim}{Outer V-optimisation method for \code{method = "scm"}.
-\code{"coord_descent"} (default) uses the existing C++ coordinate descent with
-11-point grid search -- fastest when \code{k = T_pre} is large (outcomes-only).
-\code{"bfgs"} uses R's L-BFGS-B, which requires only O(k^2) inner QP calls and
-is faster when \code{k} is small (e.g. external predictors with k <= 15).
-\code{"auto"} selects \code{"bfgs"} when \code{k <= 15}, otherwise \code{"coord_descent"}.}
+The outer problem (choose V so that the implied donor weights W(V)
+minimise pre-treatment outcome MSPE) is non-convex, and a single local
+search can settle in a poor basin when \code{predictors} are supplied.
+\code{"auto"} (default) therefore selects \code{"multistart"} for predictor-based
+fits and \code{"coord_descent"} for outcomes-only fits (where the single
+start is empirically reliable). \code{"multistart"} runs a deterministic
+multi-start search: a fixed start set (uniform V, one-hot V per
+predictor, and 50 fixed-seed random draws) is screened at one inner QP
+each, the leaders are polished by coordinate descent, and the winner is
+refined by a Nelder-Mead pass. Its solution is never worse (in
+pre-treatment loss) than \code{"coord_descent"}, at roughly the cost of a
+handful of single-start fits, and is fully reproducible (no RNG state
+is consumed). \code{"coord_descent"} is the classic single-start coordinate
+descent with an 11-point grid; \code{"bfgs"} is a single-start L-BFGS-B.
+\code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} mirrors a multi-start fit in its placebo refits so
+the permutation test stays symmetric.}
+
+\item{v_window}{Optional vector of pre-treatment time values (matching the
+time index in \code{data}) over which the outer V optimisation evaluates the
+pre-treatment fit, for \code{method = "scm"} (sharp fits only). \code{NULL}
+(default) evaluates on all pre-treatment periods. The window restricts
+only the outer evaluation loss: predictor matrices (or the full
+pre-treatment outcome rows in the outcomes-only case) still enter the
+inner QP unchanged, and the reported \code{loss} and \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}}
+MSPE components always cover the full pre-treatment window. Cannot be
+combined with \code{v_selection = "oos"}, which manages its own
+train/validation split.}
 
 \item{nu}{Partial pooling parameter for \strong{staggered} SCM fits
 (Ben-Michael, Feller & Rothstein 2022, JRSS-B). \code{NULL} (default) keeps

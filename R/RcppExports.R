@@ -64,14 +64,18 @@ sdid_placebo_cpp <- function(Y_pre, Y_post, time_weights, zeta2) {
 #' @param Y_post  Control post-treatment outcomes (T_post x N_co)
 #' @param max_iter Outer coordinate-descent iterations (default 100)
 #' @param tol      Convergence tolerance for V updates (default 1e-4)
+#' @param z_rows  Optional 1-based pre-period row indices of the outer
+#'   evaluation window (the `v_window` of the treated fit), so each placebo
+#'   refit optimises V on the same window. `NULL` (default) uses all rows.
+#'   MSPE components are always computed on the full pre/post windows.
 #' @return A list with:
 #'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 #'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
 #'   * `effects`:   N_co-vector of mean post-period gap per placebo unit
 #'   * `gaps`:      (T_pre + T_post) x N_co matrix of placebo gap paths
 #' @export
-scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4) {
-    .Call(`_coresynth_scm_placebo_cpp`, Y_pre, Y_post, max_iter, tol)
+scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4, z_rows = NULL) {
+    .Call(`_coresynth_scm_placebo_cpp`, Y_pre, Y_post, max_iter, tol, z_rows)
 }
 
 #' Fast Leave-One-Out Placebo Test for SCM with a Predictor Specification
@@ -90,6 +94,13 @@ scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4) {
 #' @param Y_post  Control post-treatment outcomes (T_post x N_co)
 #' @param max_iter Outer coordinate-descent iterations (default 100)
 #' @param tol      Convergence tolerance for V updates (default 1e-4)
+#' @param z_rows  Optional 1-based pre-period row indices of the outer
+#'   evaluation window (the `v_window` of the treated fit), so each placebo
+#'   refit optimises V on the same window. `NULL` (default) uses all rows.
+#'   MSPE components are always computed on the full pre/post windows.
+#' @param multistart If `TRUE`, each placebo refit uses the same
+#'   deterministic multi-start outer search as the treated fit, keeping the
+#'   permutation test symmetric.
 #' @return A list with:
 #'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 #'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
@@ -97,8 +108,8 @@ scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4) {
 #'   * `gaps`:      (T_pre + T_post) x N_co matrix of placebo gap paths
 #'   A placebo unit whose solver fails yields NaN entries.
 #' @export
-scm_placebo_x_cpp <- function(X0, Y_pre, Y_post, max_iter = 100L, tol = 1e-4) {
-    .Call(`_coresynth_scm_placebo_x_cpp`, X0, Y_pre, Y_post, max_iter, tol)
+scm_placebo_x_cpp <- function(X0, Y_pre, Y_post, max_iter = 100L, tol = 1e-4, z_rows = NULL, multistart = FALSE) {
+    .Call(`_coresynth_scm_placebo_x_cpp`, X0, Y_pre, Y_post, max_iter, tol, z_rows, multistart)
 }
 
 #' Fast Matrix Completion using Soft-Impute Algorithm
@@ -169,13 +180,23 @@ scm_inner_weights_cpp <- function(X0, X1, V_diag) {
 #'   Positive: rows t_train..(T_pre-1) of Z form the validation window used
 #'   to select V (W is fitted on the full X throughout); after selecting V*,
 #'   W is refit and the reported loss uses the full Z window.
+#' @param z_rows Optional 1-based row indices of Z defining the evaluation
+#'   window for the outer V optimisation (the `v_window` argument of
+#'   [scm_fit()]). `NULL` (default) evaluates on the full Z window. Takes
+#'   precedence over `t_train`; the reported loss always uses the full Z
+#'   window.
+#' @param multistart If `TRUE`, the outer V optimisation runs a
+#'   deterministic multi-start search (screened start set, coordinate-descent
+#'   polish, Nelder-Mead refinement) instead of a single coordinate-descent
+#'   pass from the uniform V. The result is never worse (in outer loss) than
+#'   the single-start path.
 #' @return A list with:
 #'   * `W`: Donor weight vector (N_co x 1) on the unit simplex
 #'   * `V`: Optimal metric diagonal (k x 1, normalised to sum to 1)
 #'   * `loss`: Final pre-treatment prediction loss (full pre-treatment window)
 #' @export
-scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train = -1L) {
-    .Call(`_coresynth_scm_weights_cpp`, X0, X1, Z0, Z1, max_iter, tol, t_train)
+scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train = -1L, z_rows = NULL, multistart = FALSE) {
+    .Call(`_coresynth_scm_weights_cpp`, X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart)
 }
 
 #' Calculate SDID Unit Weights (omega)

@@ -11,7 +11,7 @@ arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pr
 // Forward declaration of internal SCM weight solver (defined in scm.cpp)
 arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
                                     const arma::mat& Z0, const arma::vec& Z1,
-                                    int max_iter, double tol);
+                                    int max_iter, double tol, bool multistart);
 
 //' Fast Placebo Test for SDID
 //'
@@ -77,6 +77,10 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
 //' @param Y_post  Control post-treatment outcomes (T_post x N_co)
 //' @param max_iter Outer coordinate-descent iterations (default 100)
 //' @param tol      Convergence tolerance for V updates (default 1e-4)
+//' @param z_rows  Optional 1-based pre-period row indices of the outer
+//'   evaluation window (the `v_window` of the treated fit), so each placebo
+//'   refit optimises V on the same window. `NULL` (default) uses all rows.
+//'   MSPE components are always computed on the full pre/post windows.
 //' @return A list with:
 //'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 //'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
@@ -85,11 +89,21 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
 //' @export
 // [[Rcpp::export]]
 Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
-                            int max_iter = 100, double tol = 1e-4) {
+                            int max_iter = 100, double tol = 1e-4,
+                            Rcpp::Nullable<Rcpp::IntegerVector> z_rows = R_NilValue) {
   int N_co = Y_pre.n_cols;
   arma::vec mspe_pre(N_co), mspe_post(N_co), effects(N_co);
   arma::mat gaps(Y_pre.n_rows + Y_post.n_rows, N_co);
   arma::uvec all_idx = arma::regspace<arma::uvec>(0, N_co - 1);
+
+  // Convert the window outside the parallel region (no Rcpp API in threads).
+  bool has_window = z_rows.isNotNull();
+  arma::uvec zr;
+  if (has_window) {
+    Rcpp::IntegerVector zri(z_rows);
+    zr.set_size(zri.size());
+    for (int i = 0; i < zri.size(); i++) zr(i) = (arma::uword)(zri[i] - 1);
+  }
 
   #pragma omp parallel for schedule(dynamic, 1)
   for (int i = 0; i < N_co; i++) {
@@ -101,9 +115,21 @@ Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
     arma::mat Y_d_pre  = Y_pre.cols(donors);
     arma::mat Y_d_post = Y_post.cols(donors);
 
+    // Predictors (X) stay the full pre-period outcomes; only the outer
+    // evaluation window is restricted -- mirroring the treated fit.
+    arma::mat Z0_fit;
+    arma::vec Z1_fit;
+    if (has_window) {
+      Z0_fit = Y_d_pre.rows(zr);
+      Z1_fit = y_pre_i(zr);
+    } else {
+      Z0_fit = Y_d_pre;
+      Z1_fit = y_pre_i;
+    }
+
     arma::vec w = scm_weights_vec_internal(Y_d_pre, y_pre_i,
-                                           Y_d_pre, y_pre_i,
-                                           max_iter, tol);
+                                           Z0_fit, Z1_fit,
+                                           max_iter, tol, false);
 
     arma::vec synth_pre  = Y_d_pre  * w;
     arma::vec synth_post = Y_d_post * w;
@@ -138,6 +164,13 @@ Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
 //' @param Y_post  Control post-treatment outcomes (T_post x N_co)
 //' @param max_iter Outer coordinate-descent iterations (default 100)
 //' @param tol      Convergence tolerance for V updates (default 1e-4)
+//' @param z_rows  Optional 1-based pre-period row indices of the outer
+//'   evaluation window (the `v_window` of the treated fit), so each placebo
+//'   refit optimises V on the same window. `NULL` (default) uses all rows.
+//'   MSPE components are always computed on the full pre/post windows.
+//' @param multistart If `TRUE`, each placebo refit uses the same
+//'   deterministic multi-start outer search as the treated fit, keeping the
+//'   permutation test symmetric.
 //' @return A list with:
 //'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 //'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
@@ -148,11 +181,22 @@ Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
 // [[Rcpp::export]]
 Rcpp::List scm_placebo_x_cpp(const arma::mat& X0,
                               const arma::mat& Y_pre, const arma::mat& Y_post,
-                              int max_iter = 100, double tol = 1e-4) {
+                              int max_iter = 100, double tol = 1e-4,
+                              Rcpp::Nullable<Rcpp::IntegerVector> z_rows = R_NilValue,
+                              bool multistart = false) {
   int N_co = Y_pre.n_cols;
   arma::vec mspe_pre(N_co), mspe_post(N_co), effects(N_co);
   arma::mat gaps(Y_pre.n_rows + Y_post.n_rows, N_co);
   arma::uvec all_idx = arma::regspace<arma::uvec>(0, N_co - 1);
+
+  // Convert the window outside the parallel region (no Rcpp API in threads).
+  bool has_window = z_rows.isNotNull();
+  arma::uvec zr;
+  if (has_window) {
+    Rcpp::IntegerVector zri(z_rows);
+    zr.set_size(zri.size());
+    for (int i = 0; i < zri.size(); i++) zr(i) = (arma::uword)(zri[i] - 1);
+  }
 
   #pragma omp parallel for schedule(dynamic, 1)
   for (int i = 0; i < N_co; i++) {
@@ -167,9 +211,19 @@ Rcpp::List scm_placebo_x_cpp(const arma::mat& X0,
       arma::mat Y_d_pre  = Y_pre.cols(donors);
       arma::mat Y_d_post = Y_post.cols(donors);
 
+      arma::mat Z0_fit;
+      arma::vec Z1_fit;
+      if (has_window) {
+        Z0_fit = Y_d_pre.rows(zr);
+        Z1_fit = y_pre_i(zr);
+      } else {
+        Z0_fit = Y_d_pre;
+        Z1_fit = y_pre_i;
+      }
+
       arma::vec w = scm_weights_vec_internal(X0_d, x1_i,
-                                             Y_d_pre, y_pre_i,
-                                             max_iter, tol);
+                                             Z0_fit, Z1_fit,
+                                             max_iter, tol, multistart);
 
       arma::vec synth_pre  = Y_d_pre  * w;
       arma::vec synth_post = Y_d_post * w;

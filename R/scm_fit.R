@@ -43,11 +43,32 @@
 #'   same validation window as `v_selection = "oos"`. A non-negative number
 #'   uses that value directly.
 #' @param v_optim Outer V-optimisation method for `method = "scm"`.
-#'   `"coord_descent"` (default) uses the existing C++ coordinate descent with
-#'   11-point grid search -- fastest when `k = T_pre` is large (outcomes-only).
-#'   `"bfgs"` uses R's L-BFGS-B, which requires only O(k^2) inner QP calls and
-#'   is faster when `k` is small (e.g. external predictors with k <= 15).
-#'   `"auto"` selects `"bfgs"` when `k <= 15`, otherwise `"coord_descent"`.
+#'   The outer problem (choose V so that the implied donor weights W(V)
+#'   minimise pre-treatment outcome MSPE) is non-convex, and a single local
+#'   search can settle in a poor basin when `predictors` are supplied.
+#'   `"auto"` (default) therefore selects `"multistart"` for predictor-based
+#'   fits and `"coord_descent"` for outcomes-only fits (where the single
+#'   start is empirically reliable). `"multistart"` runs a deterministic
+#'   multi-start search: a fixed start set (uniform V, one-hot V per
+#'   predictor, and 50 fixed-seed random draws) is screened at one inner QP
+#'   each, the leaders are polished by coordinate descent, and the winner is
+#'   refined by a Nelder-Mead pass. Its solution is never worse (in
+#'   pre-treatment loss) than `"coord_descent"`, at roughly the cost of a
+#'   handful of single-start fits, and is fully reproducible (no RNG state
+#'   is consumed). `"coord_descent"` is the classic single-start coordinate
+#'   descent with an 11-point grid; `"bfgs"` is a single-start L-BFGS-B.
+#'   [mspe_ratio_pval()] mirrors a multi-start fit in its placebo refits so
+#'   the permutation test stays symmetric.
+#' @param v_window Optional vector of pre-treatment time values (matching the
+#'   time index in `data`) over which the outer V optimisation evaluates the
+#'   pre-treatment fit, for `method = "scm"` (sharp fits only). `NULL`
+#'   (default) evaluates on all pre-treatment periods. The window restricts
+#'   only the outer evaluation loss: predictor matrices (or the full
+#'   pre-treatment outcome rows in the outcomes-only case) still enter the
+#'   inner QP unchanged, and the reported `loss` and [mspe_ratio_pval()]
+#'   MSPE components always cover the full pre-treatment window. Cannot be
+#'   combined with `v_selection = "oos"`, which manages its own
+#'   train/validation split.
 #' @param nu Partial pooling parameter for **staggered** SCM fits
 #'   (Ben-Michael, Feller & Rothstein 2022, JRSS-B). `NULL` (default) keeps
 #'   the per-cohort V-optimised SCM path. A number in `[0, 1]` switches to
@@ -112,7 +133,8 @@ scm_fit <- function(
   v_selection = c("insample", "oos"),
   donor_mspe_threshold = Inf,
   lambda_pen = NULL,
-  v_optim = c("coord_descent", "auto", "bfgs"),
+  v_optim = c("auto", "coord_descent", "bfgs", "multistart"),
+  v_window = NULL,
   nu = NULL,
   fixedeff = FALSE,
   ...
@@ -120,6 +142,10 @@ scm_fit <- function(
   v_selection <- match.arg(v_selection)
   v_optim     <- match.arg(v_optim)
   method <- match.arg(method)
+
+  if (!is.null(v_window) && method != "scm") {
+    stop("'v_window' applies to method = \"scm\" only.", call. = FALSE)
+  }
 
   # Parse Formula
   f_parts <- Formula::Formula(formula)
@@ -202,6 +228,7 @@ scm_fit <- function(
       donor_mspe_threshold = donor_mspe_threshold,
       lambda_pen = lambda_pen,
       v_optim = v_optim,
+      v_window = v_window,
       nu = nu,
       fixedeff = fixedeff,
       ...

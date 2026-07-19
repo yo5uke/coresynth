@@ -2,6 +2,39 @@
 
 ## Breaking changes
 
+- **Predictor-based SCM fits now default to a multi-start outer V
+  optimisation** (`v_optim = "auto"`, the new default, resolves to
+  `"multistart"` when `predictors` are supplied and to the single-start
+  `"coord_descent"` for outcomes-only fits). The outer problem -- choose V
+  so that the implied donor weights minimise pre-treatment outcome MSPE --
+  is non-convex, and the previous single start from uniform V could settle
+  in a poor basin: on the Proposition 99 predictor specification it
+  reported a pre-treatment SSR of 137.8 where 58.5 is attainable (below the
+  reference `Synth`/`tidysynth` solution's 78.1), halving the treated
+  unit's MSPE ratio. The multi-start search screens a fixed,
+  fully deterministic start set (uniform, one-hot per predictor, 100
+  fixed-seed draws) with warm-started exact inner QPs, then runs the
+  leaders through a Nelder-Mead / coordinate-descent refinement pipeline;
+  its solution is never worse (in pre-treatment loss) than the single-start
+  path, and no R RNG state is consumed. `mspe_ratio_pval()` applies the
+  same search to every placebo refit so the permutation test stays
+  symmetric. Numeric results for predictor-based fits therefore change
+  (toward better pre-treatment fits); pass `v_optim = "coord_descent"` to
+  reproduce the previous behaviour. Outcomes-only fits are unchanged.
+  Note that the old `"auto"` (choose `"bfgs"` when `k <= 15`) is gone;
+  `"bfgs"` itself remains available.
+
+## New features
+
+- **`v_window` argument in `scm_fit()`** (sharp SCM fits): a vector of
+  pre-treatment time values over which the outer V optimisation evaluates
+  the pre-treatment fit, e.g. `v_window = 1975:1988`. The default (`NULL`)
+  keeps the current behaviour of evaluating on all pre-treatment periods.
+  The window restricts only the outer evaluation loss -- predictor matrices
+  and the reported full-window `loss` are untouched -- and
+  `mspe_ratio_pval()` mirrors it in every placebo refit. Cannot be combined
+  with `v_selection = "oos"`, which manages its own train/validation split.
+
 - **`colors`/`labels` in `plot.coresynth()` and `plot.scm_placebo()` are now
   keyed by one-word series identifiers**: `treated`, `synthetic`, and (with
   `show_donors > 0`) `donors` for trend plots; `treated` and `placebo` for
@@ -28,6 +61,26 @@
   explicitly to reproduce the old behaviour on covariate fits.
 
 ## Performance
+
+- **The multi-start outer search runs at interactive speed.** Outer-loss
+  evaluations are KKT-gated warm-started active-set solves; the active set
+  gained Bland's-rule anti-cycling (engaged only beyond 30 pivots, so
+  previously terminating pivot paths are untouched) and now solves each
+  face subproblem in the null space of the sum constraint via a
+  Cholesky/eigendecomposition hybrid that is robust to the rank-deficient
+  metrics (k < |active set|) the multi-start screen hits constantly -- and
+  whose branch decision cannot be flipped by last-bit input perturbations,
+  preserving the scale-invariance of `scale_predictors`. Candidate
+  refinement pipelines run in parallel (suppressed inside the placebo
+  loop's own parallel region). On the Proposition 99 8-predictor spec a
+  full multi-start fit takes ~0.07s and the complete 38-donor
+  `mspe_ratio_pval()` battery ~7s. A side effect of the exact face solves:
+  inner QPs on rank-deficient faces are now solved exactly where the
+  previous code fell back to a loosely-converged FISTA iterate.
+  Outcomes-only sharp, staggered, and placebo results are bit-identical to
+  the previous release; `v_selection = "oos"` outcomes fits (where the
+  training half has fewer rows than donors) can shift slightly, toward
+  better fits.
 
 - **The nested V/W coordinate descent is orders of magnitude faster.** The
   solver behind `scm_weights_cpp()` and the outcomes-only placebo loop in

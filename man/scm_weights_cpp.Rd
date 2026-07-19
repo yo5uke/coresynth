@@ -4,7 +4,17 @@
 \alias{scm_weights_cpp}
 \title{SCM Outer Weights (Joint Optimization of W and V)}
 \usage{
-scm_weights_cpp(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-04, t_train = -1L)
+scm_weights_cpp(
+  X0,
+  X1,
+  Z0,
+  Z1,
+  max_iter = 100L,
+  tol = 1e-04,
+  t_train = -1L,
+  z_rows = NULL,
+  multistart = FALSE
+)
 }
 \arguments{
 \item{X0}{Covariate matrix for control units (k x N_co, typically pre-treatment outcomes)}
@@ -24,6 +34,18 @@ scm_weights_cpp(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-04, t_train = -1L)
 Positive: rows t_train..(T_pre-1) of Z form the validation window used
 to select V (W is fitted on the full X throughout); after selecting V*,
 W is refit and the reported loss uses the full Z window.}
+
+\item{z_rows}{Optional 1-based row indices of Z defining the evaluation
+window for the outer V optimisation (the \code{v_window} argument of
+\code{\link[=scm_fit]{scm_fit()}}). \code{NULL} (default) evaluates on the full Z window. Takes
+precedence over \code{t_train}; the reported loss always uses the full Z
+window.}
+
+\item{multistart}{If \code{TRUE}, the outer V optimisation runs a
+deterministic multi-start search (screened start set, coordinate-descent
+polish, Nelder-Mead refinement) instead of a single coordinate-descent
+pass from the uniform V. The result is never worse (in outer loss) than
+the single-start path.}
 }
 \value{
 A list with:

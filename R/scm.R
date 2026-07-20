@@ -484,6 +484,9 @@ fit_scm_cpp <- function(
 # Internal: L-BFGS-B outer V optimisation.
 # ~O(k^2) inner QP calls vs coord_descent's k*11*iter calls.
 # Mirrors scm_weights_cpp semantics (OOS window, full-data W refit).
+# DEPRECATED: reachable only via the deprecated v_optim = "bfgs". Remove this
+# helper and the "bfgs" branches in fit_scm_cpp()/.scm_oos_outcomes()/
+# .fit_scm_staggered() when "bfgs" is dropped in the next major release.
 .scm_bfgs_outer <- function(X0, X1, Z0, Z1, t_train = -1L, z_rows = NULL) {
   k     <- nrow(X0)
   T_pre <- nrow(Z0)

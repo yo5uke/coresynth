@@ -1533,16 +1533,21 @@ test_that("Phase 12b: full path used when k >= N_co/2 (k=10, N_co=16)", {
 })
 
 test_that("Phase 12a: v_optim='bfgs' returns valid simplex weights", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
-                 v_optim = "bfgs")
+  # bfgs is deprecated (Phase 37): still functional, warns.
+  expect_warning(
+    fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                   v_optim = "bfgs"),
+    regexp = "deprecated"
+  )
   expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-4)
   expect_true(all(fit$unit_weights >= -1e-5))
   expect_true(is.finite(fit$estimate))
 })
 
 test_that("Phase 12a: v_optim='bfgs' + v_selection='oos' works", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
-                 v_optim = "bfgs", v_selection = "oos")
+  fit <- suppressWarnings(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            v_optim = "bfgs", v_selection = "oos"))
   expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-4)
   expect_true(is.finite(fit$estimate))
 })
@@ -1555,8 +1560,7 @@ test_that("Phase 12a: v_optim='coord_descent' is identical to default", {
 })
 
 test_that("Phase 12a: v_optim='auto' returns valid weights", {
-  # panel: k=T_pre=10, N_co=9 → k=10 > 15? No. But 2*k=20 > N_co=9? Yes
-  # auto: k_dim=10 > 15 → coord_descent; still valid
+  # panel is outcomes-only, so auto resolves to coord_descent.
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
                  v_optim = "auto")
   expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-4)
@@ -1564,8 +1568,9 @@ test_that("Phase 12a: v_optim='auto' returns valid weights", {
 })
 
 test_that("Phase 12a: v_optim='bfgs' with lambda_pen works", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
-                 v_optim = "bfgs", lambda_pen = 0.5)
+  fit <- suppressWarnings(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            v_optim = "bfgs", lambda_pen = 0.5))
   expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-4)
   expect_true(is.finite(fit$estimate))
 })
@@ -3283,8 +3288,9 @@ test_that("Phase 26: OOS V selection uses train/validation split (no leakage)", 
 })
 
 test_that("Phase 26: OOS + bfgs uses the same train/validation split", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
-                 v_selection = "oos", v_optim = "bfgs")
+  fit <- suppressWarnings(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            v_selection = "oos", v_optim = "bfgs"))
   expect_equal(length(fit$v_weights), 5L)
   expect_true(all(is.finite(fit$Y_synth)))
 })

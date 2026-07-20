@@ -1,4 +1,6 @@
 #include <RcppArmadillo.h>
+#include <algorithm>
+#include <chrono>
 #include <random>
 #include <vector>
 #ifdef _OPENMP
@@ -197,21 +199,141 @@ static bool active_set_simplex_rank1(const arma::mat& Q, const arma::vec& r,
   return false;
 }
 
+// Lawson-Hanson NNLS for a tiny least-squares system: min ||rhs - A x||
+// subject to x >= 0, with A of size (effective QP rank + 1) x N. Finite
+// termination is the entire point -- it is the classic, proven algorithm,
+// so it cannot churn the way an active-set QP method can on degenerate
+// faces. Used purely as a support oracle (see nnls_rescue_rank1); the
+// pseudo-inverse handles rank-deficient passive blocks and the outer cap
+// is a belt-and-braces bound.
+static arma::vec nnls_small(const arma::mat& A, const arma::vec& rhs) {
+  const arma::uword n = A.n_cols;
+  arma::vec x(n, arma::fill::zeros);
+  std::vector<char> inP(n, 0);
+  arma::vec grad = A.t() * rhs;
+  const double tol = 1e-10 * (1.0 + arma::norm(grad, "inf"));
+  const int max_outer = 3 * (int)n;
+
+  for (int it = 0; it < max_outer; it++) {
+    double best = tol;
+    arma::sword j_add = -1;
+    for (arma::uword j = 0; j < n; j++) {
+      if (!inP[j] && grad(j) > best) { best = grad(j); j_add = (arma::sword)j; }
+    }
+    if (j_add < 0) break;
+    inP[(arma::uword)j_add] = 1;
+
+    for (int inner = 0; inner <= (int)n; inner++) {
+      std::vector<arma::uword> Pv;
+      for (arma::uword j = 0; j < n; j++) if (inP[j]) Pv.push_back(j);
+      if (Pv.empty()) break;
+      arma::uvec P = arma::conv_to<arma::uvec>::from(Pv);
+      arma::mat AP = A.cols(P);
+      arma::vec z;
+      if (!arma::solve(z, AP, rhs)) {
+        arma::mat APp;
+        if (!arma::pinv(APp, AP)) { z = arma::zeros<arma::vec>(P.n_elem); }
+        else                      { z = APp * rhs; }
+      }
+      if (z.n_elem == P.n_elem && z.is_finite() && z.min() > 0) {
+        x.zeros();
+        x(P) = z;
+        break;
+      }
+      // Standard LH backtrack: move toward z until the first passive
+      // coordinate hits zero, then drop it from the passive set.
+      double alpha = arma::datum::inf;
+      for (arma::uword q = 0; q < P.n_elem; q++) {
+        if (z(q) <= 0) {
+          double xi = x(P(q));
+          double d  = xi - z(q);
+          if (d > 0) alpha = std::min(alpha, xi / d);
+        }
+      }
+      if (!std::isfinite(alpha)) alpha = 0.0;
+      for (arma::uword q = 0; q < P.n_elem; q++) {
+        double nx = x(P(q)) + alpha * (z(q) - x(P(q)));
+        if (nx <= 1e-12) { nx = 0.0; inP[P(q)] = 0; }
+        x(P(q)) = nx;
+      }
+    }
+    grad = A.t() * (rhs - A * x);
+  }
+  return x;
+}
+
+// NNLS-seeded rescue for simplex QPs where the warm active-set attempt
+// cannot verify KKT within its pivot cap (degenerate faces make its
+// pivoting churn). Recover the low-rank factor of Q_g = Q + dv r r' by
+// eigendecomposition with the usual scale-robust truncation, run the
+// finite-termination NNLS on the factored least-squares form (with a soft
+// sum-to-one row) purely as a *support oracle*, and hand that support to
+// the exact face solver. Only a KKT-verified solution may be returned, so
+// exactness guarantees are unchanged; this merely replaces a
+// milliseconds-scale cold fallback with a microseconds-scale one on the
+// pathological problems that used to dominate placebo wall time.
+static bool nnls_rescue_rank1(const arma::mat& Q, const arma::vec& r,
+                              double dv, const arma::vec& c,
+                              arma::vec& x_out) {
+  const arma::uword N = Q.n_rows;
+  arma::mat Qg = Q + dv * (r * r.t());
+  arma::vec ev;
+  arma::mat E;
+  if (!arma::eig_sym(ev, E, arma::symmatu(Qg))) return false;
+  double ev_max = ev.max();
+  if (!(ev_max > 0)) return false;
+  double cut = 1e-9 * ev_max;
+  std::vector<arma::uword> keep;
+  for (arma::uword i = 0; i < ev.n_elem; i++) {
+    if (ev(i) > cut) keep.push_back(i);
+  }
+  if (keep.empty()) return false;
+  arma::uvec K   = arma::conv_to<arma::uvec>::from(keep);
+  arma::vec lam  = ev(K);
+  arma::mat Er   = E.cols(K);                                  // N x r
+  arma::mat B    = arma::diagmat(arma::sqrt(lam)) * Er.t();    // r x N
+  // c lies in range(Qg) for every QP built from the SCM predictor
+  // matrices (c = X0' V X1 shares the row space of sqrt(V) X0), so the
+  // least-squares data vector is recovered exactly: c = B' y.
+  arma::vec y = (B * c) / lam;
+  double tau  = std::sqrt(ev_max);
+
+  arma::mat A(B.n_rows + 1, N);
+  A.head_rows(B.n_rows) = B;
+  A.row(B.n_rows).fill(tau);
+  arma::vec rhs(B.n_rows + 1);
+  rhs.head(B.n_rows) = y;
+  rhs(B.n_rows)      = tau;
+
+  arma::vec x = nnls_small(A, rhs);
+  if (!x.is_finite() || !(arma::accu(x) > 0)) return false;
+  arma::uvec S = arma::find(x > 1e-8 * x.max());
+  if (S.n_elem == 0) return false;
+  return active_set_simplex_rank1(Q, r, dv, c, S, x_out, 300);
+}
+
 // Simplex QP for Q_g = Q + dv * r r' (rank-1 term applied implicitly), warm
 // started from x. Strategy: try the exact active-set solve seeded with the
 // warm start's support; if it cannot verify KKT (singular subproblem, pivot
 // cap), fall back to warm-started FISTA with periodic active-set retries.
+// When `nnls_rescue` is set (multi-start internals only -- every other
+// caller keeps the historical path bit-for-bit), a failed warm attempt
+// first tries the NNLS support oracle before resorting to FISTA.
 // Pure Armadillo (no Rcpp types): safe to call inside OpenMP threads.
 // L must be an upper bound on lambda_max(Q_g); a loose bound only shrinks
 // the FISTA step size, it does not change the minimiser.
 static arma::vec fista_simplex_rank1(const arma::mat& Q, const arma::vec& r,
                                      double dv, const arma::vec& c,
                                      double L, arma::vec x,
-                                     int max_iter = 10000, double tol = 1e-6) {
+                                     int max_iter = 10000, double tol = 1e-6,
+                                     bool nnls_rescue = false) {
   x = proj_simplex(x);
 
   arma::vec x_as;
   if (active_set_simplex_rank1(Q, r, dv, c, arma::find(x > 1e-10), x_as)) {
+    return x_as;
+  }
+  if (nnls_rescue && nnls_rescue_rank1(Q, r, dv, c, x_as)) {
     return x_as;
   }
 
@@ -265,7 +387,8 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
                                         const arma::mat& Z0_eval,
                                         const arma::vec& Z1_eval,
                                         int max_iter, double tol,
-                                        arma::vec& V_diag, double& best_loss) {
+                                        arma::vec& V_diag, double& best_loss,
+                                        bool nnls_rescue = false) {
   int k = X0.n_rows;
   arma::vec best_W = scm_inner_weights_cpp(X0, X1, V_diag);
   best_loss = arma::norm(Z1_eval - Z0_eval * best_W, 2);
@@ -300,7 +423,8 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
         double dv = grid(g) - orig_v;
         arma::vec c_g = c_base + (dv * X1(j)) * r_j;
         double    L_g = L_base + std::max(dv, 0.0) * row_n2(j);
-        arma::vec cand_W = fista_simplex_rank1(Q_base, r_j, dv, c_g, L_g, warm);
+        arma::vec cand_W = fista_simplex_rank1(Q_base, r_j, dv, c_g, L_g, warm,
+                                               10000, 1e-6, nnls_rescue);
         warm = cand_W;
         double cand_loss = arma::norm(Z1_eval - Z0_eval * cand_W, 2);
         if (cand_loss < local_best_loss) {
@@ -347,10 +471,12 @@ struct scm_outer_eval {
   arma::vec row_n2;  // ||r_j||^2 per predictor row (Lipschitz bound pieces)
   arma::vec r_zero;  // zero rank-1 term: plain QP through fista_simplex_rank1
   arma::vec warm;    // persistent warm start across evaluations
+  bool nnls_rescue;  // multi-start internals only (see nnls_rescue_rank1)
 
   scm_outer_eval(const arma::mat& X0_, const arma::vec& X1_,
-                 const arma::mat& Z0_, const arma::vec& Z1_)
-    : X0(X0_), X1(X1_), Z0_eval(Z0_), Z1_eval(Z1_) {
+                 const arma::mat& Z0_, const arma::vec& Z1_,
+                 bool nnls_rescue_ = false)
+    : X0(X0_), X1(X1_), Z0_eval(Z0_), Z1_eval(Z1_), nnls_rescue(nnls_rescue_) {
     row_n2 = arma::sum(arma::square(X0), 1);
     r_zero = arma::zeros<arma::vec>(X0.n_cols);
     warm   = arma::ones<arma::vec>(X0.n_cols) / X0.n_cols;
@@ -367,10 +493,14 @@ struct scm_outer_eval {
     // W would make the outer objective look flat (every V returns roughly
     // the warm-start's loss) and send the refiner drifting. The active-set
     // solve seeded with the previous support is exact when it succeeds;
-    // otherwise fall back to the cold reference solver.
+    // when it cannot verify KKT (degenerate faces), the NNLS support oracle
+    // is a finite-termination rescue that lands the exact face solve
+    // without the milliseconds-scale cold solve. The cold reference solver
+    // is the last resort.
     arma::vec W;
     if (!active_set_simplex_rank1(Q, r_zero, 0.0, c,
-                                  arma::find(warm > 1e-10), W, 300)) {
+                                  arma::find(warm > 1e-10), W, 300) &&
+        !(nnls_rescue && nnls_rescue_rank1(Q, r_zero, 0.0, c, W))) {
       W = scm_inner_weights_cpp(X0, X1, V);
     }
     if (!W.is_finite()) return arma::datum::inf;
@@ -451,31 +581,39 @@ static arma::vec nm_refine_v(scm_outer_eval& eval,
   return pts[i_min];
 }
 
-// Deterministic multi-start driver for the outer V problem. The nested
-// V/W objective is non-convex and a single start can settle in a poor basin
-// (2x worse pre-period SSR than reachable on the Prop99 predictor spec), so:
-//  1. screen a fixed start set -- uniform, k smoothed one-hots, and 100
-//     Dirichlet(1) draws from a fixed-seed mt19937 (uniforms transformed via
-//     -log(u), so the stream is identical across platforms) -- at one
-//     warm-started inner QP each;
-//  2. take the uniform start plus the three best screened starts as
-//     candidates (keeping uniform guarantees the result is never worse than
-//     the single-start path), and run each through a
-//     Nelder-Mead -> coordinate-descent -> Nelder-Mead pipeline: NM makes
-//     continuous moves between the 0.1-spaced grid points, the grid sweep
-//     escapes flat NM valleys via large single-coordinate jumps;
-//  3. keep the best (V, W) seen anywhere in the pipeline.
-// Everything is deterministic; no R RNG state is touched. Pure Armadillo,
-// safe inside OpenMP threads.
-static arma::vec scm_multistart_core(const arma::mat& X0, const arma::vec& X1,
-                                     const arma::mat& Z0_eval,
-                                     const arma::vec& Z1_eval,
-                                     int max_iter, double tol,
-                                     arma::vec& V_out, double& best_loss) {
-  const int k = X0.n_rows;
-  const int n_rand = 100, n_top = 4;
-  const int n_starts = 1 + k + n_rand;
+// ---- Multi-start machinery -------------------------------------------------
+// The nested V/W objective is non-convex and a single start can settle in a
+// poor basin (2x worse pre-period SSR than reachable on the Prop99 predictor
+// spec). The multi-start search below is fully deterministic: no R RNG state
+// is touched, and everything is pure Armadillo (safe inside OpenMP threads).
 
+struct scm_ms_result {
+  arma::vec V, W;
+  double loss = arma::datum::inf;
+};
+
+// Track the best (V, W, loss) triple. Full triples are required: coordinate
+// descent's reported W is the warm-started QP solution recorded during its
+// sweep, which is not exactly reproducible from V alone, so re-deriving W
+// from the winning V would break the never-worse guarantee.
+static void scm_ms_consider(scm_ms_result& best, const arma::vec& V_raw,
+                            const arma::vec& W, double loss) {
+  if (!std::isfinite(loss) || loss >= best.loss) return;
+  arma::vec V = arma::clamp(V_raw, 0.0, arma::datum::inf);
+  double s = arma::accu(V);
+  if (s < 1e-14 || !W.is_finite()) return;
+  best.loss = loss;
+  best.V    = V / s;
+  best.W    = W;
+}
+
+// Fixed start set: uniform, k smoothed one-hots, and 100 Dirichlet(1) draws
+// from a fixed-seed mt19937 (uniforms transformed via -log(u), so the stream
+// is identical across platforms). Depends only on k, so callers fitting many
+// problems with the same predictor count can share one matrix.
+static arma::mat scm_ms_start_matrix(int k) {
+  const int n_rand = 100;
+  const int n_starts = 1 + k + n_rand;
   arma::mat starts(k, n_starts);
   starts.col(0).fill(1.0 / k);
   for (int j = 0; j < k; j++) {
@@ -496,42 +634,100 @@ static arma::vec scm_multistart_core(const arma::mat& X0, const arma::vec& X1,
     }
     starts.col(1 + k + j) = g / arma::accu(g);
   }
+  return starts;
+}
 
-  scm_outer_eval eval(X0, X1, Z0_eval, Z1_eval);
-
+// Screen every start at one warm-started inner QP each and pick the
+// candidates to refine: the uniform start (never-worse-than-single-start
+// guarantee) plus the n_top best screened starts.
+static std::vector<arma::uword> scm_ms_select(const arma::mat& starts,
+                                              scm_outer_eval& eval,
+                                              int n_top) {
+  const int n_starts = (int)starts.n_cols;
   arma::vec screen(n_starts);
   for (int j = 0; j < n_starts; j++) {
     screen(j) = eval(starts.col(j));
   }
-
   arma::uvec ord = arma::sort_index(screen);
   std::vector<arma::uword> cand;
-  cand.push_back(0);  // uniform start: never-worse-than-single-start guarantee
+  cand.push_back(0);
   for (arma::uword q = 0; q < ord.n_elem; q++) {
     if ((int)cand.size() >= n_top + 1) break;
     if (ord(q) != 0 && std::isfinite(screen(ord(q)))) cand.push_back(ord(q));
   }
+  return cand;
+}
 
-  best_loss = arma::datum::inf;
-  arma::vec best_W, best_V;
+// One candidate's refinement: the exact single-start path (coordinate
+// descent from V = 1/k) when the candidate is the uniform start, then the
+// Nelder-Mead -> coordinate-descent -> Nelder-Mead pipeline for all: NM
+// makes continuous moves between the 0.1-spaced grid points, the grid
+// sweep escapes flat NM valleys via large single-coordinate jumps. The
+// best triple seen anywhere in the pipeline is returned.
+static scm_ms_result scm_ms_pipeline(const arma::mat& X0, const arma::vec& X1,
+                                     const arma::mat& Z0_eval,
+                                     const arma::vec& Z1_eval,
+                                     int max_iter, double tol,
+                                     const arma::vec& start,
+                                     bool is_uniform) {
+  scm_ms_result best;
+  scm_outer_eval eval_q(X0, X1, Z0_eval, Z1_eval, /*nnls_rescue=*/true);
 
-  // Candidate pipelines are independent, so run them in parallel (inside
-  // the placebo loop's existing parallel region OpenMP serialises this
-  // nested level, so there is no oversubscription). Each pipeline records
-  // its own best (V, W, loss) triple -- coordinate descent's reported W is
-  // the warm-started QP solution recorded during its sweep, which is not
-  // exactly reproducible from V alone, so re-deriving W at the end would
-  // break the never-worse guarantee. The final reduction runs serially in
-  // fixed candidate order with a strict '<', keeping the result
-  // deterministic regardless of thread scheduling.
+  if (is_uniform) {
+    // The uniform candidate's plain coordinate descent is the never-worse
+    // reference: it must reproduce v_optim = "coord_descent" exactly, so it
+    // keeps the historical solver path (nnls_rescue stays false).
+    arma::vec V = start;
+    double loss = 0.0;
+    arma::vec W = scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval,
+                                         max_iter, tol, V, loss);
+    scm_ms_consider(best, V, W, loss);
+  }
+
+  arma::vec W_stage;
+  double f1 = 0.0;
+  arma::vec V1 = nm_refine_v(eval_q, start, f1);
+  double f1x = eval_q(V1, &W_stage);
+  scm_ms_consider(best, V1, W_stage, f1x);
+
+  arma::vec V2 = arma::clamp(V1, 0.0, arma::datum::inf);
+  double s2 = arma::accu(V2);
+  if (s2 >= 1e-14) {
+    V2 /= s2;
+    double f2 = 0.0;
+    arma::vec W2 = scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval,
+                                          max_iter, tol, V2, f2,
+                                          /*nnls_rescue=*/true);
+    scm_ms_consider(best, V2, W2, f2);
+
+    double f3 = 0.0;
+    arma::vec V3 = nm_refine_v(eval_q, V2, f3);
+    double f3x = eval_q(V3, &W_stage);
+    scm_ms_consider(best, V3, W_stage, f3x);
+  }
+  return best;
+}
+
+// Deterministic multi-start driver for a single fit: screen, refine the
+// uniform + top-4 candidates in parallel (suppressed inside an enclosing
+// parallel region -- nested teams oversubscribe), reduce serially in fixed
+// candidate order with a strict '<' so the result is deterministic
+// regardless of thread scheduling.
+static arma::vec scm_multistart_core(const arma::mat& X0, const arma::vec& X1,
+                                     const arma::mat& Z0_eval,
+                                     const arma::vec& Z1_eval,
+                                     int max_iter, double tol,
+                                     arma::vec& V_out, double& best_loss) {
+  const int k = X0.n_rows;
+  const int n_top = 4;
+  arma::mat starts = scm_ms_start_matrix(k);
+
+  scm_outer_eval eval(X0, X1, Z0_eval, Z1_eval, /*nnls_rescue=*/true);
+  std::vector<arma::uword> cand = scm_ms_select(starts, eval, n_top);
+
   const int n_cand = (int)cand.size();
-  std::vector<arma::vec> slot_V(n_cand), slot_W(n_cand);
-  std::vector<double>    slot_loss(n_cand, arma::datum::inf);
+  std::vector<scm_ms_result> slots(n_cand);
 
-  // Never spawn a nested team inside the placebo loop's donor-level
-  // parallel region: some runtimes create 1-thread teams (overhead) or
-  // oversubscribe (38 donors x 4 candidates), which measurably slows the
-  // placebo batch.
 #ifdef _OPENMP
   const bool spawn_team = !omp_in_parallel();
 #else
@@ -541,66 +737,22 @@ static arma::vec scm_multistart_core(const arma::mat& X0, const arma::vec& X1,
   #pragma omp parallel for schedule(dynamic, 1) if(spawn_team)
   for (int qi = 0; qi < n_cand; qi++) {
     try {
-      scm_outer_eval eval_q(X0, X1, Z0_eval, Z1_eval);
-      double    loc_loss = arma::datum::inf;
-      arma::vec loc_V, loc_W;
-      auto keep = [&](const arma::vec& V_raw, const arma::vec& W,
-                      double loss) {
-        if (!std::isfinite(loss) || loss >= loc_loss) return;
-        arma::vec V = arma::clamp(V_raw, 0.0, arma::datum::inf);
-        double s = arma::accu(V);
-        if (s < 1e-14 || !W.is_finite()) return;
-        loc_loss = loss;
-        loc_V    = V / s;
-        loc_W    = W;
-      };
-
-      // The exact single-start path for the uniform candidate (coordinate
-      // descent from V = 1/k), the NM -> coord -> NM pipeline for all.
-      if (cand[qi] == 0) {
-        arma::vec V = starts.col(0);
-        double loss = 0.0;
-        arma::vec W = scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval,
-                                             max_iter, tol, V, loss);
-        keep(V, W, loss);
-      }
-
-      arma::vec W_stage;
-      double f1 = 0.0;
-      arma::vec V1 = nm_refine_v(eval_q, starts.col(cand[qi]), f1);
-      double f1x = eval_q(V1, &W_stage);
-      keep(V1, W_stage, f1x);
-
-      arma::vec V2 = arma::clamp(V1, 0.0, arma::datum::inf);
-      double s2 = arma::accu(V2);
-      if (s2 >= 1e-14) {
-        V2 /= s2;
-        double f2 = 0.0;
-        arma::vec W2 = scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval,
-                                              max_iter, tol, V2, f2);
-        keep(V2, W2, f2);
-
-        double f3 = 0.0;
-        arma::vec V3 = nm_refine_v(eval_q, V2, f3);
-        double f3x = eval_q(V3, &W_stage);
-        keep(V3, W_stage, f3x);
-      }
-
-      slot_V[qi]    = loc_V;
-      slot_W[qi]    = loc_W;
-      slot_loss[qi] = loc_loss;
+      slots[qi] = scm_ms_pipeline(X0, X1, Z0_eval, Z1_eval, max_iter, tol,
+                                  starts.col(cand[qi]), cand[qi] == 0);
     } catch (...) {
       // Exceptions must not escape the OpenMP region; a failed pipeline
-      // simply contributes nothing (slot_loss stays Inf).
+      // simply contributes nothing (its loss stays Inf).
     }
   }
 
+  best_loss = arma::datum::inf;
+  arma::vec best_W, best_V;
   for (int qi = 0; qi < n_cand; qi++) {
-    if (std::isfinite(slot_loss[qi]) && slot_loss[qi] < best_loss &&
-        !slot_V[qi].is_empty() && slot_W[qi].is_finite()) {
-      best_loss = slot_loss[qi];
-      best_V    = slot_V[qi];
-      best_W    = slot_W[qi];
+    if (std::isfinite(slots[qi].loss) && slots[qi].loss < best_loss &&
+        !slots[qi].V.is_empty() && slots[qi].W.is_finite()) {
+      best_loss = slots[qi].loss;
+      best_V    = slots[qi].V;
+      best_W    = slots[qi].W;
     }
   }
 
@@ -613,6 +765,113 @@ static arma::vec scm_multistart_core(const arma::mat& X0, const arma::vec& X1,
   }
   V_out = best_V;
   return best_W;
+}
+
+// Flat (donor x candidate) multi-start batch for the covariate placebo
+// loop; called from scm_placebo_x_cpp via forward declaration. Donor-level
+// parallelism alone lets one slow donor pin a single thread while the
+// others go idle after finishing (per-donor refit cost spans two orders of
+// magnitude on real data); flattening the task list lets every candidate
+// pipeline of every donor be scheduled independently, with no nested teams
+// anywhere. Per-donor results are identical to running
+// scm_weights_vec_internal(multistart = TRUE) donor by donor: same screen,
+// same pipelines, same fixed-order reduction. ok_out[d] = 0 marks a donor
+// whose refit failed entirely (the caller maps it to NaN, matching the
+// existing solver-failure contract).
+void scm_multistart_batch(const std::vector<arma::mat>& X0d,
+                          const std::vector<arma::vec>& X1d,
+                          const std::vector<arma::mat>& Z0d,
+                          const std::vector<arma::vec>& Z1d,
+                          int max_iter, double tol,
+                          std::vector<arma::vec>& W_out,
+                          std::vector<char>& ok_out) {
+  const int N = (int)X0d.size();
+  const int n_top = 4;
+  W_out.assign(N, arma::vec());
+  ok_out.assign(N, 0);
+  if (N == 0) return;
+
+  arma::mat starts = scm_ms_start_matrix((int)X0d[0].n_rows);
+
+  // Phase A: per-donor screening (cheap: one warm QP per start). Screening
+  // wall time is also recorded as a cost proxy -- donors whose evaluations
+  // are expensive (degenerate faces, cold fallbacks) are expensive in the
+  // refinement pipelines too.
+  std::vector<std::vector<arma::uword>> cand(N);
+  std::vector<char>   screened(N, 0);
+  std::vector<double> screen_cost(N, 0.0);
+  #pragma omp parallel for schedule(dynamic, 1)
+  for (int d = 0; d < N; d++) {
+    try {
+      auto t0 = std::chrono::steady_clock::now();
+      scm_outer_eval ev(X0d[d], X1d[d], Z0d[d], Z1d[d], /*nnls_rescue=*/true);
+      cand[d] = scm_ms_select(starts, ev, n_top);
+      screened[d] = 1;
+      screen_cost[d] = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - t0).count();
+    } catch (...) {}
+  }
+
+  // Phase B: one flat task per (donor, candidate), dispatched
+  // heaviest-donor-first (LPT heuristic) so a slow donor's pipelines start
+  // immediately instead of extending the tail of the schedule. Execution
+  // order only affects packing: results are reduced by (donor, candidate)
+  // index in Phase C, so this is exactly result-neutral.
+  std::vector<int> donor_order;
+  for (int d = 0; d < N; d++) {
+    if (screened[d]) donor_order.push_back(d);
+  }
+  std::stable_sort(donor_order.begin(), donor_order.end(),
+                   [&](int a, int b) { return screen_cost[a] > screen_cost[b]; });
+
+  std::vector<int>         task_d;
+  std::vector<arma::uword> task_start;
+  for (size_t o = 0; o < donor_order.size(); o++) {
+    const int d = donor_order[o];
+    for (size_t q = 0; q < cand[d].size(); q++) {
+      task_d.push_back(d);
+      task_start.push_back(cand[d][q]);
+    }
+  }
+  const int n_task = (int)task_d.size();
+  std::vector<scm_ms_result> res(n_task);
+
+  #pragma omp parallel for schedule(dynamic, 1)
+  for (int t = 0; t < n_task; t++) {
+    try {
+      const int d = task_d[t];
+      res[t] = scm_ms_pipeline(X0d[d], X1d[d], Z0d[d], Z1d[d],
+                               max_iter, tol,
+                               starts.col(task_start[t]),
+                               task_start[t] == 0);
+    } catch (...) {}
+  }
+
+  // Phase C: per-donor reduction in task order (== candidate order), with
+  // the same strict '<' and the same single-start fallback as the
+  // single-fit driver.
+  std::vector<scm_ms_result> best(N);
+  for (int t = 0; t < n_task; t++) {
+    const int d = task_d[t];
+    if (std::isfinite(res[t].loss) && res[t].loss < best[d].loss &&
+        !res[t].V.is_empty() && res[t].W.is_finite()) {
+      best[d] = res[t];
+    }
+  }
+  for (int d = 0; d < N; d++) {
+    if (!best[d].V.is_empty()) {
+      W_out[d]  = best[d].W;
+      ok_out[d] = 1;
+    } else if (screened[d]) {
+      try {
+        arma::vec V = starts.col(0);
+        double loss = 0.0;
+        W_out[d] = scm_coord_descent_core(X0d[d], X1d[d], Z0d[d], Z1d[d],
+                                          max_iter, tol, V, loss);
+        ok_out[d] = 1;
+      } catch (...) {}
+    }
+  }
 }
 
 // Internal helper: returns only the weight vector (no Rcpp::List overhead).

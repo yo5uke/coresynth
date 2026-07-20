@@ -1,4 +1,5 @@
 #include <RcppArmadillo.h>
+#include <vector>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -8,10 +9,17 @@
 // Declaration of SDID unit weight solver
 arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pre, double zeta2);
 
-// Forward declaration of internal SCM weight solver (defined in scm.cpp)
+// Forward declarations of internal SCM weight solvers (defined in scm.cpp)
 arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
                                     const arma::mat& Z0, const arma::vec& Z1,
                                     int max_iter, double tol, bool multistart);
+void scm_multistart_batch(const std::vector<arma::mat>& X0d,
+                          const std::vector<arma::vec>& X1d,
+                          const std::vector<arma::mat>& Z0d,
+                          const std::vector<arma::vec>& Z1d,
+                          int max_iter, double tol,
+                          std::vector<arma::vec>& W_out,
+                          std::vector<char>& ok_out);
 
 //' Fast Placebo Test for SDID
 //'
@@ -198,6 +206,68 @@ Rcpp::List scm_placebo_x_cpp(const arma::mat& X0,
     for (int i = 0; i < zri.size(); i++) zr(i) = (arma::uword)(zri[i] - 1);
   }
 
+  if (multistart) {
+    // Flat (donor x candidate) batch: materialise the per-donor matrices
+    // up front (cheap copies), let scm_multistart_batch schedule every
+    // candidate pipeline of every donor across one thread pool, then
+    // compute the MSPE components. Per-donor refit cost spans two orders
+    // of magnitude on real data, so donor-level parallelism alone leaves
+    // most threads idle behind the slowest donor.
+    std::vector<arma::mat> X0d(N_co), Z0f(N_co);
+    std::vector<arma::vec> x1d(N_co), Z1f(N_co);
+    for (int i = 0; i < N_co; i++) {
+      arma::uvec donors = all_idx(arma::find(all_idx != (arma::uword)i));
+      X0d[i] = X0.cols(donors);
+      x1d[i] = X0.col(i);
+      arma::mat Y_d_pre = Y_pre.cols(donors);
+      arma::vec y_pre_i = Y_pre.col(i);
+      if (has_window) {
+        Z0f[i] = Y_d_pre.rows(zr);
+        Z1f[i] = y_pre_i(zr);
+      } else {
+        Z0f[i] = Y_d_pre;
+        Z1f[i] = y_pre_i;
+      }
+    }
+
+    std::vector<arma::vec> W(N_co);
+    std::vector<char> ok;
+    scm_multistart_batch(X0d, x1d, Z0f, Z1f, max_iter, tol, W, ok);
+
+    for (int i = 0; i < N_co; i++) {
+      // A donor whose refit failed entirely carries NaN through all
+      // fields (same contract as the solver-failure catch below).
+      if (!ok[i] || !W[i].is_finite()) {
+        mspe_pre(i)  = arma::datum::nan;
+        mspe_post(i) = arma::datum::nan;
+        effects(i)   = arma::datum::nan;
+        gaps.col(i).fill(arma::datum::nan);
+        continue;
+      }
+      arma::uvec donors = all_idx(arma::find(all_idx != (arma::uword)i));
+      arma::vec y_pre_i  = Y_pre.col(i);
+      arma::vec y_post_i = Y_post.col(i);
+      arma::mat Y_d_pre  = Y_pre.cols(donors);
+      arma::mat Y_d_post = Y_post.cols(donors);
+
+      arma::vec synth_pre  = Y_d_pre  * W[i];
+      arma::vec synth_post = Y_d_post * W[i];
+
+      mspe_pre(i)  = arma::mean(arma::square(y_pre_i  - synth_pre));
+      mspe_post(i) = arma::mean(arma::square(y_post_i - synth_post));
+      effects(i)   = arma::mean(y_post_i - synth_post);
+      gaps.col(i)  = arma::join_cols(y_pre_i - synth_pre,
+                                     y_post_i - synth_post);
+    }
+
+    return Rcpp::List::create(
+      Rcpp::Named("mspe_pre")  = mspe_pre,
+      Rcpp::Named("mspe_post") = mspe_post,
+      Rcpp::Named("effects")   = effects,
+      Rcpp::Named("gaps")      = gaps
+    );
+  }
+
   #pragma omp parallel for schedule(dynamic, 1)
   for (int i = 0; i < N_co; i++) {
     arma::uvec donors = all_idx(arma::find(all_idx != (arma::uword)i));
@@ -223,7 +293,7 @@ Rcpp::List scm_placebo_x_cpp(const arma::mat& X0,
 
       arma::vec w = scm_weights_vec_internal(X0_d, x1_i,
                                              Z0_fit, Z1_fit,
-                                             max_iter, tol, multistart);
+                                             max_iter, tol, false);
 
       arma::vec synth_pre  = Y_d_pre  * w;
       arma::vec synth_post = Y_d_post * w;

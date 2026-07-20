@@ -60,6 +60,18 @@
   outcomes-only placebo path, as before). Pass `use_covariates = FALSE`
   explicitly to reproduce the old behaviour on covariate fits.
 
+## Deprecated
+
+- **`v_optim = "bfgs"` is deprecated** and will be removed in a future
+  release. It is a single-start L-BFGS-B outer optimiser with no advantage
+  over the alternatives now that the default is multi-start: use
+  `v_optim = "multistart"` (or the `"auto"` default) for predictor-based
+  fits, and `"coord_descent"` for outcomes-only fits. Passing `"bfgs"` still
+  works but now emits a deprecation warning. `"coord_descent"` is **not**
+  deprecated: besides being a selectable optimiser, it is the engine for
+  outcomes-only and staggered fits and the reference against which the
+  multi-start never-worse guarantee is defined.
+
 ## Performance
 
 - **The multi-start outer search runs at interactive speed.** Outer-loss
@@ -70,11 +82,23 @@
   Cholesky/eigendecomposition hybrid that is robust to the rank-deficient
   metrics (k < |active set|) the multi-start screen hits constantly -- and
   whose branch decision cannot be flipped by last-bit input perturbations,
-  preserving the scale-invariance of `scale_predictors`. Candidate
-  refinement pipelines run in parallel (suppressed inside the placebo
-  loop's own parallel region). On the Proposition 99 8-predictor spec a
-  full multi-start fit takes ~0.07s and the complete 38-donor
-  `mspe_ratio_pval()` battery ~7s. A side effect of the exact face solves:
+  preserving the scale-invariance of `scale_predictors`. On a degenerate
+  face the warm active-set solve can churn to its pivot cap, and the old
+  cold-FISTA fallback (thousands of iterations on ill-conditioned metrics)
+  made a single slow donor dominate placebo wall time; a finite-termination
+  Lawson-Hanson NNLS now seeds the exact face solve on those cases in
+  microseconds, gated by the same KKT check so the returned solution is
+  unchanged. The rescue is confined to the multi-start internals -- every
+  other path (outcomes-only, `coord_descent`, `oos`, staggered,
+  `loo_donors()`, conformal) keeps its historical solver bit-for-bit, and
+  the multi-start uniform-start leg stays on the plain path so the
+  never-worse guarantee holds. Candidate refinement pipelines run in
+  parallel, and the placebo battery flattens the (donor x candidate) task
+  list into one schedule -- donor-level parallelism alone lets the slowest
+  donor pin a thread while the others go idle. On the Proposition 99
+  8-predictor spec a full multi-start fit takes ~0.06s and the complete
+  38-donor `mspe_ratio_pval()` battery ~1.7s (every donor's fit verified
+  never worse than the single-start path). A side effect of the exact face solves:
   inner QPs on rank-deficient faces are now solved exactly where the
   previous code fell back to a loosely-converged FISTA iterate.
   Outcomes-only sharp, staggered, and placebo results are bit-identical to

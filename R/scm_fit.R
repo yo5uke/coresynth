@@ -50,13 +50,17 @@
 #'   fits and `"coord_descent"` for outcomes-only fits (where the single
 #'   start is empirically reliable). `"multistart"` runs a deterministic
 #'   multi-start search: a fixed start set (uniform V, one-hot V per
-#'   predictor, and 50 fixed-seed random draws) is screened at one inner QP
+#'   predictor, and 100 fixed-seed random draws) is screened at one inner QP
 #'   each, the leaders are polished by coordinate descent, and the winner is
 #'   refined by a Nelder-Mead pass. Its solution is never worse (in
 #'   pre-treatment loss) than `"coord_descent"`, at roughly the cost of a
 #'   handful of single-start fits, and is fully reproducible (no RNG state
 #'   is consumed). `"coord_descent"` is the classic single-start coordinate
-#'   descent with an 11-point grid; `"bfgs"` is a single-start L-BFGS-B.
+#'   descent with an 11-point grid, and is also the outcomes-only and
+#'   staggered engine and the multi-start never-worse reference.
+#'   `"bfgs"` (a single-start L-BFGS-B) is **deprecated** and will be removed
+#'   in a future release: it has no advantage over `"multistart"` (which
+#'   dominates it on predictor fits) or `"coord_descent"`.
 #'   [mspe_ratio_pval()] mirrors a multi-start fit in its placebo refits so
 #'   the permutation test stays symmetric.
 #' @param v_window Optional vector of pre-treatment time values (matching the
@@ -142,6 +146,17 @@ scm_fit <- function(
   v_selection <- match.arg(v_selection)
   v_optim     <- match.arg(v_optim)
   method <- match.arg(method)
+
+  if (identical(v_optim, "bfgs")) {
+    warning(
+      "v_optim = \"bfgs\" is deprecated and will be removed in a future ",
+      "release. It is a single-start outer optimiser with no advantage over ",
+      "the alternatives: use v_optim = \"multistart\" (or the \"auto\" ",
+      "default) for predictor-based fits, and \"coord_descent\" for ",
+      "outcomes-only fits.",
+      call. = FALSE
+    )
+  }
 
   if (!is.null(v_window) && method != "scm") {
     stop("'v_window' applies to method = \"scm\" only.", call. = FALSE)

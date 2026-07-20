@@ -79,6 +79,7 @@ reference:
   - plot.coresynth
   - plot.scm_placebo
   - plot.scm_design
+  - plot_data
   - export_json
 
 - title: Package overview

@@ -3737,6 +3737,123 @@ test_that("plot.scm_placebo: labels relabel the legend and the ratios axis tick"
                "unrecognized name")
 })
 
+# ── plot_data(): tidy extraction of the plot() data ──────────────────────────
+
+test_that("plot_data(type='trend') mirrors the treated/synthetic accessors", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  df  <- plot_data(fit, type = "trend")
+  expect_s3_class(df, "data.frame")
+  expect_identical(names(df), c("time", "value", "series"))
+  expect_setequal(unique(df$series), c("Treated", "Synthetic Control"))
+  expect_equal(df$value[df$series == "Treated"],
+               as.numeric(treated_outcomes(fit, na.rm = TRUE)))
+  expect_equal(df$value[df$series == "Synthetic Control"],
+               as.numeric(synthetic_outcomes(fit, na.rm = TRUE)))
+})
+
+test_that("plot_data(type='gap') equals treated minus synthetic", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  df  <- plot_data(fit, type = "gap")
+  expect_identical(names(df), c("time", "gap"))
+  expect_equal(df$gap,
+               as.numeric(treated_outcomes(fit, na.rm = TRUE) -
+                            synthetic_outcomes(fit, na.rm = TRUE)))
+})
+
+test_that("plot_data trend align shifts synthetic by the pre-period gap", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  raw <- plot_data(fit, type = "gap")
+  ali <- plot_data(fit, type = "gap", align = TRUE)
+  # SDID: lambda-aligned post-period mean gap equals the point estimate
+  post <- seq(fit$T_pre + 1L, length(ali$gap))
+  expect_equal(mean(ali$gap[post]), unname(fit$estimate), tolerance = 1e-6)
+  expect_false(isTRUE(all.equal(raw$gap, ali$gap)))
+})
+
+test_that("plot_data trend show_donors adds Donors rows and a unit column", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  df  <- plot_data(fit, type = "trend", show_donors = 3)
+  expect_true("unit" %in% names(df))
+  expect_setequal(unique(df$series),
+                  c("Treated", "Synthetic Control", "Donors"))
+  # exactly three distinct donor units
+  expect_equal(length(unique(df$unit[df$series == "Donors"])), 3L)
+})
+
+test_that("plot_data(type='weights') returns every donor (no 1e-4 pruning)", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  df  <- plot_data(fit, type = "weights")
+  expect_identical(names(df), c("unit", "weight"))
+  # complete: one row per donor, unlike the plot which drops tiny weights
+  expect_equal(nrow(df), length(fit$unit_weights))
+  expect_equal(sort(df$weight), sort(as.numeric(fit$unit_weights)))
+})
+
+test_that("plot_data(type='weights') top_n keeps the largest weights", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  df  <- plot_data(fit, type = "weights", top_n = 2)
+  expect_equal(nrow(df), 2L)
+  expect_equal(df$weight, sort(as.numeric(fit$unit_weights),
+                               decreasing = TRUE)[1:2])
+  expect_error(plot_data(fit, type = "weights", top_n = 0), "top_n")
+})
+
+test_that("plot_data(type='weights') for SDID adds an omega/lambda panel", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  df  <- plot_data(fit, type = "weights")
+  expect_true("panel" %in% names(df))
+  expect_setequal(unique(df$panel), c("omega", "lambda"))
+  expect_equal(df$weight[df$panel == "lambda"], as.numeric(fit$time_weights))
+})
+
+test_that("plot_data(type='pred_weights') returns one row per predictor", {
+  fit <- scm_fit(
+    y ~ d | id + time, data = panel_cov, method = "scm",
+    predictors = list(pred(c("cov1", "cov2"), 1:10))
+  )
+  df <- plot_data(fit, type = "pred_weights")
+  expect_identical(names(df), c("predictor", "weight"))
+  expect_equal(df$predictor, names(fit$v_weights))
+  expect_equal(df$weight, as.numeric(fit$v_weights))
+})
+
+test_that("plot_data errors on fits without the requested component", {
+  fit_mc <- scm_fit(y ~ d | id + time, data = panel, method = "mc")
+  expect_error(plot_data(fit_mc, type = "pred_weights"), "V")
+  expect_error(plot_data(fit_mc, type = "weights"), "No unit weights")
+
+  fit_stag <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
+  expect_error(plot_data(fit_stag, type = "trend"), "per cohort")
+})
+
+test_that("plot_data has no method for unsupported objects", {
+  expect_error(plot_data(1:10), "no method")
+})
+
+test_that("plot_data.scm_placebo returns tidy gaps and ratios frames", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+
+  g <- plot_data(inf, type = "gaps")
+  expect_identical(names(g), c("time", "gap", "unit", "series"))
+  expect_setequal(unique(g$series), c("Treated", "Placebo (donor pool)"))
+  expect_equal(g$gap[g$series == "Treated"], as.numeric(inf$treated_gap))
+
+  r <- plot_data(inf, type = "ratios")
+  expect_identical(names(r), c("unit", "ratio", "series"))
+  expect_equal(r$ratio, as.numeric(inf$mspe_ratios_all))
+  expect_equal(r$series[1], "Treated")
+})
+
+test_that("plot_data.scm_placebo gaps honors mspe_prune", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+  n_all  <- length(unique(plot_data(inf, type = "gaps")$unit))
+  n_keep <- length(unique(plot_data(inf, type = "gaps", mspe_prune = 1)$unit))
+  expect_lte(n_keep, n_all)
+  expect_error(plot_data(inf, type = "gaps", mspe_prune = -1), "positive")
+})
+
 # ── Phase 33: Partially pooled staggered SCM (Ben-Michael et al. 2022) ────────
 
 test_that("Phase 33: nu/fixedeff on a sharp fit error informatively", {

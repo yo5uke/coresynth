@@ -330,6 +330,24 @@ glance(fits$scm)
 export_json(fits$scm, file = "scm_result.json")
 ```
 
+Every `plot()` view also has a matching data extractor. `plot_data()`
+returns the tidy data frame that a figure is drawn from — taking the
+same `type` argument as `plot()` — so you can rename the simplified
+series labels, drop the numbers into a table, or build a bespoke figure
+with your own code. `plot()` stays the quick path; `plot_data()` is the
+handle when you want the data itself. For example, the `"trend"` view:
+
+``` r
+head(plot_data(fits$scm, type = "trend"))
+#>   time     value  series
+#> 1    1 0.7590559 Treated
+#> 2    2 0.5774968 Treated
+#> 3    3 0.8414384 Treated
+#> 4    4 0.6355518 Treated
+#> 5    5 1.1532557 Treated
+#> 6    6 0.4384856 Treated
+```
+
 ## Performance
 
 On a 100-donor, 10-year monthly panel, a full SCM fit and its in-space

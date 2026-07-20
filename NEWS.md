@@ -33,6 +33,18 @@
   `fill` and `top_n` arguments. Staggered SCM and the other estimators do not
   estimate a `V` matrix and raise an informative error.
 
+- **`plot_data()`** returns the tidy `data.frame` behind any `plot()` view,
+  taking the same `type` argument (`"trend"`, `"gap"`, `"weights"`,
+  `"pred_weights"` for a fit; `"gaps"`, `"ratios"` for an `scm_placebo`
+  object). It is the data-side companion to `plot()`: extract the plotted
+  series, weights, or placebo paths to relabel the simplified series names,
+  feed them into a table, or build a bespoke figure. Columns use plain names
+  (`time`, `value`, `series`, ...), and the arguments that change which rows
+  or values appear (`align`, `top_n`, `show_donors`, `mspe_prune`) are
+  honoured. The cosmetic near-zero-weight filter that `type = "weights"`
+  applies to the chart is not used here, so every donor is returned (use
+  `top_n` to subset).
+
 - **`v_window` argument in `scm_fit()`** (sharp SCM fits): a vector of
   pre-treatment time values over which the outer V optimisation evaluates
   the pre-treatment fit, e.g. `v_window = 1975:1988`. The default (`NULL`)

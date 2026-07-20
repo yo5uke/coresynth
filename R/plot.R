@@ -437,7 +437,7 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
       geom_col(fill = bar_fill, alpha = 0.85) +
       coord_flip() +
       theme_minimal(base_size = 13) +
-      labs(title = "Predictor (V) Weights", x = NULL, y = "Weight")
+      labs(title = "Predictor Weights", x = NULL, y = "Weight")
     return(p)
   }
 }
@@ -616,4 +616,272 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
            paste0(n_dropped, " unit(s) without a finite ratio (mspe_threshold filter) omitted.")
          })
   p
+}
+
+#' Extract the tidy data behind a coresynth plot
+#'
+#' Returns the tidy `data.frame` that [plot()] draws for a given `type`, so the
+#' underlying series, weights, or placebo paths can be inspected, joined into a
+#' table, or re-plotted directly. [plot()] stays the quick path; `plot_data()`
+#' is the handle for anyone who wants to relabel simplified series names, feed
+#' the numbers into their own figure, or postprocess them further.
+#'
+#' The frame mirrors what the matching `plot(x, type = ...)` call shows, with
+#' two deliberate departures that make it a better data source:
+#'
+#' * Plain column names (`time`, `value`, `series`, `weight`, ...) are used
+#'   instead of the dotted convention of [augment()], since this is data to
+#'   manipulate rather than model-augmented observations.
+#' * The cosmetic "drop donors with weight below 1e-4" filter that
+#'   `plot(type = "weights")` applies is *not* used here: every donor is
+#'   returned (use `top_n` to subset), so the frame is the complete set of
+#'   weights.
+#'
+#' Only the arguments that change *which rows or values* appear are accepted
+#' (`align`, `top_n`, `show_donors`, `mspe_prune`); purely cosmetic arguments
+#' of [plot()] (`colors`, `labels`, `vline`, `fill`, ...) have no data
+#' counterpart and are not part of this interface.
+#'
+#' @param x A `coresynth` fit (from [scm_fit()]) or a `scm_placebo` object
+#'   (from [mspe_ratio_pval()]).
+#' @param type For a `coresynth` fit: one of `"trend"`, `"gap"`, `"weights"`,
+#'   or `"pred_weights"`, matching [plot.coresynth()]. For a `scm_placebo`
+#'   object: `"gaps"` or `"ratios"`, matching [plot.scm_placebo()].
+#' @param align For `type = "trend"`/`"gap"`: when `TRUE`, shift the synthetic
+#'   series by its pre-treatment level gap to the treated series, exactly as in
+#'   [plot.coresynth()]. Default `FALSE` (raw series).
+#' @param top_n For `type = "weights"`/`"pred_weights"`: keep only the `top_n`
+#'   largest weights (default `Inf`, every row).
+#' @param show_donors For `type = "trend"`: also return the outcome paths of the
+#'   `show_donors` largest-weight donors as `series = "Donors"` rows, adding a
+#'   `unit` column that identifies each donor (`NA` for the treated and
+#'   synthetic series). Default `0` (treated and synthetic series only).
+#' @param mspe_prune For a `scm_placebo` object with `type = "gaps"`: drop
+#'   placebo units whose pre-treatment MSPE exceeds `mspe_prune` times the
+#'   treated unit's, as in [plot.scm_placebo()]. Default `Inf` (no pruning).
+#' @param ... Passed to methods (unused by the current methods).
+#' @return A tidy `data.frame`. Columns by `type`:
+#'   \describe{
+#'     \item{`"trend"`}{`time`, `value`, `series` (`"Treated"` /
+#'       `"Synthetic Control"`); with `show_donors > 0`, also `"Donors"` rows
+#'       and a `unit` column.}
+#'     \item{`"gap"`}{`time`, `gap` (treated minus synthetic control).}
+#'     \item{`"weights"`}{`unit`, `weight`; SDID fits add a `panel` column
+#'       (`"omega"` unit weights, `"lambda"` time weights), with `unit` holding
+#'       the pre-period label for `"lambda"` rows.}
+#'     \item{`"pred_weights"`}{`predictor`, `weight` (sharp SCM only).}
+#'     \item{`"gaps"`}{`time`, `gap`, `unit` (`NA` for the treated series),
+#'       `series` (`"Treated"` / `"Placebo (donor pool)"`).}
+#'     \item{`"ratios"`}{`unit`, `ratio`, `series`.}
+#'   }
+#' @seealso [plot.coresynth()], [plot.scm_placebo()]
+#' @examples
+#' set.seed(1)
+#' panel <- expand.grid(unit = 1:10, year = 1:20)
+#' panel$treated <- as.integer(panel$unit == 5 & panel$year > 15)
+#' panel$gdp <- panel$unit + 0.5 * panel$year +
+#'   rnorm(nrow(panel)) + 3 * panel$treated
+#' fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "scm")
+#'
+#' head(plot_data(fit, type = "trend"))
+#' plot_data(fit, type = "gap")
+#' plot_data(fit, type = "weights")
+#'
+#' # Relabel the simplified series names, then plot it yourself
+#' df <- plot_data(fit, type = "trend")
+#' df$series <- sub("Synthetic Control", "Synthetic Unit 5", df$series)
+#' \donttest{
+#' ggplot2::ggplot(df, ggplot2::aes(time, value, color = series)) +
+#'   ggplot2::geom_line()
+#' }
+#' @export
+plot_data <- function(x, ...) UseMethod("plot_data")
+
+#' @rdname plot_data
+#' @export
+plot_data.default <- function(x, ...) {
+  stop("plot_data() has no method for an object of class ",
+       paste(class(x), collapse = "/"),
+       ". It supports coresynth fits (from scm_fit()) and scm_placebo ",
+       "objects (from mspe_ratio_pval()).", call. = FALSE)
+}
+
+#' @rdname plot_data
+#' @export
+plot_data.coresynth <- function(x, type = c("trend", "gap", "weights",
+                                            "pred_weights"),
+                                align = FALSE, top_n = Inf,
+                                show_donors = 0, ...) {
+  type <- match.arg(type)
+
+  if (type %in% c("trend", "gap")) {
+    if (is.null(x$times) || is.null(x$Y_treat))
+      stop("fit object does not contain time series data.", call. = FALSE)
+    if (!isTRUE(align) && !isFALSE(align))
+      stop("`align` must be TRUE or FALSE.", call. = FALSE)
+
+    times <- x$times
+    if (is.character(times) || is.factor(times))
+      times <- as.numeric(as.character(times))
+    Y_treat <- treated_outcomes(x, na.rm = TRUE)
+    Y_synth <- synthetic_outcomes(x, na.rm = TRUE)
+    if (is.null(Y_synth))
+      stop("fit object does not contain a synthetic/counterfactual series ",
+           "(staggered fits store their series per cohort; use augment()).",
+           call. = FALSE)
+    if (isTRUE(align)) {
+      if (is.null(x$T_pre) || x$T_pre < 1L)
+        stop("align = TRUE requires a fit with pre-treatment periods.",
+             call. = FALSE)
+      Y_synth <- Y_synth + .align_offset(x, Y_treat, Y_synth)
+    }
+
+    if (type == "gap")
+      return(data.frame(time = times, gap = Y_treat - Y_synth,
+                        stringsAsFactors = FALSE))
+
+    # type == "trend"
+    if (!is.numeric(show_donors) || length(show_donors) != 1L ||
+        is.na(show_donors) || show_donors < 0)
+      stop("`show_donors` must be a single number >= 0 (Inf shows all donors).",
+           call. = FALSE)
+    df <- data.frame(
+      time   = c(times, times),
+      value  = c(Y_treat, Y_synth),
+      series = rep(c("Treated", "Synthetic Control"), each = length(times)),
+      stringsAsFactors = FALSE
+    )
+    if (show_donors < 1) return(df)
+
+    w    <- x$unit_weights
+    Y_co <- donor_outcomes(x)
+    if (is.null(w) || all(is.na(w)) || is.null(Y_co))
+      stop("show_donors requires donor unit weights and outcomes ",
+           "(available for sharp SCM/SDID/SI fits).", call. = FALSE)
+    k   <- as.integer(min(length(w), show_donors))
+    sel <- order(w, decreasing = TRUE)[seq_len(k)]
+    donor_names <- (names(w) %||% sprintf("Donor %d", seq_along(w)))[sel]
+    tname <- if (!is.null(names(x$Y_treat))) names(x$Y_treat)[1L] else "treated"
+    df$unit <- rep(c(tname, NA_character_), each = length(times))
+    df_don <- data.frame(
+      time   = rep(times, times = k),
+      value  = as.vector(Y_co[, sel, drop = FALSE]),
+      series = "Donors",
+      unit   = rep(donor_names, each = length(times)),
+      stringsAsFactors = FALSE
+    )
+    out <- rbind(df, df_don)
+    rownames(out) <- NULL
+    return(out)
+  }
+
+  if (type == "weights") {
+    w <- x$unit_weights
+    if (is.null(w) || all(is.na(w)))
+      stop("No unit weights available for this method ",
+           "(GSC/MC/TASC use factor loadings).", call. = FALSE)
+    if (!is.numeric(top_n) || length(top_n) != 1L || is.na(top_n) || top_n < 1)
+      stop("`top_n` must be a single number >= 1 (Inf shows all donors).",
+           call. = FALSE)
+
+    df <- data.frame(
+      unit   = names(w) %||% paste0("Unit_", seq_along(w)),
+      weight = as.numeric(w),
+      stringsAsFactors = FALSE
+    )
+    lam <- x$time_weights
+    two_panel <- identical(x$method, "sdid") && !is.null(lam) &&
+      !is.null(x$T_pre) && length(lam) == x$T_pre
+    if (is.finite(top_n) && nrow(df) > top_n)
+      df <- df[order(df$weight, decreasing = TRUE)[seq_len(top_n)], , drop = FALSE]
+    if (!two_panel) {
+      rownames(df) <- NULL
+      return(df)
+    }
+    # SDID: the estimator is defined by unit weights (omega) AND time weights
+    # (lambda); top_n subsets omega only, matching plot(type = "weights").
+    df$panel <- "omega"
+    t_lab <- as.character((x$times %||% seq_len(x$T_pre))[seq_len(x$T_pre)])
+    df_t  <- data.frame(unit = t_lab, weight = as.numeric(lam), panel = "lambda",
+                        stringsAsFactors = FALSE)
+    out <- rbind(df, df_t)
+    rownames(out) <- NULL
+    return(out)
+  }
+
+  if (type == "pred_weights") {
+    v <- x$v_weights
+    if (is.null(v) || all(is.na(v)))
+      stop("No predictor weights available. A V matrix is estimated only by ",
+           "sharp SCM fits; staggered SCM and the other methods ",
+           "(SDID/GSC/MC/TASC/SI) do not produce one.", call. = FALSE)
+    if (!is.numeric(top_n) || length(top_n) != 1L || is.na(top_n) || top_n < 1)
+      stop("`top_n` must be a single number >= 1 (Inf shows all predictors).",
+           call. = FALSE)
+    df <- data.frame(
+      predictor = names(v) %||% paste0("V", seq_along(v)),
+      weight    = as.numeric(v),
+      stringsAsFactors = FALSE
+    )
+    if (is.finite(top_n) && nrow(df) > top_n)
+      df <- df[order(df$weight, decreasing = TRUE)[seq_len(top_n)], , drop = FALSE]
+    rownames(df) <- NULL
+    return(df)
+  }
+}
+
+#' @rdname plot_data
+#' @export
+plot_data.scm_placebo <- function(x, type = c("gaps", "ratios"),
+                                  mspe_prune = Inf, ...) {
+  type <- match.arg(type)
+  if (!is.numeric(mspe_prune) || length(mspe_prune) != 1L || mspe_prune <= 0)
+    stop("mspe_prune must be a single positive number (Inf = no pruning).",
+         call. = FALSE)
+
+  if (type == "gaps") {
+    times <- x$times
+    if (is.character(times) || is.factor(times))
+      times <- as.numeric(as.character(times))
+    keep <- is.finite(x$mspe_pre_placebo) &
+      x$mspe_pre_placebo <= mspe_prune * x$mspe_pre_treated
+    gaps  <- x$gaps[, keep, drop = FALSE]
+    # sprintf keeps zero-length input zero-length (paste0 would collapse it)
+    units <- colnames(gaps) %||% sprintf("Donor %d", which(keep))
+    df_pl <- data.frame(
+      time   = rep(times, times = ncol(gaps)),
+      gap    = as.vector(gaps),
+      unit   = rep(units, each = length(times)),
+      series = "Placebo (donor pool)",
+      stringsAsFactors = FALSE
+    )
+    df_tr <- data.frame(
+      time   = times,
+      gap    = x$treated_gap,
+      unit   = NA_character_,
+      series = "Treated",
+      stringsAsFactors = FALSE
+    )
+    out <- rbind(df_tr, df_pl)
+    rownames(out) <- NULL
+    return(out)
+  }
+
+  # type == "ratios": every unit (including non-finite ratios excluded from the
+  # plot by the mspe_threshold filter) is kept, so the frame is complete.
+  r     <- x$mspe_ratios_all
+  units <- names(r)
+  if (is.null(units))
+    units <- c("Treated", sprintf("Donor %d", seq_len(length(r) - 1L)))
+  if (!nzchar(units[1L])) units[1L] <- "Treated"
+  blank <- !nzchar(units)
+  units[blank] <- sprintf("Donor %d", which(blank) - 1L)
+  df <- data.frame(
+    unit   = units,
+    ratio  = as.numeric(r),
+    series = c("Treated", rep("Placebo (donor pool)", length(r) - 1L)),
+    stringsAsFactors = FALSE
+  )
+  rownames(df) <- NULL
+  df
 }

@@ -6,7 +6,7 @@
 \usage{
 \method{plot}{coresynth}(
   x,
-  type = c("trend", "gap", "weights"),
+  type = c("trend", "gap", "weights", "pred_weights"),
   colors = NULL,
   labels = NULL,
   vline = list(),
@@ -23,8 +23,10 @@
 \item{x}{A \code{coresynth} object.}
 
 \item{type}{One of \code{"trend"} (observed vs synthetic), \code{"gap"} (ATT over time),
-or \code{"weights"} (donor unit weight bar chart; SDID fits get a
-second panel with the time weight profile).}
+\code{"weights"} (donor unit weight bar chart; SDID fits get a
+second panel with the time weight profile), or
+\code{"pred_weights"} (the predictor/variable weight matrix
+\eqn{V} as a bar chart; sharp SCM only).}
 
 \item{colors}{For \code{type = "trend"}: a named vector overriding series colors,
 e.g. \code{c(treated = "black")} (valid keys: \code{"treated"}, \code{"synthetic"},
@@ -60,13 +62,15 @@ numeric, \code{Date}, and \code{POSIXct} axes alike. Cannot be combined with an
 \item{hline}{Aesthetic overrides for the horizontal zero line in \code{type = "gap"}, as a list passed to \code{\link[ggplot2:geom_hline]{ggplot2::geom_hline()}}. \code{NULL} or \code{FALSE}
 hides the line. Ignored for other types.}
 
-\item{fill}{For \code{type = "weights"}: a single color string overriding the
-bar fill. Ignored for other types.}
+\item{fill}{For \code{type = "weights"} and \code{type = "pred_weights"}: a
+single color string overriding the bar fill. Ignored for other types.}
 
 \item{top_n}{For \code{type = "weights"}: show only the \code{top_n} donors with the
-largest weights. The default \code{Inf} keeps every donor with a
-non-negligible weight. Ignored for other types (and for the SDID time
-weight panel, which is always shown in full).}
+largest weights (default \code{Inf} keeps every donor with a non-negligible
+weight). For \code{type = "pred_weights"}: show only the \code{top_n}
+predictors with the largest \eqn{V} weights (default \code{Inf} shows every
+predictor). Ignored for other types (and for the SDID time weight panel,
+which is always shown in full).}
 
 \item{align}{For \code{type = "trend"} and \code{"gap"}: when \code{TRUE}, shift the
 synthetic series by its pre-treatment level gap to the treated series so
@@ -104,6 +108,9 @@ plot(fit, type = "trend")
 plot(fit, type = "gap")
 plot(fit, type = "weights")
 plot(fit, type = "weights", top_n = 5)
+
+# Predictor (V) weights: which predictors the fit leans on
+plot(fit, type = "pred_weights")
 
 # Overlay the five largest donors behind the treated/synthetic series
 plot(fit, type = "trend", show_donors = 5)

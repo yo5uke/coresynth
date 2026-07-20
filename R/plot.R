@@ -121,8 +121,10 @@
 #'
 #' @param x      A `coresynth` object.
 #' @param type   One of `"trend"` (observed vs synthetic), `"gap"` (ATT over time),
-#'               or `"weights"` (donor unit weight bar chart; SDID fits get a
-#'               second panel with the time weight profile).
+#'               `"weights"` (donor unit weight bar chart; SDID fits get a
+#'               second panel with the time weight profile), or
+#'               `"pred_weights"` (the predictor/variable weight matrix
+#'               \eqn{V} as a bar chart; sharp SCM only).
 #' @param colors For `type = "trend"`: a named vector overriding series colors,
 #'   e.g. `c(treated = "black")` (valid keys: `"treated"`, `"synthetic"`,
 #'   plus `"donors"` when `show_donors > 0`).
@@ -153,12 +155,14 @@
 #' @param hline  Aesthetic overrides for the horizontal zero line in `type =
 #'   "gap"`, as a list passed to [ggplot2::geom_hline()]. `NULL` or `FALSE`
 #'   hides the line. Ignored for other types.
-#' @param fill   For `type = "weights"`: a single color string overriding the
-#'   bar fill. Ignored for other types.
+#' @param fill   For `type = "weights"` and `type = "pred_weights"`: a
+#'   single color string overriding the bar fill. Ignored for other types.
 #' @param top_n  For `type = "weights"`: show only the `top_n` donors with the
-#'   largest weights. The default `Inf` keeps every donor with a
-#'   non-negligible weight. Ignored for other types (and for the SDID time
-#'   weight panel, which is always shown in full).
+#'   largest weights (default `Inf` keeps every donor with a non-negligible
+#'   weight). For `type = "pred_weights"`: show only the `top_n`
+#'   predictors with the largest \eqn{V} weights (default `Inf` shows every
+#'   predictor). Ignored for other types (and for the SDID time weight panel,
+#'   which is always shown in full).
 #' @param align  For `type = "trend"` and `"gap"`: when `TRUE`, shift the
 #'   synthetic series by its pre-treatment level gap to the treated series so
 #'   that both are drawn on the same level. SDID matches trends only up to a
@@ -188,6 +192,9 @@
 #' plot(fit, type = "weights")
 #' plot(fit, type = "weights", top_n = 5)
 #'
+#' # Predictor (V) weights: which predictors the fit leans on
+#' plot(fit, type = "pred_weights")
+#'
 #' # Overlay the five largest donors behind the treated/synthetic series
 #' plot(fit, type = "trend", show_donors = 5)
 #'
@@ -210,7 +217,8 @@
 #' }
 #' @import ggplot2
 #' @export
-plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
+plot.coresynth <- function(x, type = c("trend", "gap", "weights",
+                                       "pred_weights"),
                             colors = NULL, labels = NULL,
                             vline = list(), vline_offset = 0, hline = list(),
                             fill = NULL, top_n = Inf,
@@ -405,6 +413,31 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights"),
       theme_minimal(base_size = 13) +
       labs(title = "Donor Unit and Time Weights  [SDID]",
            x = "Weight", y = NULL)
+    return(p)
+  }
+
+  if(type == "pred_weights") {
+    v <- x$v_weights
+    if(is.null(v) || all(is.na(v)))
+      stop("No predictor (V) weights available. A V matrix is estimated only ",
+           "by sharp SCM fits; staggered SCM and the other methods ",
+           "(SDID/GSC/MC/TASC/SI) do not produce one.", call. = FALSE)
+    if(!is.numeric(top_n) || length(top_n) != 1L || is.na(top_n) || top_n < 1)
+      stop("`top_n` must be a single number >= 1 (Inf shows all predictors).")
+
+    bar_fill <- fill %||% "#4575b4"
+    df <- data.frame(
+      predictor = names(v) %||% paste0("V", seq_along(v)),
+      weight    = as.numeric(v)
+    )
+    if(is.finite(top_n) && nrow(df) > top_n)
+      df <- df[order(df$weight, decreasing = TRUE)[seq_len(top_n)], ]
+
+    p <- ggplot(df, aes(x = reorder(predictor, weight), y = weight)) +
+      geom_col(fill = bar_fill, alpha = 0.85) +
+      coord_flip() +
+      theme_minimal(base_size = 13) +
+      labs(title = "Predictor (V) Weights", x = NULL, y = "Weight")
     return(p)
   }
 }

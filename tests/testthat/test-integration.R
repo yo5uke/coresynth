@@ -3643,6 +3643,42 @@ test_that("plot.coresynth weights: top_n limits bars to the largest weights", {
   expect_error(plot(fit, type = "weights", top_n = c(1, 2)), "top_n")
 })
 
+test_that("plot.coresynth pred_weights: one bar per predictor, fill reaches plot", {
+  fit <- scm_fit(
+    y ~ d | id + time, data = panel_cov, method = "scm",
+    predictors = list(pred(c("cov1", "cov2"), 1:10))
+  )
+  p <- plot(fit, type = "pred_weights", fill = "darkorange")
+  expect_s3_class(p, "ggplot")
+  built <- ggplot2::ggplot_build(p)
+  expect_equal(nrow(built$data[[1]]), length(fit$v_weights))
+  expect_true(all(built$data[[1]]$fill == "darkorange"))
+  # bar heights are the V weights (order-independent)
+  expect_setequal(built$data[[1]]$y, unname(fit$v_weights))
+})
+
+test_that("plot.coresynth pred_weights: top_n keeps the largest V weights", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  n_all <- nrow(ggplot2::ggplot_build(plot(fit, type = "pred_weights"))$data[[1]])
+  expect_equal(n_all, length(fit$v_weights))
+
+  built <- ggplot2::ggplot_build(plot(fit, type = "pred_weights", top_n = 2))
+  expect_equal(nrow(built$data[[1]]), 2L)
+  v_kept <- sort(fit$v_weights, decreasing = TRUE)[1:2]
+  expect_setequal(built$data[[1]]$y, unname(v_kept))
+
+  expect_error(plot(fit, type = "pred_weights", top_n = 0), "top_n")
+})
+
+test_that("plot.coresynth pred_weights: errors when no V matrix exists", {
+  fit_mc <- scm_fit(y ~ d | id + time, data = panel, method = "mc")
+  expect_error(plot(fit_mc, type = "pred_weights"), "V")
+
+  # staggered SCM stores v_weights = NULL
+  fit_stag <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
+  expect_error(plot(fit_stag, type = "pred_weights"), "V")
+})
+
 test_that("plot.scm_placebo type='gaps': color/vline/hline overrides work", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
   inf <- mspe_ratio_pval(fit)

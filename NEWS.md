@@ -1,4 +1,4 @@
-# coresynth (development version)
+# coresynth 0.4.0
 
 ## Breaking changes
 
@@ -32,7 +32,6 @@
   predictor names (or `V1..V_Tpre` for outcomes-only fits) and honour the
   `fill` and `top_n` arguments. Staggered SCM and the other estimators do not
   estimate a `V` matrix and raise an informative error.
-
 - **`plot_data()`** returns the tidy `data.frame` behind any `plot()` view,
   taking the same `type` argument (`"trend"`, `"gap"`, `"weights"`,
   `"pred_weights"` for a fit; `"gaps"`, `"ratios"` for an `scm_placebo`
@@ -44,7 +43,6 @@
   honoured. The cosmetic near-zero-weight filter that `type = "weights"`
   applies to the chart is not used here, so every donor is returned (use
   `top_n` to subset).
-
 - **`v_window` argument in `scm_fit()`** (sharp SCM fits): a vector of
   pre-treatment time values over which the outer V optimisation evaluates
   the pre-treatment fit, e.g. `v_window = 1975:1988`. The default (`NULL`)
@@ -53,7 +51,6 @@
   and the reported full-window `loss` are untouched -- and
   `mspe_ratio_pval()` mirrors it in every placebo refit. Cannot be combined
   with `v_selection = "oos"`, which manages its own train/validation split.
-
 - **`colors`/`labels` in `plot.coresynth()` and `plot.scm_placebo()` are now
   keyed by one-word series identifiers**: `treated`, `synthetic`, and (with
   `show_donors > 0`) `donors` for trend plots; `treated` and `placebo` for
@@ -64,7 +61,6 @@
   `colors = c(treated = "black")` instead of `c(Treated = "black")`; an
   unknown key errors with the list of valid keys. The displayed legend text
   is unchanged.
-
 - **`mspe_ratio_pval()` placebo refits now mirror the treated fit's
   predictor specification by default**: `use_covariates` defaults to `NULL`
   (auto) instead of `FALSE`. When the fit was estimated with a `predictors`
@@ -78,82 +74,6 @@
   optimisation. Outcomes-only fits are unaffected (auto resolves to the
   outcomes-only placebo path, as before). Pass `use_covariates = FALSE`
   explicitly to reproduce the old behaviour on covariate fits.
-
-## Deprecated
-
-- **`v_optim = "bfgs"` is deprecated** and will be removed in a future
-  release. It is a single-start L-BFGS-B outer optimiser with no advantage
-  over the alternatives now that the default is multi-start: use
-  `v_optim = "multistart"` (or the `"auto"` default) for predictor-based
-  fits, and `"coord_descent"` for outcomes-only fits. Passing `"bfgs"` still
-  works but now emits a deprecation warning. `"coord_descent"` is **not**
-  deprecated: besides being a selectable optimiser, it is the engine for
-  outcomes-only and staggered fits and the reference against which the
-  multi-start never-worse guarantee is defined.
-
-## Performance
-
-- **The multi-start outer search runs at interactive speed.** Outer-loss
-  evaluations are KKT-gated warm-started active-set solves; the active set
-  gained Bland's-rule anti-cycling (engaged only beyond 30 pivots, so
-  previously terminating pivot paths are untouched) and now solves each
-  face subproblem in the null space of the sum constraint via a
-  Cholesky/eigendecomposition hybrid that is robust to the rank-deficient
-  metrics (k < |active set|) the multi-start screen hits constantly -- and
-  whose branch decision cannot be flipped by last-bit input perturbations,
-  preserving the scale-invariance of `scale_predictors`. On a degenerate
-  face the warm active-set solve can churn to its pivot cap, and the old
-  cold-FISTA fallback (thousands of iterations on ill-conditioned metrics)
-  made a single slow donor dominate placebo wall time; a finite-termination
-  Lawson-Hanson NNLS now seeds the exact face solve on those cases in
-  microseconds, gated by the same KKT check so the returned solution is
-  unchanged. The rescue is confined to the multi-start internals -- every
-  other path (outcomes-only, `coord_descent`, `oos`, staggered,
-  `loo_donors()`, conformal) keeps its historical solver bit-for-bit, and
-  the multi-start uniform-start leg stays on the plain path so the
-  never-worse guarantee holds. Candidate refinement pipelines run in
-  parallel, and the placebo battery flattens the (donor x candidate) task
-  list into one schedule -- donor-level parallelism alone lets the slowest
-  donor pin a thread while the others go idle. On the Proposition 99
-  8-predictor spec a full multi-start fit takes ~0.06s and the complete
-  38-donor `mspe_ratio_pval()` battery ~1.7s (every donor's fit verified
-  never worse than the single-start path). A side effect of the exact face solves:
-  inner QPs on rank-deficient faces are now solved exactly where the
-  previous code fell back to a loosely-converged FISTA iterate.
-  Outcomes-only sharp, staggered, and placebo results are bit-identical to
-  the previous release; `v_selection = "oos"` outcomes fits (where the
-  training half has fewer rows than donors) can shift slightly, toward
-  better fits.
-
-- **The nested V/W coordinate descent is orders of magnitude faster.** The
-  solver behind `scm_weights_cpp()` and the outcomes-only placebo loop in
-  `scm_placebo_cpp()` now solves each inner simplex QP with a warm-started
-  active-set method (KKT-verified exact solve, with FISTA fallback), applies
-  V-coordinate changes to the Gram matrix as implicit rank-1 updates instead
-  of rebuilding `X0' V X0` per grid point, and computes the Lipschitz
-  constant once per coordinate-descent sweep instead of once per QP. On a
-  monthly panel with `T_pre = 139`, `T_post = 19`, and 75 donors, the full
-  75-unit outcomes-only placebo run drops from roughly an hour to about
-  2 seconds, and a single outcomes-only `scm_fit()` from ~75 s to ~0.1 s.
-  Per-unit results agree with the previous implementation within the
-  coordinate-descent convergence tolerance: the estimator and its
-  grid/accept/normalisation semantics are unchanged, and the inner QP
-  solutions are now exact rather than first-order-approximate.
-
-- **Covariate-spec placebo refits now run in parallel.** When the fit was
-  estimated with a `predictors` specification, `mspe_ratio_pval()`
-  previously refit each placebo unit in a sequential R loop; the loop now
-  runs in C++ under OpenMP (new low-level routine `scm_placebo_x_cpp()`,
-  the covariate counterpart of `scm_placebo_cpp()`). Each leave-one-out
-  problem is solved by the same coordinate-descent core as before, so
-  per-unit results are identical to machine precision -- only the wall
-  time changes. The speedup is bounded by the slowest single placebo unit
-  (iterations are distributed dynamically across cores), so it approaches
-  the core count when per-unit costs are uniform and is smaller when one
-  hard-to-fit donor dominates.
-
-## New features
-
 - **Treatment-line placement in plots**: `plot.coresynth()` (`type = "trend"`
   and `"gap"`) and `plot.scm_placebo()` (`type = "gaps"`) gain a
   `vline_offset` argument controlling where the vertical treatment line is
@@ -165,7 +85,6 @@
   absolute positions (previously an error), e.g.
   `vline = list(xintercept = "1989-01-01")` on a `Date` axis. Hiding the line
   still works via `vline = FALSE`.
-
 - **Level-aligned trend and gap plots**: `plot.coresynth()` gains an `align`
   argument for `type = "trend"` and `"gap"`. `align = TRUE` shifts the
   synthetic series by its pre-treatment level gap to the treated series, so
@@ -221,6 +140,77 @@
   donor pools (N = 100: ~0.8 s to ~0.06 s per fit). Validated against the
   reference implementation `augsynth` (weights correlate at 1.0, identical
   heuristic `nu`, equal pooled imbalance at `nu = 1`).
+
+## Deprecated
+
+- **`v_optim = "bfgs"` is deprecated** and will be removed in a future
+  release. It is a single-start L-BFGS-B outer optimiser with no advantage
+  over the alternatives now that the default is multi-start: use
+  `v_optim = "multistart"` (or the `"auto"` default) for predictor-based
+  fits, and `"coord_descent"` for outcomes-only fits. Passing `"bfgs"` still
+  works but now emits a deprecation warning. `"coord_descent"` is **not**
+  deprecated: besides being a selectable optimiser, it is the engine for
+  outcomes-only and staggered fits and the reference against which the
+  multi-start never-worse guarantee is defined.
+
+## Performance
+
+- **The multi-start outer search runs at interactive speed.** Outer-loss
+  evaluations are KKT-gated warm-started active-set solves; the active set
+  gained Bland's-rule anti-cycling (engaged only beyond 30 pivots, so
+  previously terminating pivot paths are untouched) and now solves each
+  face subproblem in the null space of the sum constraint via a
+  Cholesky/eigendecomposition hybrid that is robust to the rank-deficient
+  metrics (k < |active set|) the multi-start screen hits constantly -- and
+  whose branch decision cannot be flipped by last-bit input perturbations,
+  preserving the scale-invariance of `scale_predictors`. On a degenerate
+  face the warm active-set solve can churn to its pivot cap, and the old
+  cold-FISTA fallback (thousands of iterations on ill-conditioned metrics)
+  made a single slow donor dominate placebo wall time; a finite-termination
+  Lawson-Hanson NNLS now seeds the exact face solve on those cases in
+  microseconds, gated by the same KKT check so the returned solution is
+  unchanged. The rescue is confined to the multi-start internals -- every
+  other path (outcomes-only, `coord_descent`, `oos`, staggered,
+  `loo_donors()`, conformal) keeps its historical solver bit-for-bit, and
+  the multi-start uniform-start leg stays on the plain path so the
+  never-worse guarantee holds. Candidate refinement pipelines run in
+  parallel, and the placebo battery flattens the (donor x candidate) task
+  list into one schedule -- donor-level parallelism alone lets the slowest
+  donor pin a thread while the others go idle. On the Proposition 99
+  8-predictor spec a full multi-start fit takes ~0.06s and the complete
+  38-donor `mspe_ratio_pval()` battery ~1.7s (every donor's fit verified
+  never worse than the single-start path). A side effect of the exact face solves:
+  inner QPs on rank-deficient faces are now solved exactly where the
+  previous code fell back to a loosely-converged FISTA iterate.
+  Outcomes-only sharp, staggered, and placebo results are bit-identical to
+  the previous release; `v_selection = "oos"` outcomes fits (where the
+  training half has fewer rows than donors) can shift slightly, toward
+  better fits.
+- **The nested V/W coordinate descent is orders of magnitude faster.** The
+  solver behind `scm_weights_cpp()` and the outcomes-only placebo loop in
+  `scm_placebo_cpp()` now solves each inner simplex QP with a warm-started
+  active-set method (KKT-verified exact solve, with FISTA fallback), applies
+  V-coordinate changes to the Gram matrix as implicit rank-1 updates instead
+  of rebuilding `X0' V X0` per grid point, and computes the Lipschitz
+  constant once per coordinate-descent sweep instead of once per QP. On a
+  monthly panel with `T_pre = 139`, `T_post = 19`, and 75 donors, the full
+  75-unit outcomes-only placebo run drops from roughly an hour to about
+  2 seconds, and a single outcomes-only `scm_fit()` from ~75 s to ~0.1 s.
+  Per-unit results agree with the previous implementation within the
+  coordinate-descent convergence tolerance: the estimator and its
+  grid/accept/normalisation semantics are unchanged, and the inner QP
+  solutions are now exact rather than first-order-approximate.
+- **Covariate-spec placebo refits now run in parallel.** When the fit was
+  estimated with a `predictors` specification, `mspe_ratio_pval()`
+  previously refit each placebo unit in a sequential R loop; the loop now
+  runs in C++ under OpenMP (new low-level routine `scm_placebo_x_cpp()`,
+  the covariate counterpart of `scm_placebo_cpp()`). Each leave-one-out
+  problem is solved by the same coordinate-descent core as before, so
+  per-unit results are identical to machine precision -- only the wall
+  time changes. The speedup is bounded by the slowest single placebo unit
+  (iterations are distributed dynamically across cores), so it approaches
+  the core count when per-unit costs are uniform and is smaller when one
+  hard-to-fit donor dominates.
 
 ## Bug fixes
 

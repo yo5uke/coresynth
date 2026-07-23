@@ -351,8 +351,11 @@ fit_scm_cpp <- function(
     } else if (effective_outer == "bfgs") {
       .scm_bfgs_outer(X0, X1, Z0, Z1, t_train = t_train, z_rows = z_rows)
     } else {
+      # Outcomes-only fits use the cheap bordered-KKT face solve; predictor
+      # fits keep the scale-robust null-space solver (cheap_face = FALSE).
       scm_weights_cpp(X0, X1, Z0, Z1, t_train = t_train, z_rows = z_rows,
-                      multistart = (effective_outer == "multistart"))
+                      multistart = (effective_outer == "multistart"),
+                      cheap_face = !use_cov)
     }
     unit_w <- drop(res$W)
     V_final <- drop(res$V)
@@ -366,7 +369,8 @@ fit_scm_cpp <- function(
       .scm_bfgs_outer(X0, X1, Z0, Z1, t_train = t_train, z_rows = z_rows)
     } else {
       scm_weights_cpp(X0, X1, Z0, Z1, t_train = t_train, z_rows = z_rows,
-                      multistart = (effective_outer == "multistart"))
+                      multistart = (effective_outer == "multistart"),
+                      cheap_face = !use_cov)
     }
     V_star <- drop(res_v$V)
 
@@ -467,7 +471,9 @@ fit_scm_cpp <- function(
   res <- if (optimizer == "bfgs") {
     .scm_bfgs_outer(X0_train, X1_train, Z0_val, Z1_val, t_train = -1L)
   } else {
-    scm_weights_cpp(X0_train, X1_train, Z0_val, Z1_val, t_train = -1L)
+    # Outcomes-only OOS: cheap bordered-KKT face solve (no predictors).
+    scm_weights_cpp(X0_train, X1_train, Z0_val, Z1_val, t_train = -1L,
+                    cheap_face = TRUE)
   }
   V_star <- drop(res$V)
 
@@ -678,8 +684,9 @@ fit_scm_cpp <- function(
           .scm_bfgs_outer(Y_co_pre, Y_tr_pre, Y_co_pre, Y_tr_pre,
                           t_train = -1L)
         } else {
+          # Staggered SCM is outcomes-only: cheap bordered-KKT face solve.
           scm_weights_cpp(Y_co_pre, Y_tr_pre, Y_co_pre, Y_tr_pre,
-                          t_train = -1L)
+                          t_train = -1L, cheap_face = TRUE)
         }
         unit_w          <- drop(res$W)
         lambda_pen_used <- NA_real_
@@ -692,7 +699,7 @@ fit_scm_cpp <- function(
                           t_train = -1L)
         } else {
           scm_weights_cpp(Y_co_pre, Y_tr_pre, Y_co_pre, Y_tr_pre,
-                          t_train = -1L)
+                          t_train = -1L, cheap_face = TRUE)
         }
         V_star <- drop(res_v$V)
         # OOS: V* refers to the last-t0 window, so the penalised QP must be
@@ -1390,7 +1397,8 @@ placebo_in_time <- function(fit, t0_placebo = NULL) {
 
   res <- scm_weights_cpp(
     Y_co_pre[fit_rows, , drop = FALSE], Y_tr_pre[fit_rows],
-    Y_co_pre[fit_rows, , drop = FALSE], Y_tr_pre[fit_rows]
+    Y_co_pre[fit_rows, , drop = FALSE], Y_tr_pre[fit_rows],
+    cheap_face = TRUE
   )
   W <- drop(res$W)
   names(W) <- colnames(Y_co_pre)

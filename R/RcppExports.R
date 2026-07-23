@@ -190,13 +190,20 @@ scm_inner_weights_cpp <- function(X0, X1, V_diag) {
 #'   polish, Nelder-Mead refinement) instead of a single coordinate-descent
 #'   pass from the uniform V. The result is never worse (in outer loss) than
 #'   the single-start path.
+#' @param cheap_face If `TRUE`, the inner simplex QP solves each active-set
+#'   face with a cheap bordered-KKT direct solve instead of the scale-robust
+#'   null-space projection. Valid only for the outcomes-only regime (no user
+#'   predictors, no predictor rescaling), where it reproduces the null-space
+#'   solution to round-off while running markedly faster. `FALSE` (default)
+#'   keeps the null-space solver required for scale invariance and
+#'   rank-deficient faces when predictors are supplied.
 #' @return A list with:
 #'   * `W`: Donor weight vector (N_co x 1) on the unit simplex
 #'   * `V`: Optimal metric diagonal (k x 1, normalised to sum to 1)
 #'   * `loss`: Final pre-treatment prediction loss (full pre-treatment window)
 #' @export
-scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train = -1L, z_rows = NULL, multistart = FALSE) {
-    .Call(`_coresynth_scm_weights_cpp`, X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart)
+scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train = -1L, z_rows = NULL, multistart = FALSE, cheap_face = FALSE) {
+    .Call(`_coresynth_scm_weights_cpp`, X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart, cheap_face)
 }
 
 #' Calculate SDID Unit Weights (omega)

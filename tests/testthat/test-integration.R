@@ -4358,3 +4358,70 @@ test_that("Phase 36: v_window errors on staggered fits", {
     regexp = "sharp"
   )
 })
+
+# ── Phase 38: outcomes-only cheap bordered-KKT inner-QP face solve ─────────────
+# The outcomes-only path solves each active-set face with a cheap bordered-KKT
+# direct solve (cheap_face = TRUE) rather than the scale-robust null-space
+# projection used for user predictors. It is the same nested V/W estimator, so
+# the two solvers must agree to round-off; the flag only changes speed.
+
+# Build outcome matrices with a low-rank factor structure; optionally make two
+# donor pairs near-collinear to stress the inner face solver.
+.mk_oo <- function(seed, N_co, T_pre, sd, degen = FALSE) {
+  set.seed(seed)
+  r  <- 3L
+  L  <- matrix(rnorm((N_co + 1L) * r), N_co + 1L, r)
+  Ft <- matrix(rnorm(T_pre * r), T_pre, r)
+  Y  <- Ft %*% t(L) +
+    matrix(rnorm(T_pre * (N_co + 1L), sd = sd), T_pre, N_co + 1L)
+  if (degen) {
+    Y[, 3] <- Y[, 2] + rnorm(T_pre, sd = 1e-4)
+    Y[, 5] <- Y[, 4] + rnorm(T_pre, sd = 1e-4)
+  }
+  list(X1 = Y[, 1], X0 = Y[, -1, drop = FALSE])
+}
+
+test_that("Phase 38: cheap_face matches the null-space solver (outcomes-only)", {
+  grid <- expand.grid(seed = 1:5, sd = c(0.1, 0.3, 1.0),
+                      degen = c(FALSE, TRUE))
+  for (i in seq_len(nrow(grid))) {
+    g <- grid[i, ]
+    d <- .mk_oo(g$seed, N_co = 25L, T_pre = 18L, sd = g$sd, degen = g$degen)
+    cheap  <- scm_weights_cpp(d$X0, d$X1, d$X0, d$X1, cheap_face = TRUE)
+    robust <- scm_weights_cpp(d$X0, d$X1, d$X0, d$X1, cheap_face = FALSE)
+    # Same estimator, different inner face solve: agree to round-off.
+    expect_equal(as.numeric(cheap$W), as.numeric(robust$W), tolerance = 1e-8)
+    expect_equal(cheap$loss, robust$loss, tolerance = 1e-10)
+    # Simplex feasibility of the fast-path solution.
+    expect_true(all(cheap$W >= -1e-10))
+    expect_equal(sum(cheap$W), 1, tolerance = 1e-8)
+  }
+})
+
+test_that("Phase 38: scm_fit outcomes-only equals the robust null-space solver", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_equal(fit$v_optim_effective, "coord_descent")
+  Yp <- fit$Y_co_pre
+  yt <- fit$Y_treat[seq_len(fit$T_pre)]
+  # The fit uses cheap_face internally; the null-space solver is the reference.
+  ref <- scm_weights_cpp(Yp, yt, Yp, yt, cheap_face = FALSE)
+  expect_equal(unname(fit$unit_weights), as.numeric(ref$W), tolerance = 1e-8)
+  expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-8)
+})
+
+test_that("Phase 38: near-collinear donor pool stays feasible (outcomes-only)", {
+  d  <- .mk_oo(123L, N_co = 20L, T_pre = 15L, sd = 0.05, degen = TRUE)
+  df <- data.frame(
+    id   = rep(seq_len(ncol(d$X0) + 1L), each = nrow(d$X0) + 4L),
+    time = rep(seq_len(nrow(d$X0) + 4L), times = ncol(d$X0) + 1L)
+  )
+  Yfull <- cbind(d$X1, d$X0)
+  Ypost <- Yfull[rep(nrow(Yfull), 4L), ] + 0.1  # 4 post periods
+  Yall  <- rbind(Yfull, Ypost)
+  df$y  <- as.vector(Yall)
+  df$d  <- as.integer(df$id == 1L & df$time > nrow(d$X0))
+  fit <- scm_fit(y ~ d | id + time, data = df, method = "scm")
+  expect_true(all(fit$unit_weights >= -1e-10))
+  expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-8)
+  expect_true(is.finite(fit$estimate))
+})

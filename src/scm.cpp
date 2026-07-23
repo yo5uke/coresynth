@@ -76,7 +76,8 @@ static arma::mat sum_null_basis(arma::uword m) {
 static bool active_set_simplex_rank1(const arma::mat& Q, const arma::vec& r,
                                      double dv, const arma::vec& c,
                                      arma::uvec A, arma::vec& x_out,
-                                     int max_pivots = 100) {
+                                     int max_pivots = 100,
+                                     bool cheap_face = false) {
   const arma::uword N = Q.n_rows;
   if (A.n_elem == 0) return false;
 
@@ -105,6 +106,30 @@ static bool active_set_simplex_rank1(const arma::mat& Q, const arma::vec& r,
     if (m == 1) {
       wA = arma::vec{1.0};
       mu = cA(0) - G(0, 0);
+    } else if (cheap_face) {
+      // Cheap bordered-KKT direct solve, restricted to the outcomes-only
+      // regime (no user predictors). There V is dense and the face G is well
+      // conditioned, so the (m+1)x(m+1) saddle system is almost always
+      // solvable and markedly cheaper than the null-space projection below --
+      // this is the fast path the outcomes-only fit relied on before the
+      // solver was hardened for the predictor multi-start. It is NOT used
+      // when predictors are supplied: a rescaling of the predictor units can
+      // flip this solve's success/failure at the knife edge, breaking scale
+      // invariance, and rank-deficient G (one-hot V) makes it fail outright.
+      // The null-space route handles both, so it stays the default; on a
+      // solve failure here we return false and the caller falls back to it
+      // via FISTA, exactly as the historical outcomes-only path did.
+      arma::mat K(m + 1, m + 1, arma::fill::zeros);
+      K.submat(0, 0, m - 1, m - 1) = G;
+      K.col(m).head(m).ones();
+      K.row(m).head(m).ones();
+      arma::vec rhs(m + 1);
+      rhs.head(m) = cA;
+      rhs(m)      = 1.0;
+      arma::vec sol;
+      if (!arma::solve(sol, K, rhs, arma::solve_opts::no_approx)) return false;
+      wA = sol.head(m);
+      mu = sol(m);
     } else {
       arma::mat Z_ns = sum_null_basis(m);
       arma::vec w0(m);
@@ -326,11 +351,13 @@ static arma::vec fista_simplex_rank1(const arma::mat& Q, const arma::vec& r,
                                      double dv, const arma::vec& c,
                                      double L, arma::vec x,
                                      int max_iter = 10000, double tol = 1e-6,
-                                     bool nnls_rescue = false) {
+                                     bool nnls_rescue = false,
+                                     bool cheap_face = false) {
   x = proj_simplex(x);
 
   arma::vec x_as;
-  if (active_set_simplex_rank1(Q, r, dv, c, arma::find(x > 1e-10), x_as)) {
+  if (active_set_simplex_rank1(Q, r, dv, c, arma::find(x > 1e-10), x_as,
+                               100, cheap_face)) {
     return x_as;
   }
   if (nnls_rescue && nnls_rescue_rank1(Q, r, dv, c, x_as)) {
@@ -356,7 +383,8 @@ static arma::vec fista_simplex_rank1(const arma::mat& Q, const arma::vec& r,
     if (arma::norm(x - x_prev, 2) < tol) break;
     // Retry the exact solve once the support has moved on a little.
     if (iter > 0 && iter % 50 == 0) {
-      if (active_set_simplex_rank1(Q, r, dv, c, arma::find(x > 1e-10), x_as)) {
+      if (active_set_simplex_rank1(Q, r, dv, c, arma::find(x > 1e-10), x_as,
+                                   100, cheap_face)) {
         return x_as;
       }
     }
@@ -388,7 +416,8 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
                                         const arma::vec& Z1_eval,
                                         int max_iter, double tol,
                                         arma::vec& V_diag, double& best_loss,
-                                        bool nnls_rescue = false) {
+                                        bool nnls_rescue = false,
+                                        bool cheap_face = false) {
   int k = X0.n_rows;
   arma::vec best_W = scm_inner_weights_cpp(X0, X1, V_diag);
   best_loss = arma::norm(Z1_eval - Z0_eval * best_W, 2);
@@ -424,7 +453,8 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
         arma::vec c_g = c_base + (dv * X1(j)) * r_j;
         double    L_g = L_base + std::max(dv, 0.0) * row_n2(j);
         arma::vec cand_W = fista_simplex_rank1(Q_base, r_j, dv, c_g, L_g, warm,
-                                               10000, 1e-6, nnls_rescue);
+                                               10000, 1e-6, nnls_rescue,
+                                               cheap_face);
         warm = cand_W;
         double cand_loss = arma::norm(Z1_eval - Z0_eval * cand_W, 2);
         if (cand_loss < local_best_loss) {
@@ -880,7 +910,8 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
 // placebo refits stay symmetric with a multi-start treated fit.
 arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
                                     const arma::mat& Z0, const arma::vec& Z1,
-                                    int max_iter, double tol, bool multistart) {
+                                    int max_iter, double tol, bool multistart,
+                                    bool cheap_face) {
   int k = X0.n_rows;
   arma::vec V_diag = arma::ones<arma::vec>(k) / k;
   double best_loss = 0.0;
@@ -889,7 +920,8 @@ arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
                                V_diag, best_loss);
   }
   return scm_coord_descent_core(X0, X1, Z0, Z1, max_iter, tol,
-                                V_diag, best_loss);
+                                V_diag, best_loss, /*nnls_rescue=*/false,
+                                cheap_face);
 }
 
 // Outer Optimization for SCM using simple Coordinate Descent
@@ -930,6 +962,13 @@ arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
 //'   polish, Nelder-Mead refinement) instead of a single coordinate-descent
 //'   pass from the uniform V. The result is never worse (in outer loss) than
 //'   the single-start path.
+//' @param cheap_face If `TRUE`, the inner simplex QP solves each active-set
+//'   face with a cheap bordered-KKT direct solve instead of the scale-robust
+//'   null-space projection. Valid only for the outcomes-only regime (no user
+//'   predictors, no predictor rescaling), where it reproduces the null-space
+//'   solution to round-off while running markedly faster. `FALSE` (default)
+//'   keeps the null-space solver required for scale invariance and
+//'   rank-deficient faces when predictors are supplied.
 //' @return A list with:
 //'   * `W`: Donor weight vector (N_co x 1) on the unit simplex
 //'   * `V`: Optimal metric diagonal (k x 1, normalised to sum to 1)
@@ -941,7 +980,8 @@ Rcpp::List scm_weights_cpp(const arma::mat& X0, const arma::vec& X1,
                             int max_iter = 100, double tol = 1e-4,
                             int t_train = -1,
                             Rcpp::Nullable<Rcpp::IntegerVector> z_rows = R_NilValue,
-                            bool multistart = false) {
+                            bool multistart = false,
+                            bool cheap_face = false) {
   int k     = X0.n_rows;
   int T_pre = (int)Z0.n_rows;
 
@@ -979,7 +1019,8 @@ Rcpp::List scm_weights_cpp(const arma::mat& X0, const arma::vec& X1,
     ? scm_multistart_core(X0, X1, Z0_eval, Z1_eval,
                           max_iter, tol, V_diag, best_loss)
     : scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval,
-                             max_iter, tol, V_diag, best_loss);
+                             max_iter, tol, V_diag, best_loss,
+                             /*nnls_rescue=*/false, cheap_face);
 
   // OOS mode: refit W on full pre-treatment data with selected V*
   arma::vec final_W = do_oos ? scm_inner_weights_cpp(X0, X1, V_diag) : best_W;

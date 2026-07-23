@@ -129,8 +129,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // scm_weights_cpp
-Rcpp::List scm_weights_cpp(const arma::mat& X0, const arma::vec& X1, const arma::mat& Z0, const arma::vec& Z1, int max_iter, double tol, int t_train, Rcpp::Nullable<Rcpp::IntegerVector> z_rows, bool multistart);
-RcppExport SEXP _coresynth_scm_weights_cpp(SEXP X0SEXP, SEXP X1SEXP, SEXP Z0SEXP, SEXP Z1SEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP t_trainSEXP, SEXP z_rowsSEXP, SEXP multistartSEXP) {
+Rcpp::List scm_weights_cpp(const arma::mat& X0, const arma::vec& X1, const arma::mat& Z0, const arma::vec& Z1, int max_iter, double tol, int t_train, Rcpp::Nullable<Rcpp::IntegerVector> z_rows, bool multistart, bool cheap_face);
+RcppExport SEXP _coresynth_scm_weights_cpp(SEXP X0SEXP, SEXP X1SEXP, SEXP Z0SEXP, SEXP Z1SEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP t_trainSEXP, SEXP z_rowsSEXP, SEXP multistartSEXP, SEXP cheap_faceSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -143,7 +143,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type t_train(t_trainSEXP);
     Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::IntegerVector> >::type z_rows(z_rowsSEXP);
     Rcpp::traits::input_parameter< bool >::type multistart(multistartSEXP);
-    rcpp_result_gen = Rcpp::wrap(scm_weights_cpp(X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart));
+    Rcpp::traits::input_parameter< bool >::type cheap_face(cheap_faceSEXP);
+    rcpp_result_gen = Rcpp::wrap(scm_weights_cpp(X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart, cheap_face));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -243,7 +244,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_coresynth_proj_simplex", (DL_FUNC) &_coresynth_proj_simplex, 1},
     {"_coresynth_solve_simplex_qp", (DL_FUNC) &_coresynth_solve_simplex_qp, 5},
     {"_coresynth_scm_inner_weights_cpp", (DL_FUNC) &_coresynth_scm_inner_weights_cpp, 3},
-    {"_coresynth_scm_weights_cpp", (DL_FUNC) &_coresynth_scm_weights_cpp, 9},
+    {"_coresynth_scm_weights_cpp", (DL_FUNC) &_coresynth_scm_weights_cpp, 10},
     {"_coresynth_sdid_unit_weights_cpp", (DL_FUNC) &_coresynth_sdid_unit_weights_cpp, 3},
     {"_coresynth_sdid_time_weights_cpp", (DL_FUNC) &_coresynth_sdid_time_weights_cpp, 3},
     {"_coresynth_sdid_estimate_cpp", (DL_FUNC) &_coresynth_sdid_estimate_cpp, 6},

@@ -12,7 +12,8 @@ arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pr
 // Forward declarations of internal SCM weight solvers (defined in scm.cpp)
 arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
                                     const arma::mat& Z0, const arma::vec& Z1,
-                                    int max_iter, double tol, bool multistart);
+                                    int max_iter, double tol, bool multistart,
+                                    bool cheap_face = false);
 void scm_multistart_batch(const std::vector<arma::mat>& X0d,
                           const std::vector<arma::vec>& X1d,
                           const std::vector<arma::mat>& Z0d,
@@ -135,9 +136,12 @@ Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
       Z1_fit = y_pre_i;
     }
 
+    // Outcomes-only placebo: X is the full pre-period outcomes, so the inner
+    // QP uses the cheap bordered-KKT face solve (cheap_face = true), matching
+    // the outcomes-only treated fit and keeping the permutation exchangeable.
     arma::vec w = scm_weights_vec_internal(Y_d_pre, y_pre_i,
                                            Z0_fit, Z1_fit,
-                                           max_iter, tol, false);
+                                           max_iter, tol, false, true);
 
     arma::vec synth_pre  = Y_d_pre  * w;
     arma::vec synth_post = Y_d_post * w;

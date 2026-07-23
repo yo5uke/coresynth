@@ -13,7 +13,8 @@ scm_weights_cpp(
   tol = 1e-04,
   t_train = -1L,
   z_rows = NULL,
-  multistart = FALSE
+  multistart = FALSE,
+  cheap_face = FALSE
 )
 }
 \arguments{
@@ -46,6 +47,14 @@ deterministic multi-start search (screened start set, coordinate-descent
 polish, Nelder-Mead refinement) instead of a single coordinate-descent
 pass from the uniform V. The result is never worse (in outer loss) than
 the single-start path.}
+
+\item{cheap_face}{If \code{TRUE}, the inner simplex QP solves each active-set
+face with a cheap bordered-KKT direct solve instead of the scale-robust
+null-space projection. Valid only for the outcomes-only regime (no user
+predictors, no predictor rescaling), where it reproduces the null-space
+solution to round-off while running markedly faster. \code{FALSE} (default)
+keeps the null-space solver required for scale invariance and
+rank-deficient faces when predictors are supplied.}
 }
 \value{
 A list with:

@@ -1,3 +1,25 @@
+# coresynth 0.4.0.9000
+
+## Performance
+
+- **Outcomes-only SCM fits are ~2-2.5x faster again.** Hardening the inner
+  active-set QP for the predictor multi-start search (0.4.0) replaced the
+  cheap bordered-KKT face solve with a scale-robust null-space projection on
+  every pivot. That robustness is only needed when `predictors` are supplied
+  (rank-deficient V, scale invariance under predictor rescaling); the
+  outcomes-only path -- dense V, well-conditioned faces, no rescaling -- paid
+  the cost without the benefit, running roughly twice as slow as 0.3.x
+  despite returning the identical fit. The outcomes-only inner QP now uses
+  the cheap bordered-KKT solve again (`scm_weights_cpp(cheap_face = TRUE)`,
+  wired automatically for outcomes-only fits, staggered SCM, the outcomes-only
+  in-space placebo, `placebo_in_time()`, and OOS V selection). Predictor-based
+  fits and the multi-start search keep the null-space solver, so their results
+  and scale invariance are untouched. Outcomes-only results are bit-identical
+  to the 0.2/0.3 line and differ from 0.4.0 only at round-off
+  (<= 5e-14 in weights), i.e. not observably. Verified against `Synth` on
+  Proposition 99 (ATT, synthetic series, pre-RMSPE, donor weights all agree)
+  and across a degeneracy/noise sweep.
+
 # coresynth 0.4.0
 
 ## Breaking changes

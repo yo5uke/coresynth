@@ -5,7 +5,6 @@ plan/
 .Rproj.user/
 .positai
 sandbox/
-CLAUDE.md
-.claude/
+.claude/settings.local.json
 .vscode/
-docs/
+/docs/

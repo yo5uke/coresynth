@@ -4425,3 +4425,59 @@ test_that("Phase 38: near-collinear donor pool stays feasible (outcomes-only)", 
   expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-8)
   expect_true(is.finite(fit$estimate))
 })
+
+# ── outcomes-only routing of per-period outcome predictor specs ───────────────
+# A predictors list naming solely the outcome at each single pre-treatment
+# period defines X0/X1 equal to the pre-treatment outcome rows, so it must
+# return the identical outcomes-only fit rather than entering the scaled
+# multistart predictor path.
+
+test_that("per-period outcome spec returns the identical outcomes-only fit", {
+  spec <- lapply(1:10, function(t) pred("y", t))
+  ref  <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_message(
+    fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                   predictors = spec),
+    regexp = "outcomes-only"
+  )
+  expect_equal(fit$v_optim_effective, "coord_descent")
+  expect_null(fit$X0_mat)
+  expect_null(fit$predictor_table)
+  expect_identical(fit$unit_weights, ref$unit_weights)
+  expect_identical(fit$v_weights, ref$v_weights)
+  expect_identical(fit$estimate, ref$estimate)
+})
+
+test_that("outcomes-only routing is order- and op-invariant", {
+  spec <- lapply(rev(1:10), function(t) pred("y", t, op = "median"))
+  ref  <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_message(
+    fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                   predictors = spec),
+    regexp = "outcomes-only"
+  )
+  expect_identical(fit$unit_weights, ref$unit_weights)
+  expect_identical(fit$estimate, ref$estimate)
+})
+
+test_that("partial-coverage or windowed outcome specs keep the predictor path", {
+  fit_sub <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                     predictors = lapply(1:9, function(t) pred("y", t)))
+  expect_equal(fit_sub$v_optim_effective, "multistart")
+  expect_false(is.null(fit_sub$X0_mat))
+
+  spec_win <- c(lapply(1:8, function(t) pred("y", t)), list(pred("y", 9:10)))
+  fit_win  <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                      predictors = spec_win)
+  expect_equal(fit_win$v_optim_effective, "multistart")
+  expect_false(is.null(fit_win$X0_mat))
+})
+
+test_that("explicit v_optim = 'multistart' overrides the outcomes-only routing", {
+  spec <- lapply(1:10, function(t) pred("y", t))
+  fit  <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                  predictors = spec, v_optim = "multistart")
+  expect_equal(fit$v_optim_effective, "multistart")
+  expect_false(is.null(fit$X0_mat))
+  expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-8)
+})

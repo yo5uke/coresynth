@@ -231,6 +231,34 @@ print.pred_spec <- function(x, ...) {
   invisible(x)
 }
 
+#' Detect the canonical outcomes-only predictor specification
+#'
+#' TRUE when every pred() entry is the outcome variable at one single time
+#' point and the entries jointly cover each pre-treatment period exactly
+#' once. Such a spec builds X0/X1 equal to the pre-treatment outcome rows
+#' (any `op` collapses to the value itself on a single period), so the fit
+#' is the outcomes-only fit and can be routed to that path.
+#'
+#' @param predictors  List of pred_spec objects (non-empty).
+#' @param outcome_var Name of the outcome variable, or NULL when unknown
+#'   (direct internal calls) -- returns FALSE then.
+#' @param pre_times   The pre-treatment time values.
+#' @noRd
+.is_outcome_only_spec <- function(predictors, outcome_var, pre_times) {
+  if (is.null(outcome_var)) return(FALSE)
+  ts <- vector("list", length(predictors))
+  for (i in seq_along(predictors)) {
+    p <- predictors[[i]]
+    if (!inherits(p, "pred_spec")) return(FALSE)
+    if (length(p$vars) != 1L || p$vars != outcome_var) return(FALSE)
+    if (length(p$times) != 1L) return(FALSE)
+    ts[[i]] <- p$times
+  }
+  ts <- unlist(ts, use.names = FALSE)
+  length(ts) == length(pre_times) && anyDuplicated(ts) == 0L &&
+    all(ts %in% pre_times)
+}
+
 #' Build predictor matrices X0 and X1 for SCM
 #'
 #' Constructs the (k x N_co) predictor matrix X0 and (k x 1) vector X1

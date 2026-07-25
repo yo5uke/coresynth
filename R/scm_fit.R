@@ -12,6 +12,12 @@
 #'   predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each [pred()]
 #'   entry aggregates one or more variables over a time window. Pass `NULL`
 #'   (default) to use all pre-treatment outcome periods as predictors.
+#'   A specification consisting solely of the outcome variable at each
+#'   single pre-treatment period (one `pred()` per period, jointly covering
+#'   the full pre-treatment window) defines the same predictor matrix and is
+#'   therefore fitted through the same outcomes-only path as `NULL`,
+#'   returning an identical fit; supply `v_optim = "multistart"` explicitly
+#'   to force the predictor-path optimiser instead.
 #'   Applies to `method = "scm"` only. Predictor rows are scaled by their
 #'   standard deviation across all units before optimisation, matching the
 #'   Synth reference implementation (ADH 2011, JSS); pass
@@ -237,6 +243,7 @@ scm_fit <- function(
       data = data,
       id_var = id_var,
       time_var = time_var,
+      outcome_var = y_var,
       predictors = predictors,
       covariates = covariates,
       v_selection = v_selection,

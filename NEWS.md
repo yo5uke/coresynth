@@ -1,5 +1,22 @@
 # coresynth 0.4.0.9000
 
+## Changed
+
+- **A predictor specification consisting solely of the outcome at each
+  single pre-treatment period is now fitted through the outcomes-only
+  path**, returning a fit identical to `predictors = NULL` (with a message).
+  Such a spec builds the same X0/X1 as the outcomes-only fit -- it is the
+  standard way reference implementations express an outcomes-only SCM
+  (`Synth` requires it: with no predictors at all, `dataprep()` errors) --
+  but previously it entered the predictor path (per-row SD scaling +
+  multi-start V search), which could return slightly different weights for
+  the same model and ran orders of magnitude slower. Verified on
+  Proposition 99: `predictors = NULL`, the per-period spec, and `Synth`'s
+  per-period `special.predictors` run now agree (weights within 3e-3 of
+  `Synth`, identical between the two coresynth forms). Pass
+  `v_optim = "multistart"` explicitly to force the predictor-path optimiser
+  for such a spec.
+
 ## Performance
 
 - **Predictor matrix construction is no longer a bottleneck for

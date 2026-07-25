@@ -40,6 +40,7 @@ fit_scm_cpp <- function(
   data = NULL,
   id_var = NULL,
   time_var = NULL,
+  outcome_var = NULL,
   predictors = NULL,
   covariates = NULL,
   v_selection = c("insample", "oos"),
@@ -233,6 +234,22 @@ fit_scm_cpp <- function(
   }
 
   use_cov <- !is.null(predictors) && length(predictors) > 0L
+
+  # A spec listing solely the outcome at each single pre-treatment period
+  # builds X0/X1 equal to the pre-treatment outcome rows, i.e. it IS the
+  # outcomes-only fit. Route it there so both ways of writing that model
+  # return the identical (and much faster) fit. An explicit predictor-path
+  # optimiser request (multistart/bfgs) overrides the routing.
+  if (use_cov && v_optim %in% c("auto", "coord_descent") &&
+      .is_outcome_only_spec(predictors, outcome_var,
+                            pan$times[seq_len(T_pre)])) {
+    message(
+      "predictors specify the outcome at every pre-treatment period; ",
+      "fitting through the outcomes-only path (identical to ",
+      "predictors = NULL)."
+    )
+    use_cov <- FALSE
+  }
 
   if (use_cov) {
     if (is.null(data) || is.null(id_var) || is.null(time_var)) {

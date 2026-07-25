@@ -31,6 +31,12 @@ scm_fit(
 predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each \code{\link[=pred]{pred()}}
 entry aggregates one or more variables over a time window. Pass \code{NULL}
 (default) to use all pre-treatment outcome periods as predictors.
+A specification consisting solely of the outcome variable at each
+single pre-treatment period (one \code{pred()} per period, jointly covering
+the full pre-treatment window) defines the same predictor matrix and is
+therefore fitted through the same outcomes-only path as \code{NULL},
+returning an identical fit; supply \code{v_optim = "multistart"} explicitly
+to force the predictor-path optimiser instead.
 Applies to \code{method = "scm"} only. Predictor rows are scaled by their
 standard deviation across all units before optimisation, matching the
 Synth reference implementation (ADH 2011, JSS); pass

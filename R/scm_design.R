@@ -5,23 +5,31 @@ build_design_X <- function(data, unit_var, time_var, units, predictors) {
   rows <- list()
   nms  <- character(0L)
 
+  # One grouped aggregation per predictor row instead of one full-data scan
+  # per unit (same approach as build_predictor_matrices()). Units with no
+  # rows in the window keep the operator's empty-input value (NaN for mean,
+  # NA for median, 0 for sum).
+  id_pos <- match(data[[unit_var]], units)
+
   for (ps in predictors) {
     if (!inherits(ps, "pred_spec")) {
       stop("Each element of 'predictors' must be a pred() object.", call. = FALSE)
     }
+    sel <- data[[time_var]] %in% ps$times
+    fn  <- switch(ps$op,
+      mean   = function(v) mean(v, na.rm = TRUE),
+      median = function(v) median(v, na.rm = TRUE),
+      sum    = function(v) sum(v, na.rm = TRUE),
+      function(v) mean(v, na.rm = TRUE)
+    )
     for (var in ps$vars) {
       if (!var %in% names(data)) {
         stop(paste0("Variable '", var, "' not found in data."), call. = FALSE)
       }
-      row_vals <- vapply(units, function(u) {
-        vals <- data[[var]][data[[unit_var]] == u & data[[time_var]] %in% ps$times]
-        switch(ps$op,
-          mean   = mean(vals, na.rm = TRUE),
-          median = median(vals, na.rm = TRUE),
-          sum    = sum(vals, na.rm = TRUE),
-          mean(vals, na.rm = TRUE)
-        )
-      }, numeric(1L))
+      grp <- split(data[[var]][sel], id_pos[sel])
+      row_vals <- rep(fn(numeric(0L)), J)
+      row_vals[as.integer(names(grp))] <- vapply(grp, fn, numeric(1L))
+      if (is.character(units)) names(row_vals) <- units
       rows[[length(rows) + 1L]] <- row_vals
       t_lbl <- if (length(ps$times) == 1L) as.character(ps$times[[1L]])
                else paste0(ps$times[[1L]], ":", ps$times[[length(ps$times)]])

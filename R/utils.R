@@ -260,16 +260,17 @@ build_predictor_matrices <- function(
 ) {
   co_units <- units[idx_co]
 
-  agg_unit <- function(var, times, op) {
-    fn <- match.fun(op)
-    vapply(
-      units,
-      function(u) {
-        sub <- data[[var]][data[[id_var]] == u & data[[time_var]] %in% times]
-        if (length(sub) == 0L) NA_real_ else fn(sub, na.rm = TRUE)
-      },
-      numeric(1L)
-    )
+  # One grouped aggregation per predictor row instead of one full-data scan
+  # per unit: id_pos maps each data row to its unit's position in `units`.
+  id_pos <- match(data[[id_var]], units)
+
+  agg_unit <- function(var, rows_in_window, op) {
+    fn  <- match.fun(op)
+    grp <- split(data[[var]][rows_in_window], id_pos[rows_in_window])
+    out <- rep(NA_real_, length(units))
+    out[as.integer(names(grp))] <- vapply(grp, fn, numeric(1L), na.rm = TRUE)
+    if (is.character(units)) names(out) <- units
+    out
   }
 
   pred_label <- function(var, times) {
@@ -294,11 +295,12 @@ build_predictor_matrices <- function(
         call. = FALSE
       )
     }
+    rows_in_window <- data[[time_var]] %in% p$times
     for (var in p$vars) {
       if (!var %in% names(data)) {
         stop(sprintf("Variable '%s' not found in data.", var), call. = FALSE)
       }
-      vals <- agg_unit(var, p$times, p$op)
+      vals <- agg_unit(var, rows_in_window, p$op)
       rows_X0 <- c(rows_X0, list(vals[idx_co]))
       rows_X1 <- c(rows_X1, list(vals[idx_tr]))
       pred_names <- c(pred_names, pred_label(var, p$times))
@@ -352,17 +354,18 @@ build_covariate_array <- function(
   N <- length(units)
   p <- length(covariate_names)
   arr <- array(NA_real_, dim = c(T_all, N, p))
+  # Vectorised fill: one matrix-index assignment per covariate instead of a
+  # full-data scan per unit. Rows whose id is not in `units` are skipped,
+  # matching the per-unit subsetting behaviour.
+  id_pos <- match(data[[id_var]], units)
+  t_pos  <- match(data[[time_var]], times)
+  keep   <- !is.na(id_pos)
   for (j in seq_len(p)) {
     var <- covariate_names[j]
     if (!var %in% names(data)) {
       stop(sprintf("covariate '%s' not found in data.", var), call. = FALSE)
     }
-    for (i in seq_len(N)) {
-      idx <- data[[id_var]] == units[i]
-      sub_t <- data[[time_var]][idx]
-      sub_v <- data[[var]][idx]
-      arr[match(sub_t, times), i, j] <- sub_v
-    }
+    arr[cbind(t_pos[keep], id_pos[keep], j)] <- data[[var]][keep]
   }
   arr
 }

@@ -2,6 +2,20 @@
 
 ## Performance
 
+- **Predictor matrix construction is no longer a bottleneck for
+  predictor-based SCM fits.** `build_predictor_matrices()` aggregated each
+  predictor row with one full scan of the input data frame per unit
+  (O(rows x units x data size)); with many `pred()` entries -- e.g. one
+  outcome lag per pre-treatment year -- this R-level loop dominated the fit
+  time (1.75 s of a 3.9 s fit at N_co = 150, T_pre = 80, 15k rows). Each
+  predictor row is now computed with a single grouped aggregation
+  (0.06 s for the same spec, ~29x). Output is bit-identical to the previous
+  implementation across ops (`mean`/`median`/`sum`), id types, NA handling,
+  and the empty-window error path, so every fit is unchanged. The same
+  per-unit-scan pattern was removed from `build_covariate_array()` (the
+  covariate paths of GSC, SDID, and staggered SCM) and from
+  `scm_design()`'s predictor builder, likewise with bit-identical output.
+
 - **Outcomes-only SCM fits are ~2-2.5x faster again.** Hardening the inner
   active-set QP for the predictor multi-start search (0.4.0) replaced the
   cheap bordered-KKT face solve with a scale-robust null-space projection on

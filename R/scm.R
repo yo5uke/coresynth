@@ -274,6 +274,16 @@ fit_scm_cpp <- function(
     X0         <- Y_co_pre
     X1         <- drop(Y_tr_pre)
     pred_names <- paste0("V", seq_len(T_pre))
+    # Announce the default model once per fit. Suppressed for the routed
+    # per-period spec (its own message already fired) and for oos, whose
+    # train/validation split is described under v_selection.
+    if ((is.null(predictors) || length(predictors) == 0L) &&
+        v_selection == "insample") {
+      message(
+        "predictors = NULL: using the outcome in each of the ", T_pre,
+        " pre-treatment periods as predictors (outcomes-only SCM)."
+      )
+    }
   }
 
   # -- Synth-style predictor scaling (ADH 2011, JSS) ---------------------------

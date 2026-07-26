@@ -2,6 +2,14 @@
 
 ## Changed
 
+- **Sharp SCM fits with `predictors = NULL` now emit a one-line message
+  naming the default model** ("using the outcome in each of the k
+  pre-treatment periods as predictors"), so the implied specification is
+  visible rather than only documented. The message is suppressed where it
+  would be noise: staggered fits (always outcomes-only, no alternative) and
+  `v_selection = "oos"` (its own split is described under that argument).
+  Wrap the call in `suppressMessages()` to silence it.
+
 - **A predictor specification consisting solely of the outcome at each
   single pre-treatment period is now fitted through the outcomes-only
   path**, returning a fit identical to `predictors = NULL` (with a message).

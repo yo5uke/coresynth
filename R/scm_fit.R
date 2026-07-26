@@ -11,7 +11,8 @@
 #' @param predictors A `list()` of [pred()] specifications that define the
 #'   predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each [pred()]
 #'   entry aggregates one or more variables over a time window. Pass `NULL`
-#'   (default) to use all pre-treatment outcome periods as predictors.
+#'   (default) to use all pre-treatment outcome periods as predictors; a
+#'   one-line message states this default when it applies.
 #'   A specification consisting solely of the outcome variable at each
 #'   single pre-treatment period (one `pred()` per period, jointly covering
 #'   the full pre-treatment window) defines the same predictor matrix and is

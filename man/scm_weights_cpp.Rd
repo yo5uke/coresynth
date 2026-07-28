@@ -14,7 +14,8 @@ scm_weights_cpp(
   t_train = -1L,
   z_rows = NULL,
   multistart = FALSE,
-  cheap_face = FALSE
+  cheap_face = FALSE,
+  wolfe = FALSE
 )
 }
 \arguments{
@@ -48,13 +49,20 @@ polish, Nelder-Mead refinement) instead of a single coordinate-descent
 pass from the uniform V. The result is never worse (in outer loss) than
 the single-start path.}
 
-\item{cheap_face}{If \code{TRUE}, the inner simplex QP solves each active-set
-face with a cheap bordered-KKT direct solve instead of the scale-robust
-null-space projection. Valid only for the outcomes-only regime (no user
-predictors, no predictor rescaling), where it reproduces the null-space
-solution to round-off while running markedly faster. \code{FALSE} (default)
-keeps the null-space solver required for scale invariance and
-rank-deficient faces when predictors are supplied.}
+\item{cheap_face}{If \code{TRUE}, the inner simplex QP first tries a cheap
+bordered-KKT direct solve on each active-set face, falling back to the
+scale-robust null-space solve when that system is singular. Worth trying
+only in the outcomes-only regime (no user predictors, no predictor
+rescaling), where V is dense and the faces that carry the fit are well
+conditioned; it reproduces the null-space solution to round-off.
+\code{FALSE} (default) goes straight to the null-space solve, which is what
+predictor fits need for scale invariance and rank-deficient faces.}
+
+\item{wolfe}{If \code{TRUE}, every inner QP is solved with the Wolfe
+min-norm-point method, which returns a Caratheodory-sparse optimum (at
+most k+1 donors carry weight) instead of one arbitrary point of a
+degenerate optimal face. \code{FALSE} (default) uses the warm-started
+active-set solver.}
 }
 \value{
 A list with:

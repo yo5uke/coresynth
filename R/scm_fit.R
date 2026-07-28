@@ -70,6 +70,22 @@
 #'   dominates it on predictor fits) or `"coord_descent"`.
 #'   [mspe_ratio_pval()] mirrors a multi-start fit in its placebo refits so
 #'   the permutation test stays symmetric.
+#' @param qp_solver Inner-QP solver for `method = "scm"` (sharp fits only).
+#'   `"active_set"` (default) is the warm-started active-set method.
+#'   `"wolfe"` is the Wolfe (1976) min-norm-point method, which exploits the
+#'   fact that the inner QP is a projection onto the convex hull of the donor
+#'   columns in the k-dimensional predictor space: by Caratheodory's theorem
+#'   an optimum supported on at most `k + 1` donors always exists, and Wolfe
+#'   returns such a solution. Both solvers return an exact optimum; they
+#'   differ in *which* optimum when the QP is degenerate (fewer predictors
+#'   than donors in the support), where the optimal set is a face rather than
+#'   a point. Prefer `"wolfe"` when you want interpretable, reproducible
+#'   weights: the default solver breaks those ties on round-off, so its
+#'   weights can shift with the arithmetic, while the Wolfe solution is
+#'   sparse and stable. It is opt-in for now because it changes weights for
+#'   such specs; it is intended to become the default in a future major
+#'   release. Not available with `v_selection = "oos"`, `lambda_pen`,
+#'   `v_optim = "bfgs"`, or staggered adoption.
 #' @param v_window Optional vector of pre-treatment time values (matching the
 #'   time index in `data`) over which the outer V optimisation evaluates the
 #'   pre-treatment fit, for `method = "scm"` (sharp fits only). `NULL`
@@ -145,6 +161,7 @@ scm_fit <- function(
   donor_mspe_threshold = Inf,
   lambda_pen = NULL,
   v_optim = c("auto", "coord_descent", "bfgs", "multistart"),
+  qp_solver = c("active_set", "wolfe"),
   v_window = NULL,
   nu = NULL,
   fixedeff = FALSE,
@@ -152,7 +169,12 @@ scm_fit <- function(
 ) {
   v_selection <- match.arg(v_selection)
   v_optim     <- match.arg(v_optim)
+  qp_solver   <- match.arg(qp_solver)
   method <- match.arg(method)
+
+  if (identical(qp_solver, "wolfe") && method != "scm") {
+    stop("'qp_solver' applies to method = \"scm\" only.", call. = FALSE)
+  }
 
   if (identical(v_optim, "bfgs")) {
     warning(
@@ -251,6 +273,7 @@ scm_fit <- function(
       donor_mspe_threshold = donor_mspe_threshold,
       lambda_pen = lambda_pen,
       v_optim = v_optim,
+      qp_solver = qp_solver,
       v_window = v_window,
       nu = nu,
       fixedeff = fixedeff,

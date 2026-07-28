@@ -1,6 +1,8 @@
 papers/
 plan/
 .Rhistory
+*.Rcheck/
+*.tar.gz
 .gemini/
 .Rproj.user/
 .positai

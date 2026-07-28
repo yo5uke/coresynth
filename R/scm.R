@@ -47,6 +47,7 @@ fit_scm_cpp <- function(
   donor_mspe_threshold = Inf,
   lambda_pen = NULL,
   v_optim = c("auto", "coord_descent", "bfgs", "multistart"),
+  qp_solver = c("active_set", "wolfe"),
   v_window = NULL,
   control_group = c("clean", "never_treated"),
   scale_predictors = TRUE,
@@ -56,7 +57,9 @@ fit_scm_cpp <- function(
 ) {
   v_selection   <- match.arg(v_selection)
   v_optim       <- match.arg(v_optim)
+  qp_solver     <- match.arg(qp_solver)
   control_group <- match.arg(control_group)
+  use_wolfe     <- identical(qp_solver, "wolfe")
   if (!is.null(nu) && !identical(nu, "auto") &&
       (!is.numeric(nu) || length(nu) != 1L || nu < 0 || nu > 1)) {
     stop("nu must be NULL, \"auto\", or a single number in [0, 1].",
@@ -73,6 +76,29 @@ fit_scm_cpp <- function(
       "fit the sharp SCM without these arguments.",
       call. = FALSE
     )
+  }
+
+  # The Wolfe solver is wired through the sharp inner QP only. The paths
+  # excluded here either run their own solver (the penalised QP and the
+  # partially pooled block descent are solved in R via solve_simplex_qp()) or
+  # would report weights from a solver the flag never reached, which is worse
+  # than refusing.
+  if (use_wolfe) {
+    bad <- c(
+      if (!pan$is_sharp) "staggered adoption",
+      if (v_selection == "oos") "v_selection = 'oos'",
+      if (!is.null(lambda_pen)) "lambda_pen",
+      if (v_optim == "bfgs") "v_optim = 'bfgs'"
+    )
+    if (length(bad)) {
+      stop(
+        "qp_solver = 'wolfe' is not available with ",
+        paste(bad, collapse = ", "),
+        ". These paths solve their own QP outside the sharp inner solver. ",
+        "Use qp_solver = 'active_set' (the default).",
+        call. = FALSE
+      )
+    }
   }
 
   # -- Staggered path (cohort-by-cohort SCM) -----------------------------------
@@ -382,7 +408,7 @@ fit_scm_cpp <- function(
       # fits keep the scale-robust null-space solver (cheap_face = FALSE).
       scm_weights_cpp(X0, X1, Z0, Z1, t_train = t_train, z_rows = z_rows,
                       multistart = (effective_outer == "multistart"),
-                      cheap_face = !use_cov)
+                      cheap_face = !use_cov, wolfe = use_wolfe)
     }
     unit_w <- drop(res$W)
     V_final <- drop(res$V)
@@ -463,6 +489,7 @@ fit_scm_cpp <- function(
     v_window        = if (!is.null(z_rows)) pan$times[z_rows] else NULL,
     z_rows          = z_rows,
     v_optim_effective = effective_outer,
+    qp_solver       = qp_solver,
     Y_co_pre        = Y_co_pre,
     Y_co_post       = Y[-(seq_len(T_pre)), idx_co, drop = FALSE],
     excluded_donors = excluded_donors,
@@ -1289,12 +1316,14 @@ mspe_ratio_pval <- function(
   # single-start, full-window path (their own fitting configuration).
   multistart_fit <- identical(fit$v_optim_effective, "multistart")
   z_rows_fit     <- fit$z_rows
+  wolfe_fit      <- identical(fit$qp_solver, "wolfe")
 
   if (use_covariates) {
     plac <- scm_placebo_x_cpp(fit$X0_mat, fit$Y_co_pre, fit$Y_co_post,
                               max_iter = max_iter, tol = tol,
                               z_rows = z_rows_fit,
-                              multistart = multistart_fit)
+                              multistart = multistart_fit,
+                              wolfe = wolfe_fit)
     # Armadillo vectors come back as N_co x 1 matrices; flatten for naming.
     # A placebo unit whose solver failed carries NaN through all fields.
     mspe_pre_co  <- as.numeric(plac$mspe_pre)
@@ -1306,7 +1335,7 @@ mspe_ratio_pval <- function(
   } else {
     plac      <- scm_placebo_cpp(fit$Y_co_pre, fit$Y_co_post,
                                   max_iter = max_iter, tol = tol,
-                                  z_rows = z_rows_fit)
+                                  z_rows = z_rows_fit, wolfe = wolfe_fit)
     keep      <- plac$mspe_pre > mspe_threshold
     ratios_co <- ifelse(keep, plac$mspe_post / plac$mspe_pre, NA_real_)
     co_effects <- plac$effects

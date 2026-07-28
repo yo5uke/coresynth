@@ -1196,8 +1196,11 @@ test_that("scm_design unit_level: objective matches eq. (10) and responds to xi"
 test_that("scm_design unit_level: large xi shifts the selected treated set", {
   # Panel where the eq. (10) trade-off flips the optimal treated set: at small
   # xi the pair best matching X_bar wins; at large xi the per-unit synthetic
-  # fits dominate and a different pair is selected.
-  set.seed(20260712)
+  # fits dominate and a different pair is selected. The seed matters: the
+  # margin between candidate subsets is small, so a panel has to be picked
+  # where the flip is a genuine property of the objective rather than of how
+  # accurately the per-unit QPs happen to be solved.
+  set.seed(20260713)
   J <- 8L; TT <- 20L
   Fmat    <- matrix(rnorm(TT * 2L), TT, 2L)
   Lam     <- matrix(rnorm(J * 2L, 1, 0.5), J, 2L)
@@ -4480,4 +4483,87 @@ test_that("explicit v_optim = 'multistart' overrides the outcomes-only routing",
   expect_equal(fit$v_optim_effective, "multistart")
   expect_false(is.null(fit$X0_mat))
   expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-8)
+})
+
+# ── Inner-QP solver: exactness and the Wolfe (Caratheodory-sparse) option ─────
+
+# KKT residual of W for the inner QP min ||X1 - X0 w||_V^2 over the simplex,
+# normalised by the gradient scale.
+scm_kkt_residual <- function(X0, X1, V, W) {
+  g    <- as.numeric(crossprod(X0, V * (as.numeric(X0 %*% W) - X1)))
+  supp <- W > 1e-10
+  mu   <- -mean(g[supp])
+  viol <- max(abs(g[supp] + mu))
+  if (!all(supp)) viol <- max(viol, 0, -min(g[!supp] + mu))
+  viol / (1 + max(abs(g)))
+}
+
+test_that("scm_inner_weights_cpp returns a KKT-exact optimum", {
+  set.seed(4242L)
+  for (cfg in list(c(k = 1, N = 40), c(k = 3, N = 60), c(k = 12, N = 25),
+                   c(k = 30, N = 20))) {
+    k <- cfg[["k"]]; N <- cfg[["N"]]
+    X0 <- matrix(rnorm(k * N), k, N) + 5
+    X1 <- rowMeans(X0) + rnorm(k, 0, 0.2)
+    V  <- runif(k); V <- V / sum(V)
+    W  <- as.numeric(scm_inner_weights_cpp(X0, X1, V))
+    expect_equal(sum(W), 1, tolerance = 1e-8)
+    expect_true(all(W >= -1e-10))
+    expect_lt(scm_kkt_residual(X0, X1, V, W), 1e-8)
+  }
+})
+
+test_that("Wolfe solver matches the active set in objective but is sparse", {
+  set.seed(99L)
+  for (cfg in list(c(k = 1, N = 50), c(k = 2, N = 80), c(k = 5, N = 120))) {
+    k <- cfg[["k"]]; N <- cfg[["N"]]
+    X0 <- matrix(rnorm(k * N), k, N) + 5
+    X1 <- rowMeans(X0) + rnorm(k, 0, 0.2)
+    V  <- rep(1 / k, k)
+    wa <- as.numeric(scm_inner_weights_cpp(X0, X1, V, wolfe = FALSE))
+    ww <- as.numeric(scm_inner_weights_cpp(X0, X1, V, wolfe = TRUE))
+    obj <- function(w) sum(V * (X1 - as.numeric(X0 %*% w))^2)
+    expect_equal(obj(ww), obj(wa), tolerance = 1e-8)
+    expect_lt(scm_kkt_residual(X0, X1, V, ww), 1e-8)
+    # Caratheodory: an optimum supported on at most k+1 donors always exists
+    expect_lte(sum(ww > 1e-8), k + 1L)
+  }
+})
+
+test_that("qp_solver = 'wolfe' leaves a non-degenerate outcomes-only fit alone", {
+  fit_a <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  fit_w <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                   qp_solver = "wolfe")
+  expect_equal(fit_w$unit_weights, fit_a$unit_weights, tolerance = 1e-6)
+  expect_equal(fit_w$estimate, fit_a$estimate, tolerance = 1e-6)
+  expect_equal(fit_w$qp_solver, "wolfe")
+  expect_equal(fit_a$qp_solver, "active_set")
+})
+
+test_that("qp_solver = 'wolfe' rejects the paths it is not wired through", {
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            qp_solver = "wolfe", v_selection = "oos"),
+    "not available with"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            qp_solver = "wolfe", lambda_pen = 0.1),
+    "not available with"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "sdid",
+            qp_solver = "wolfe"),
+    "method = \"scm\" only"
+  )
+})
+
+test_that("mspe_ratio_pval mirrors the fit's qp_solver", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                 qp_solver = "wolfe")
+  res <- mspe_ratio_pval(fit)
+  expect_s3_class(res, "scm_placebo")
+  expect_true(is.finite(res$p_value))
+  expect_gte(res$p_value, 0)
+  expect_lte(res$p_value, 1)
 })

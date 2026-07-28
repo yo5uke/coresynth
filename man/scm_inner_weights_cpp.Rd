@@ -4,7 +4,7 @@
 \alias{scm_inner_weights_cpp}
 \title{SCM Inner Weights (QP Given V)}
 \usage{
-scm_inner_weights_cpp(X0, X1, V_diag)
+scm_inner_weights_cpp(X0, X1, V_diag, wolfe = FALSE)
 }
 \arguments{
 \item{X0}{Covariate matrix for control units (k x N_co)}
@@ -12,11 +12,19 @@ scm_inner_weights_cpp(X0, X1, V_diag)
 \item{X1}{Covariate vector for the treated unit (k x 1)}
 
 \item{V_diag}{Diagonal of the metric matrix V (k x 1, non-negative, need not sum to 1)}
+
+\item{wolfe}{If \code{TRUE}, solve with the Wolfe min-norm-point method, which
+returns a Caratheodory-sparse optimum (at most k+1 donors carry weight)
+instead of one arbitrary point of a degenerate optimal face. \code{FALSE}
+(default) uses the warm-started active-set solver.}
 }
 \value{
 Donor weight vector W (N_co x 1) on the unit simplex
 }
 \description{
 Solves the inner-loop QP for SCM: given a fixed diagonal metric matrix V,
-finds donor weights W on the simplex minimising the V-weighted covariate loss.
+finds donor weights W on the simplex minimising the V-weighted covariate
+loss. The returned weights are a KKT-verified exact optimum whenever the
+active-set solver converges, with accelerated projected gradient as a
+fallback.
 }

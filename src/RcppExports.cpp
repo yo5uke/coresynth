@@ -43,8 +43,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // scm_placebo_cpp
-Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post, int max_iter, double tol, Rcpp::Nullable<Rcpp::IntegerVector> z_rows);
-RcppExport SEXP _coresynth_scm_placebo_cpp(SEXP Y_preSEXP, SEXP Y_postSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP z_rowsSEXP) {
+Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post, int max_iter, double tol, Rcpp::Nullable<Rcpp::IntegerVector> z_rows, bool wolfe);
+RcppExport SEXP _coresynth_scm_placebo_cpp(SEXP Y_preSEXP, SEXP Y_postSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP z_rowsSEXP, SEXP wolfeSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -53,13 +53,14 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
     Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::IntegerVector> >::type z_rows(z_rowsSEXP);
-    rcpp_result_gen = Rcpp::wrap(scm_placebo_cpp(Y_pre, Y_post, max_iter, tol, z_rows));
+    Rcpp::traits::input_parameter< bool >::type wolfe(wolfeSEXP);
+    rcpp_result_gen = Rcpp::wrap(scm_placebo_cpp(Y_pre, Y_post, max_iter, tol, z_rows, wolfe));
     return rcpp_result_gen;
 END_RCPP
 }
 // scm_placebo_x_cpp
-Rcpp::List scm_placebo_x_cpp(const arma::mat& X0, const arma::mat& Y_pre, const arma::mat& Y_post, int max_iter, double tol, Rcpp::Nullable<Rcpp::IntegerVector> z_rows, bool multistart);
-RcppExport SEXP _coresynth_scm_placebo_x_cpp(SEXP X0SEXP, SEXP Y_preSEXP, SEXP Y_postSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP z_rowsSEXP, SEXP multistartSEXP) {
+Rcpp::List scm_placebo_x_cpp(const arma::mat& X0, const arma::mat& Y_pre, const arma::mat& Y_post, int max_iter, double tol, Rcpp::Nullable<Rcpp::IntegerVector> z_rows, bool multistart, bool wolfe);
+RcppExport SEXP _coresynth_scm_placebo_x_cpp(SEXP X0SEXP, SEXP Y_preSEXP, SEXP Y_postSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP z_rowsSEXP, SEXP multistartSEXP, SEXP wolfeSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -70,7 +71,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
     Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::IntegerVector> >::type z_rows(z_rowsSEXP);
     Rcpp::traits::input_parameter< bool >::type multistart(multistartSEXP);
-    rcpp_result_gen = Rcpp::wrap(scm_placebo_x_cpp(X0, Y_pre, Y_post, max_iter, tol, z_rows, multistart));
+    Rcpp::traits::input_parameter< bool >::type wolfe(wolfeSEXP);
+    rcpp_result_gen = Rcpp::wrap(scm_placebo_x_cpp(X0, Y_pre, Y_post, max_iter, tol, z_rows, multistart, wolfe));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -116,21 +118,22 @@ BEGIN_RCPP
 END_RCPP
 }
 // scm_inner_weights_cpp
-arma::vec scm_inner_weights_cpp(const arma::mat& X0, const arma::vec& X1, const arma::vec& V_diag);
-RcppExport SEXP _coresynth_scm_inner_weights_cpp(SEXP X0SEXP, SEXP X1SEXP, SEXP V_diagSEXP) {
+arma::vec scm_inner_weights_cpp(const arma::mat& X0, const arma::vec& X1, const arma::vec& V_diag, bool wolfe);
+RcppExport SEXP _coresynth_scm_inner_weights_cpp(SEXP X0SEXP, SEXP X1SEXP, SEXP V_diagSEXP, SEXP wolfeSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< const arma::mat& >::type X0(X0SEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type X1(X1SEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type V_diag(V_diagSEXP);
-    rcpp_result_gen = Rcpp::wrap(scm_inner_weights_cpp(X0, X1, V_diag));
+    Rcpp::traits::input_parameter< bool >::type wolfe(wolfeSEXP);
+    rcpp_result_gen = Rcpp::wrap(scm_inner_weights_cpp(X0, X1, V_diag, wolfe));
     return rcpp_result_gen;
 END_RCPP
 }
 // scm_weights_cpp
-Rcpp::List scm_weights_cpp(const arma::mat& X0, const arma::vec& X1, const arma::mat& Z0, const arma::vec& Z1, int max_iter, double tol, int t_train, Rcpp::Nullable<Rcpp::IntegerVector> z_rows, bool multistart, bool cheap_face);
-RcppExport SEXP _coresynth_scm_weights_cpp(SEXP X0SEXP, SEXP X1SEXP, SEXP Z0SEXP, SEXP Z1SEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP t_trainSEXP, SEXP z_rowsSEXP, SEXP multistartSEXP, SEXP cheap_faceSEXP) {
+Rcpp::List scm_weights_cpp(const arma::mat& X0, const arma::vec& X1, const arma::mat& Z0, const arma::vec& Z1, int max_iter, double tol, int t_train, Rcpp::Nullable<Rcpp::IntegerVector> z_rows, bool multistart, bool cheap_face, bool wolfe);
+RcppExport SEXP _coresynth_scm_weights_cpp(SEXP X0SEXP, SEXP X1SEXP, SEXP Z0SEXP, SEXP Z1SEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP t_trainSEXP, SEXP z_rowsSEXP, SEXP multistartSEXP, SEXP cheap_faceSEXP, SEXP wolfeSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -144,7 +147,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::IntegerVector> >::type z_rows(z_rowsSEXP);
     Rcpp::traits::input_parameter< bool >::type multistart(multistartSEXP);
     Rcpp::traits::input_parameter< bool >::type cheap_face(cheap_faceSEXP);
-    rcpp_result_gen = Rcpp::wrap(scm_weights_cpp(X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart, cheap_face));
+    Rcpp::traits::input_parameter< bool >::type wolfe(wolfeSEXP);
+    rcpp_result_gen = Rcpp::wrap(scm_weights_cpp(X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart, cheap_face, wolfe));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -238,13 +242,13 @@ END_RCPP
 static const R_CallMethodDef CallEntries[] = {
     {"_coresynth_gsc_ife_cpp", (DL_FUNC) &_coresynth_gsc_ife_cpp, 7},
     {"_coresynth_sdid_placebo_cpp", (DL_FUNC) &_coresynth_sdid_placebo_cpp, 4},
-    {"_coresynth_scm_placebo_cpp", (DL_FUNC) &_coresynth_scm_placebo_cpp, 5},
-    {"_coresynth_scm_placebo_x_cpp", (DL_FUNC) &_coresynth_scm_placebo_x_cpp, 7},
+    {"_coresynth_scm_placebo_cpp", (DL_FUNC) &_coresynth_scm_placebo_cpp, 6},
+    {"_coresynth_scm_placebo_x_cpp", (DL_FUNC) &_coresynth_scm_placebo_x_cpp, 8},
     {"_coresynth_soft_impute_cpp", (DL_FUNC) &_coresynth_soft_impute_cpp, 5},
     {"_coresynth_proj_simplex", (DL_FUNC) &_coresynth_proj_simplex, 1},
     {"_coresynth_solve_simplex_qp", (DL_FUNC) &_coresynth_solve_simplex_qp, 5},
-    {"_coresynth_scm_inner_weights_cpp", (DL_FUNC) &_coresynth_scm_inner_weights_cpp, 3},
-    {"_coresynth_scm_weights_cpp", (DL_FUNC) &_coresynth_scm_weights_cpp, 10},
+    {"_coresynth_scm_inner_weights_cpp", (DL_FUNC) &_coresynth_scm_inner_weights_cpp, 4},
+    {"_coresynth_scm_weights_cpp", (DL_FUNC) &_coresynth_scm_weights_cpp, 11},
     {"_coresynth_sdid_unit_weights_cpp", (DL_FUNC) &_coresynth_sdid_unit_weights_cpp, 3},
     {"_coresynth_sdid_time_weights_cpp", (DL_FUNC) &_coresynth_sdid_time_weights_cpp, 3},
     {"_coresynth_sdid_estimate_cpp", (DL_FUNC) &_coresynth_sdid_estimate_cpp, 6},

@@ -68,14 +68,17 @@ sdid_placebo_cpp <- function(Y_pre, Y_post, time_weights, zeta2) {
 #'   evaluation window (the `v_window` of the treated fit), so each placebo
 #'   refit optimises V on the same window. `NULL` (default) uses all rows.
 #'   MSPE components are always computed on the full pre/post windows.
+#' @param wolfe If `TRUE`, each placebo refit uses the Wolfe min-norm-point
+#'   inner solver, matching a treated fit made with `qp_solver = "wolfe"` so
+#'   the permutation stays symmetric.
 #' @return A list with:
 #'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 #'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
 #'   * `effects`:   N_co-vector of mean post-period gap per placebo unit
 #'   * `gaps`:      (T_pre + T_post) x N_co matrix of placebo gap paths
 #' @export
-scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4, z_rows = NULL) {
-    .Call(`_coresynth_scm_placebo_cpp`, Y_pre, Y_post, max_iter, tol, z_rows)
+scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4, z_rows = NULL, wolfe = FALSE) {
+    .Call(`_coresynth_scm_placebo_cpp`, Y_pre, Y_post, max_iter, tol, z_rows, wolfe)
 }
 
 #' Fast Leave-One-Out Placebo Test for SCM with a Predictor Specification
@@ -101,6 +104,8 @@ scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4, z_rows =
 #' @param multistart If `TRUE`, each placebo refit uses the same
 #'   deterministic multi-start outer search as the treated fit, keeping the
 #'   permutation test symmetric.
+#' @param wolfe If `TRUE`, each placebo refit uses the Wolfe min-norm-point
+#'   inner solver, matching a treated fit made with `qp_solver = "wolfe"`.
 #' @return A list with:
 #'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 #'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
@@ -108,8 +113,8 @@ scm_placebo_cpp <- function(Y_pre, Y_post, max_iter = 100L, tol = 1e-4, z_rows =
 #'   * `gaps`:      (T_pre + T_post) x N_co matrix of placebo gap paths
 #'   A placebo unit whose solver fails yields NaN entries.
 #' @export
-scm_placebo_x_cpp <- function(X0, Y_pre, Y_post, max_iter = 100L, tol = 1e-4, z_rows = NULL, multistart = FALSE) {
-    .Call(`_coresynth_scm_placebo_x_cpp`, X0, Y_pre, Y_post, max_iter, tol, z_rows, multistart)
+scm_placebo_x_cpp <- function(X0, Y_pre, Y_post, max_iter = 100L, tol = 1e-4, z_rows = NULL, multistart = FALSE, wolfe = FALSE) {
+    .Call(`_coresynth_scm_placebo_x_cpp`, X0, Y_pre, Y_post, max_iter, tol, z_rows, multistart, wolfe)
 }
 
 #' Fast Matrix Completion using Soft-Impute Algorithm
@@ -142,15 +147,22 @@ solve_simplex_qp <- function(Q, c, max_iter = 10000L, tol = 1e-6, x0 = NULL) {
 #' SCM Inner Weights (QP Given V)
 #'
 #' Solves the inner-loop QP for SCM: given a fixed diagonal metric matrix V,
-#' finds donor weights W on the simplex minimising the V-weighted covariate loss.
+#' finds donor weights W on the simplex minimising the V-weighted covariate
+#' loss. The returned weights are a KKT-verified exact optimum whenever the
+#' active-set solver converges, with accelerated projected gradient as a
+#' fallback.
 #'
 #' @param X0     Covariate matrix for control units (k x N_co)
 #' @param X1     Covariate vector for the treated unit (k x 1)
 #' @param V_diag Diagonal of the metric matrix V (k x 1, non-negative, need not sum to 1)
+#' @param wolfe  If `TRUE`, solve with the Wolfe min-norm-point method, which
+#'   returns a Caratheodory-sparse optimum (at most k+1 donors carry weight)
+#'   instead of one arbitrary point of a degenerate optimal face. `FALSE`
+#'   (default) uses the warm-started active-set solver.
 #' @return Donor weight vector W (N_co x 1) on the unit simplex
 #' @export
-scm_inner_weights_cpp <- function(X0, X1, V_diag) {
-    .Call(`_coresynth_scm_inner_weights_cpp`, X0, X1, V_diag)
+scm_inner_weights_cpp <- function(X0, X1, V_diag, wolfe = FALSE) {
+    .Call(`_coresynth_scm_inner_weights_cpp`, X0, X1, V_diag, wolfe)
 }
 
 #' SCM Outer Weights (Joint Optimization of W and V)
@@ -190,20 +202,26 @@ scm_inner_weights_cpp <- function(X0, X1, V_diag) {
 #'   polish, Nelder-Mead refinement) instead of a single coordinate-descent
 #'   pass from the uniform V. The result is never worse (in outer loss) than
 #'   the single-start path.
-#' @param cheap_face If `TRUE`, the inner simplex QP solves each active-set
-#'   face with a cheap bordered-KKT direct solve instead of the scale-robust
-#'   null-space projection. Valid only for the outcomes-only regime (no user
-#'   predictors, no predictor rescaling), where it reproduces the null-space
-#'   solution to round-off while running markedly faster. `FALSE` (default)
-#'   keeps the null-space solver required for scale invariance and
-#'   rank-deficient faces when predictors are supplied.
+#' @param cheap_face If `TRUE`, the inner simplex QP first tries a cheap
+#'   bordered-KKT direct solve on each active-set face, falling back to the
+#'   scale-robust null-space solve when that system is singular. Worth trying
+#'   only in the outcomes-only regime (no user predictors, no predictor
+#'   rescaling), where V is dense and the faces that carry the fit are well
+#'   conditioned; it reproduces the null-space solution to round-off.
+#'   `FALSE` (default) goes straight to the null-space solve, which is what
+#'   predictor fits need for scale invariance and rank-deficient faces.
+#' @param wolfe If `TRUE`, every inner QP is solved with the Wolfe
+#'   min-norm-point method, which returns a Caratheodory-sparse optimum (at
+#'   most k+1 donors carry weight) instead of one arbitrary point of a
+#'   degenerate optimal face. `FALSE` (default) uses the warm-started
+#'   active-set solver.
 #' @return A list with:
 #'   * `W`: Donor weight vector (N_co x 1) on the unit simplex
 #'   * `V`: Optimal metric diagonal (k x 1, normalised to sum to 1)
 #'   * `loss`: Final pre-treatment prediction loss (full pre-treatment window)
 #' @export
-scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train = -1L, z_rows = NULL, multistart = FALSE, cheap_face = FALSE) {
-    .Call(`_coresynth_scm_weights_cpp`, X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart, cheap_face)
+scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train = -1L, z_rows = NULL, multistart = FALSE, cheap_face = FALSE, wolfe = FALSE) {
+    .Call(`_coresynth_scm_weights_cpp`, X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart, cheap_face, wolfe)
 }
 
 #' Calculate SDID Unit Weights (omega)

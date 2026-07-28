@@ -13,14 +13,15 @@ arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pr
 arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
                                     const arma::mat& Z0, const arma::vec& Z1,
                                     int max_iter, double tol, bool multistart,
-                                    bool cheap_face = false);
+                                    bool cheap_face = false,
+                                    bool wolfe = false);
 void scm_multistart_batch(const std::vector<arma::mat>& X0d,
                           const std::vector<arma::vec>& X1d,
                           const std::vector<arma::mat>& Z0d,
                           const std::vector<arma::vec>& Z1d,
                           int max_iter, double tol,
                           std::vector<arma::vec>& W_out,
-                          std::vector<char>& ok_out);
+                          std::vector<char>& ok_out, bool wolfe);
 
 //' Fast Placebo Test for SDID
 //'
@@ -90,6 +91,9 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
 //'   evaluation window (the `v_window` of the treated fit), so each placebo
 //'   refit optimises V on the same window. `NULL` (default) uses all rows.
 //'   MSPE components are always computed on the full pre/post windows.
+//' @param wolfe If `TRUE`, each placebo refit uses the Wolfe min-norm-point
+//'   inner solver, matching a treated fit made with `qp_solver = "wolfe"` so
+//'   the permutation stays symmetric.
 //' @return A list with:
 //'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 //'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
@@ -99,7 +103,8 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
 // [[Rcpp::export]]
 Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
                             int max_iter = 100, double tol = 1e-4,
-                            Rcpp::Nullable<Rcpp::IntegerVector> z_rows = R_NilValue) {
+                            Rcpp::Nullable<Rcpp::IntegerVector> z_rows = R_NilValue,
+                            bool wolfe = false) {
   int N_co = Y_pre.n_cols;
   arma::vec mspe_pre(N_co), mspe_post(N_co), effects(N_co);
   arma::mat gaps(Y_pre.n_rows + Y_post.n_rows, N_co);
@@ -141,7 +146,7 @@ Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
     // the outcomes-only treated fit and keeping the permutation exchangeable.
     arma::vec w = scm_weights_vec_internal(Y_d_pre, y_pre_i,
                                            Z0_fit, Z1_fit,
-                                           max_iter, tol, false, true);
+                                           max_iter, tol, false, true, wolfe);
 
     arma::vec synth_pre  = Y_d_pre  * w;
     arma::vec synth_post = Y_d_post * w;
@@ -183,6 +188,8 @@ Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
 //' @param multistart If `TRUE`, each placebo refit uses the same
 //'   deterministic multi-start outer search as the treated fit, keeping the
 //'   permutation test symmetric.
+//' @param wolfe If `TRUE`, each placebo refit uses the Wolfe min-norm-point
+//'   inner solver, matching a treated fit made with `qp_solver = "wolfe"`.
 //' @return A list with:
 //'   * `mspe_pre`:  N_co-vector of pre-treatment MSPE per placebo unit
 //'   * `mspe_post`: N_co-vector of post-treatment MSPE per placebo unit
@@ -195,7 +202,7 @@ Rcpp::List scm_placebo_x_cpp(const arma::mat& X0,
                               const arma::mat& Y_pre, const arma::mat& Y_post,
                               int max_iter = 100, double tol = 1e-4,
                               Rcpp::Nullable<Rcpp::IntegerVector> z_rows = R_NilValue,
-                              bool multistart = false) {
+                              bool multistart = false, bool wolfe = false) {
   int N_co = Y_pre.n_cols;
   arma::vec mspe_pre(N_co), mspe_post(N_co), effects(N_co);
   arma::mat gaps(Y_pre.n_rows + Y_post.n_rows, N_co);
@@ -236,7 +243,7 @@ Rcpp::List scm_placebo_x_cpp(const arma::mat& X0,
 
     std::vector<arma::vec> W(N_co);
     std::vector<char> ok;
-    scm_multistart_batch(X0d, x1d, Z0f, Z1f, max_iter, tol, W, ok);
+    scm_multistart_batch(X0d, x1d, Z0f, Z1f, max_iter, tol, W, ok, wolfe);
 
     for (int i = 0; i < N_co; i++) {
       // A donor whose refit failed entirely carries NaN through all
@@ -297,7 +304,8 @@ Rcpp::List scm_placebo_x_cpp(const arma::mat& X0,
 
       arma::vec w = scm_weights_vec_internal(X0_d, x1_i,
                                              Z0_fit, Z1_fit,
-                                             max_iter, tol, false);
+                                             max_iter, tol, false, false,
+                                             wolfe);
 
       arma::vec synth_pre  = Y_d_pre  * w;
       arma::vec synth_post = Y_d_post * w;

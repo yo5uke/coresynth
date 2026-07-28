@@ -11,7 +11,8 @@ scm_placebo_x_cpp(
   max_iter = 100L,
   tol = 1e-04,
   z_rows = NULL,
-  multistart = FALSE
+  multistart = FALSE,
+  wolfe = FALSE
 )
 }
 \arguments{
@@ -34,6 +35,9 @@ MSPE components are always computed on the full pre/post windows.}
 \item{multistart}{If \code{TRUE}, each placebo refit uses the same
 deterministic multi-start outer search as the treated fit, keeping the
 permutation test symmetric.}
+
+\item{wolfe}{If \code{TRUE}, each placebo refit uses the Wolfe min-norm-point
+inner solver, matching a treated fit made with \code{qp_solver = "wolfe"}.}
 }
 \value{
 A list with:

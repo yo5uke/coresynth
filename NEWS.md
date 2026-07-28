@@ -1,4 +1,4 @@
-# coresynth 0.4.0.9000
+# coresynth 0.4.1
 
 ## Changed
 
@@ -25,7 +25,107 @@
   `v_optim = "multistart"` explicitly to force the predictor-path optimiser
   for such a spec.
 
+## New features
+
+- **`scm_fit(qp_solver = "wolfe")` selects a Caratheodory-sparse inner
+  solver.** `X0 w` traces the convex hull of the donor columns in the
+  k-dimensional predictor space as `w` ranges over the simplex, so the inner
+  QP is a projection onto a polytope in `R^k`, and by Caratheodory's theorem
+  an optimum supported on at most `k + 1` donors always exists. The Wolfe
+  (1976) min-norm-point method returns such a solution: it grows a small
+  affinely independent corral one donor at a time instead of shedding
+  coordinates from the full pool, terminates finitely, and is KKT-verified,
+  so it is an exact solver and not an approximation.
+
+  Use it when the predictor specification has fewer predictors than donors
+  in the support. There the inner QP's optimal set is a face rather than a
+  point, the default active-set solver breaks the tie on round-off (so its
+  weights are not stable across arithmetic), and the weights it returns can
+  spread over most of the donor pool -- 221 of 240 donors in one measured
+  case -- which is neither interpretable nor reproducible. Where the QP is
+  *not* degenerate the two solvers agree: on Proposition 99 an outcomes-only
+  fit returns the same six donors and the same pre-treatment loss to
+  1e-15 under either.
+
+  Opt-in for now, since it changes reported weights for degenerate specs;
+  it is intended to become the default in a future major release. Not
+  available with `v_selection = "oos"`, `lambda_pen`, `v_optim = "bfgs"`, or
+  staggered adoption, which solve their own QP outside the sharp inner
+  solver; those combinations error rather than silently ignoring the
+  argument. `mspe_ratio_pval()` mirrors the fit's choice so the permutation
+  test stays symmetric.
+
+## Bug fixes
+
+- **The inner SCM QP now returns a KKT-exact optimum.**
+  `scm_inner_weights_cpp()` -- which supplies the reported weights for
+  `v_selection = "oos"`, `v_optim = "bfgs"`, `loo_donors()`,
+  `conformal_inference()`, `scm_design()`, and the coordinate sweep's
+  starting candidate -- ran accelerated projected gradient to a 1e-6 step
+  tolerance with no optimality gate. On rank-deficient problems that left it
+  visibly short of the optimum: measured KKT residuals ran to 1e-2 relative,
+  meaning the returned weights did not solve the problem they were
+  documented to solve. It now runs the same warm-started active-set solver
+  the main path uses, with the gradient method only as a fallback; residuals
+  across the regression suite dropped from 1e-5..1e-2 to below 1e-11.
+
+  This moves reported weights for specifications whose inner QP is
+  degenerate. Outcomes-only fits improve slightly (Proposition 99
+  pre-treatment loss 7.220088 -> 7.220081). Specifications where the treated
+  unit's predictor vector lies strictly inside the donor hull -- so the
+  predictor distance is zero for a continuum of weights, e.g. two or three
+  aggregated predictor windows over a large donor pool -- can move
+  substantially, because *which* zero-distance solution is returned is
+  arbitrary and the outcome path attached to it is arbitrary with it. That
+  is a property of such specifications, not of the solver; `qp_solver =
+  "wolfe"` above makes it visible and stable.
+
 ## Performance
+
+- **Predictor-based SCM and its in-space placebo test are 100-10,000x
+  faster on large donor pools.** The inner simplex QP no longer forms the
+  N_co x N_co Gram `Q = X0' V X0`: it carries the k x N_co factor
+  `B = diag(sqrt(V)) X0` instead. `Q` has rank at most k, so with few
+  predictors and many donors it is maximally rank deficient -- the regime
+  where forming it costs the most and says the least. The active-set face
+  solve now runs in the null space of the sum constraint *inside the
+  factor*, at O(k^2 m) instead of O(m^3) (same minimiser, same rank
+  truncation: `pinv(B_A P) = Z pinv(B_A Z)` for any orthonormal basis Z of
+  `{z : 1'z = 0}`), the dual-feasibility gradient costs O(k N_co) instead of
+  O(N_co^2), and the Lipschitz bound comes from the k x k Gram instead of an
+  N_co x N_co eigendecomposition. The NNLS rescue no longer needs an
+  eigendecomposition at all, since the factor *is* the least-squares form it
+  wants. At N_co = 240, T_pre = 20: a single fit with one predictor drops
+  from 3.78 s to under 0.01 s and its 240-donor placebo test from 315 s to
+  0.03 s; with three predictors, from 5.79 s to 0.05 s and 463 s to 2.1 s.
+  Outcomes-only placebo runs improve more modestly (1.9 s to 1.1 s), as that
+  path was never the rank-deficient one.
+
+- **`v_optim = "multistart"` and the coordinate sweep short-circuit when
+  there is a single predictor.** With k = 1 the normalised V is the single
+  point V = 1: every start in the multi-start set is the same point and
+  every grid candidate rescales the inner QP by a positive constant, leaving
+  its argmin unchanged. The search is therefore vacuous and now reduces to
+  one exact inner solve, which is also strictly more accurate than the old
+  path's cold FISTA solution.
+
+- **The outcomes-only bordered-KKT face solve now falls back to the exact
+  null-space solve instead of to FISTA.** That saddle system is singular
+  once the face exceeds the rank of its Gram, and the previous code then
+  gave up and let the caller fall back to FISTA, which stops at its 1e-6
+  tolerance -- so the outer V search read an inexact objective. It now falls
+  through to the exact routes. This makes `v_selection = "oos"` measurably
+  better fitting (3.5% lower validation RMSPE on Proposition 99).
+
+  Note on reproducibility: when the inner QP is rank deficient (fewer
+  predictors than donors in the support) its solution set is a face, not a
+  point, and the active set's entering-variable choice breaks ties on
+  round-off. Weights from predictor-based fits can therefore differ from
+  0.4.0 while remaining exact optima of the same problem; the pre-treatment
+  fit itself is unchanged to round-off for outcomes-only specs and moves by
+  at most a few times 1e-5 for in-sample predictor specs under the default
+  `v_optim`. Outcomes-only fits, staggered SCM, SDID, GSC, MC, TASC, SI,
+  `scm_design()`, and `conformal_inference()` are bit-identical.
 
 - **Predictor matrix construction is no longer a bottleneck for
   predictor-based SCM fits.** `build_predictor_matrices()` aggregated each

@@ -10,42 +10,7 @@
 // [[Rcpp::depends(RcppArmadillo)]]
 
 // Declarations of solvers from optim.cpp
-arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter = 10000, double tol = 1e-6, Rcpp::Nullable<Rcpp::NumericVector> x0 = R_NilValue);
-arma::vec solve_simplex_qp_lr(const arma::mat& B, const arma::vec& b, int max_iter = 10000, double tol = 1e-6);
 arma::vec proj_simplex(arma::vec y);
-
-// Inner Optimization for SCM: find W given V
-//' SCM Inner Weights (QP Given V)
-//'
-//' Solves the inner-loop QP for SCM: given a fixed diagonal metric matrix V,
-//' finds donor weights W on the simplex minimising the V-weighted covariate loss.
-//'
-//' @param X0     Covariate matrix for control units (k x N_co)
-//' @param X1     Covariate vector for the treated unit (k x 1)
-//' @param V_diag Diagonal of the metric matrix V (k x 1, non-negative, need not sum to 1)
-//' @return Donor weight vector W (N_co x 1) on the unit simplex
-//' @export
-// [[Rcpp::export]]
-arma::vec scm_inner_weights_cpp(const arma::mat& X0, const arma::vec& X1, const arma::vec& V_diag) {
-  int k    = (int)X0.n_rows;
-  int N_co = (int)X0.n_cols;
-
-  if (2 * k < N_co) {
-    // Low-rank path (k < N_co/2): form B = diag(sqrt(V)) * X0, b = sqrt(V) % X1.
-    // ||X1 - X0 W||_V^2 = ||b - B W||^2  (algebraically equivalent).
-    // Avoids N_co x N_co matrix; uses eig_sym(k x k) for Lipschitz constant.
-    arma::vec sqV = arma::sqrt(arma::clamp(V_diag, 0.0, arma::datum::inf));
-    arma::mat B   = arma::diagmat(sqV) * X0;   // k x N_co
-    arma::vec bv  = sqV % X1;                  // k x 1
-    return solve_simplex_qp_lr(B, bv);
-  }
-
-  // Full path (k >= N_co/2): original implementation.
-  arma::mat V = arma::diagmat(V_diag);
-  arma::mat Q = X0.t() * V * X0;
-  arma::vec c = X0.t() * V * X1;
-  return solve_simplex_qp(Q, c);
-}
 
 // Helmert-style orthonormal basis of the null space of the sum constraint
 // {z : 1'z = 0}: column j has 1/sqrt(j(j+1)) in its first j rows,
@@ -60,125 +25,190 @@ static arma::mat sum_null_basis(arma::uword m) {
   return Z;
 }
 
-// Active-set solver (Lawson-Hanson style) for min 0.5 w'Q_g w - c'w on the
-// simplex, where Q_g = Q + dv * r r' (rank-1 term applied implicitly).
-// Starting from a warm-start support A, alternates:
-//  * solve the equality-constrained QP on A (stationarity + sum-to-one);
+// Build the factored inner-QP data (B, b) for a given predictor weighting.
+// V need not be normalised: the QP argmin is invariant to a positive rescaling
+// of V, which is what lets the coordinate sweep skip renormalising per grid
+// point.
+static inline void scm_make_factor(const arma::mat& X0, const arma::vec& X1,
+                                   const arma::vec& V, arma::mat& B,
+                                   arma::vec& b) {
+  arma::vec sqV = arma::sqrt(arma::clamp(V, 0.0, arma::datum::inf));
+  B = arma::diagmat(sqV) * X0;   // k x N
+  b = sqV % X1;                  // k
+}
+
+// ---- Factored inner QP -----------------------------------------------------
+// Every inner QP of the nested V/W optimisation is
+//   min_{w in simplex} 0.5 w' (X0' diag(V) X0) w - (X0' (V % X1))' w
+//     == 0.5 ||b - B w||^2 + const,   B = diag(sqrt(V)) X0 (k x N),
+//                                     b = sqrt(V) % X1     (k).
+// The solvers below carry the k x N factor (B, b) instead of the N x N Gram
+// Q = B'B. Q has rank at most k, so with few predictors and many donors it is
+// maximally rank deficient -- exactly the regime where forming it is both the
+// most expensive and the least informative thing to do. From the factor the
+// gradient Q w - c = B'(B w - b) costs O(kN) instead of O(N^2), and the face
+// solve below costs O(k^2 m) instead of O(m^3). A one-coordinate change of V
+// is expressed by rebuilding B in O(kN), which replaces the rank-1 update of
+// Q the callers used to carry.
+
+// Equality-constrained face problem on the active set A:
+//   min ||b - B_A w_A||^2  s.t.  1'w_A = 1,
+// returning the face minimiser w_A and the multiplier mu of the sum
+// constraint (stationarity: G w_A + mu 1 = c_A with G = B_A'B_A, c_A = B_A'b).
+// Three interchangeable routes, selected on cost alone -- all three return the
+// same minimiser up to round-off:
+//  * cheap_face: bordered-KKT direct solve of the (m+1)x(m+1) saddle system,
+//    tried first in the outcomes-only regime and falling through to the exact
+//    routes below when it fails (see the note at the branch).
+//  * m > k: null-space projection carried in the k-dimensional factor.
+//    w_A = w0 + pinv(B_A P) (b - B_A w0) with w0 = 1/m and P = I - 11'/m.
+//    For any orthonormal basis Z of {z : 1'z = 0} we have B_A P = (B_A Z) Z',
+//    and Z' is a co-isometry, so pinv(B_A P) = Z pinv(B_A Z): this is exactly
+//    the Helmert null-space solution below, including its rank truncation,
+//    at O(k^2 m) instead of O(m^3). This is the path that carries predictor
+//    fits, where m runs to the size of the donor pool.
+//  * otherwise: the explicit Helmert null-space route on the m x m face Gram,
+//    which is the cheaper of the two once m <= k.
+// Rank truncation is at 1e-9 of the leading eigenvalue of the face Gram in
+// the null-space routes (equivalently sqrt(1e-9) of the leading singular
+// value of the factor): curvature below that carries no statistical
+// information. The caller's dual-feasibility check gates every result.
+static bool face_solve(const arma::mat& BA, const arma::vec& b,
+                       bool cheap_face, arma::vec& wA, double& mu) {
+  const arma::uword m = BA.n_cols;
+  const arma::uword k = BA.n_rows;
+
+  if (m == 1) {
+    wA = arma::vec{1.0};
+    mu = arma::dot(BA.col(0), b) - arma::dot(BA.col(0), BA.col(0));
+    return true;
+  }
+
+  if (cheap_face) {
+    // Fast attempt: bordered-KKT direct solve of the (m+1)x(m+1) saddle
+    // system. In the outcomes-only regime V is dense and small faces are well
+    // conditioned, so this succeeds on the faces that carry the fit and is
+    // markedly cheaper than the null-space routes. It cannot be the only
+    // route: once m exceeds the rank of the face Gram the saddle system is
+    // singular and the solve fails outright, and it is a knife edge that a
+    // rescaling of the predictor units can flip. On failure we fall through
+    // to the exact null-space routes below rather than giving up -- the
+    // caller would otherwise fall back to FISTA, which stops at its 1e-6
+    // tolerance and leaves the outer V search reading an inexact objective.
+    arma::mat Gc  = BA.t() * BA;
+    arma::vec cAc = BA.t() * b;
+    arma::mat K(m + 1, m + 1, arma::fill::zeros);
+    K.submat(0, 0, m - 1, m - 1) = Gc;
+    K.col(m).head(m).ones();
+    K.row(m).head(m).ones();
+    arma::vec rhs(m + 1);
+    rhs.head(m) = cAc;
+    rhs(m)      = 1.0;
+    arma::vec sol;
+    if (arma::solve(sol, K, rhs, arma::solve_opts::no_approx)) {
+      wA = sol.head(m);
+      mu = sol(m);
+      return true;
+    }
+  }
+
+  if (m > k) {
+    arma::vec w0(m);
+    w0.fill(1.0 / m);
+    arma::vec rowmean = arma::mean(BA, 1);      // == BA * w0
+    arma::vec r = b - rowmean;
+    arma::mat M = BA;
+    M.each_col() -= rowmean;                    // BA * P, k x m
+
+    arma::mat U, Vs;
+    arma::vec sv;
+    if (!arma::svd_econ(U, sv, Vs, M)) return false;
+    arma::vec z(m, arma::fill::zeros);
+    if (sv.n_elem > 0) {
+      double smax = sv.max();
+      double scut = 3.16227766016837933e-5 * smax;   // sqrt(1e-9) * smax
+      arma::vec Ur = U.t() * r;
+      for (arma::uword i = 0; i < sv.n_elem; i++) {
+        Ur(i) = (sv(i) > scut) ? Ur(i) / sv(i) : 0.0;
+      }
+      z = Vs * Ur;
+    }
+    wA = w0 + z;
+    if (!wA.is_finite()) return false;
+    mu = -arma::mean(BA.t() * (BA * wA - b));
+    return true;
+  }
+
+  arma::mat G  = BA.t() * BA;
+  arma::vec cA = BA.t() * b;
+
+  arma::mat Z_ns = sum_null_basis(m);
+  arma::vec w0(m);
+  w0.fill(1.0 / m);
+  arma::mat H = Z_ns.t() * G * Z_ns;
+  arma::vec bz = Z_ns.t() * (cA - G * w0);
+
+  // Fast path: Cholesky solve when H is comfortably well conditioned, judged
+  // by the diagonal ratio of the factor (a scale-robust rcond proxy -- ulp
+  // perturbations cannot flip it, unlike the internal failure threshold of a
+  // plain linear solve). Degenerate path: eigendecomposition with the rank
+  // truncation described above. At the branch boundary the two routes agree,
+  // so the branch itself is benign.
+  arma::vec u;
+  arma::mat R;
+  bool fast = arma::chol(R, arma::symmatu(H));
+  if (fast) {
+    double dmin = R.diag().min();
+    double dmax = R.diag().max();
+    fast = (dmin > 0.0) && (dmin >= 3.2e-5 * dmax);  // rcond(H) >~ 1e-9
+    if (fast) {
+      u = arma::solve(arma::trimatu(R), arma::solve(arma::trimatl(R.t()), bz));
+    }
+  }
+  if (!fast) {
+    arma::vec ev;
+    arma::mat evec;
+    if (!arma::eig_sym(ev, evec, arma::symmatu(H))) return false;
+    double ev_max = ev.max();
+    if (ev_max <= 0.0) {
+      u = arma::zeros<arma::vec>(m - 1);  // flat face: w0 is stationary
+    } else {
+      double cutoff = 1e-9 * ev_max;
+      arma::vec bt = evec.t() * bz;
+      for (arma::uword i = 0; i < ev.n_elem; i++) {
+        bt(i) = (ev(i) > cutoff) ? bt(i) / ev(i) : 0.0;
+      }
+      u = evec * bt;
+    }
+  }
+
+  wA = w0 + Z_ns * u;
+  if (!wA.is_finite()) return false;
+  mu = -arma::mean(G * wA - cA);
+  return true;
+}
+
+// Active-set solver (Lawson-Hanson style) for min ||b - B w||^2 on the
+// simplex. Starting from a warm-start support A, alternates:
+//  * solve the equality-constrained face problem on A (see face_solve);
 //  * primal infeasible (negative weight) -> drop the most negative coordinate;
 //  * dual infeasible (an inactive coordinate with negative multiplier) ->
 //    add the worst violator.
 // Terminates only at a KKT-verified exact optimum (up to linear-solve
 // precision). Returns false on solve failure or pivot-cap overrun so the
 // caller can fall back to FISTA; x_out is untouched in that case.
-// SCM solutions are sparse, so |A| stays small and each pivot costs
-// O(|A|^3 + N^2) -- orders of magnitude below FISTA's iteration count on
-// the ill-conditioned Q_g typical of collinear donor outcomes.
-static bool active_set_simplex_rank1(const arma::mat& Q, const arma::vec& r,
-                                     double dv, const arma::vec& c,
-                                     arma::uvec A, arma::vec& x_out,
-                                     int max_pivots = 100,
-                                     bool cheap_face = false) {
-  const arma::uword N = Q.n_rows;
+static bool active_set_simplex(const arma::mat& B, const arma::vec& b,
+                               arma::uvec A, arma::vec& x_out,
+                               int max_pivots = 100,
+                               bool cheap_face = false) {
+  const arma::uword N = B.n_cols;
   if (A.n_elem == 0) return false;
 
   for (int pivot = 0; pivot < max_pivots; pivot++) {
     arma::uword m = A.n_elem;
-    // Stationarity on the active set: G w_A + mu * 1 = c_A, 1'w_A = 1,
-    // with G = Q_AA + dv * rA rA'. Solved in the null space of the sum
-    // constraint (w = w0 + Z u, Z an orthonormal basis of {z : 1'z = 0})
-    // rather than via the bordered KKT system: G is rank-deficient
-    // whenever V has few effective predictors (k < |A|, e.g. one-hot V
-    // gives rank-1 Q), and a raw KKT solve then sits on a success/failure
-    // knife edge that ulp-scale input perturbations (rescaled predictor
-    // units) can flip, breaking the scale-invariance of the fit. The
-    // reduced problem's H = Z'GZ is PSD, so a rank-truncated
-    // pseudo-inverse gives a true face minimiser whenever one exists --
-    // identical to the exact solve when H is well conditioned. The
-    // truncation cutoff sits well above machine noise (curvature below
-    // 1e-9 of the matrix scale carries no statistical information), and
-    // the dual-feasibility check below still gates every result.
-    arma::vec rA = r(A);
-    arma::vec cA = c(A);
-    arma::mat G  = Q.submat(A, A) + dv * (rA * rA.t());
-
     arma::vec wA;
     double    mu;
-    if (m == 1) {
-      wA = arma::vec{1.0};
-      mu = cA(0) - G(0, 0);
-    } else if (cheap_face) {
-      // Cheap bordered-KKT direct solve, restricted to the outcomes-only
-      // regime (no user predictors). There V is dense and the face G is well
-      // conditioned, so the (m+1)x(m+1) saddle system is almost always
-      // solvable and markedly cheaper than the null-space projection below --
-      // this is the fast path the outcomes-only fit relied on before the
-      // solver was hardened for the predictor multi-start. It is NOT used
-      // when predictors are supplied: a rescaling of the predictor units can
-      // flip this solve's success/failure at the knife edge, breaking scale
-      // invariance, and rank-deficient G (one-hot V) makes it fail outright.
-      // The null-space route handles both, so it stays the default; on a
-      // solve failure here we return false and the caller falls back to it
-      // via FISTA, exactly as the historical outcomes-only path did.
-      arma::mat K(m + 1, m + 1, arma::fill::zeros);
-      K.submat(0, 0, m - 1, m - 1) = G;
-      K.col(m).head(m).ones();
-      K.row(m).head(m).ones();
-      arma::vec rhs(m + 1);
-      rhs.head(m) = cA;
-      rhs(m)      = 1.0;
-      arma::vec sol;
-      if (!arma::solve(sol, K, rhs, arma::solve_opts::no_approx)) return false;
-      wA = sol.head(m);
-      mu = sol(m);
-    } else {
-      arma::mat Z_ns = sum_null_basis(m);
-      arma::vec w0(m);
-      w0.fill(1.0 / m);
-      arma::mat H = Z_ns.t() * G * Z_ns;
-      arma::vec b = Z_ns.t() * (cA - G * w0);
-
-      // Fast path: Cholesky solve when H is comfortably well conditioned,
-      // judged by the diagonal ratio of the factor (a scale-robust rcond
-      // proxy -- ulp perturbations cannot flip it, unlike the internal
-      // failure threshold of a plain linear solve). Degenerate path:
-      // eigendecomposition with rank truncation well above machine noise
-      // (curvature below 1e-9 of the leading eigenvalue carries no
-      // statistical information); the truncated inverse is a true face
-      // minimiser whenever one exists. At the branch boundary the two
-      // routes agree, so the branch itself is benign.
-      arma::vec u;
-      arma::mat R;
-      bool fast = arma::chol(R, arma::symmatu(H));
-      if (fast) {
-        double dmin = R.diag().min();
-        double dmax = R.diag().max();
-        fast = (dmin > 0.0) && (dmin >= 3.2e-5 * dmax);  // rcond(H) >~ 1e-9
-        if (fast) {
-          u = arma::solve(arma::trimatu(R),
-                          arma::solve(arma::trimatl(R.t()), b));
-        }
-      }
-      if (!fast) {
-        arma::vec ev;
-        arma::mat evec;
-        if (!arma::eig_sym(ev, evec, arma::symmatu(H))) return false;
-        double ev_max = ev.max();
-        if (ev_max <= 0.0) {
-          u = arma::zeros<arma::vec>(m - 1);  // flat face: w0 is stationary
-        } else {
-          double cutoff = 1e-9 * ev_max;
-          arma::vec bt = evec.t() * b;
-          for (arma::uword i = 0; i < ev.n_elem; i++) {
-            bt(i) = (ev(i) > cutoff) ? bt(i) / ev(i) : 0.0;
-          }
-          u = evec * bt;
-        }
-      }
-
-      wA = w0 + Z_ns * u;
-      if (!wA.is_finite()) return false;
-      mu = -arma::mean(G * wA - cA);
-    }
+    if (!face_solve(B.cols(A), b, cheap_face, wA, mu)) return false;
 
     // Anti-cycling: after 30 pivots assume the heuristic rules are cycling
     // on a degenerate face and switch to Bland's rule (always pick the
@@ -205,7 +235,7 @@ static bool active_set_simplex_rank1(const arma::mat& Q, const arma::vec& r,
     w /= s;  // remove clamp dust (<= 1e-12 per coordinate)
 
     // Dual feasibility on the inactive set: lambda_i = g_i + mu >= 0
-    arma::vec g   = Q * w + (dv * arma::dot(r, w)) * r - c;
+    arma::vec g   = B.t() * (B * w - b);   // == Q w - c, at O(kN)
     arma::vec lam = g + mu;
     lam.elem(A).zeros();  // active coordinates are stationary by construction
     double eps = 1e-9 * (1.0 + arma::norm(g, "inf"));
@@ -228,7 +258,7 @@ static bool active_set_simplex_rank1(const arma::mat& Q, const arma::vec& r,
 // subject to x >= 0, with A of size (effective QP rank + 1) x N. Finite
 // termination is the entire point -- it is the classic, proven algorithm,
 // so it cannot churn the way an active-set QP method can on degenerate
-// faces. Used purely as a support oracle (see nnls_rescue_rank1); the
+// faces. Used purely as a support oracle (see nnls_rescue); the
 // pseudo-inverse handles rank-deficient passive blocks and the outer cap
 // is a belt-and-braces bound.
 static arma::vec nnls_small(const arma::mat& A, const arma::vec& rhs) {
@@ -289,78 +319,71 @@ static arma::vec nnls_small(const arma::mat& A, const arma::vec& rhs) {
 
 // NNLS-seeded rescue for simplex QPs where the warm active-set attempt
 // cannot verify KKT within its pivot cap (degenerate faces make its
-// pivoting churn). Recover the low-rank factor of Q_g = Q + dv r r' by
-// eigendecomposition with the usual scale-robust truncation, run the
-// finite-termination NNLS on the factored least-squares form (with a soft
-// sum-to-one row) purely as a *support oracle*, and hand that support to
-// the exact face solver. Only a KKT-verified solution may be returned, so
-// exactness guarantees are unchanged; this merely replaces a
-// milliseconds-scale cold fallback with a microseconds-scale one on the
-// pathological problems that used to dominate placebo wall time.
-static bool nnls_rescue_rank1(const arma::mat& Q, const arma::vec& r,
-                              double dv, const arma::vec& c,
-                              arma::vec& x_out) {
-  const arma::uword N = Q.n_rows;
-  arma::mat Qg = Q + dv * (r * r.t());
+// pivoting churn). The factored form is already the least-squares form the
+// NNLS wants, so no eigendecomposition is needed to recover it: run the
+// finite-termination NNLS on (B, b) with a soft sum-to-one row appended,
+// purely as a *support oracle*, and hand that support to the exact face
+// solver. Only a KKT-verified solution may be returned, so exactness
+// guarantees are unchanged; this merely replaces a milliseconds-scale cold
+// fallback with a microseconds-scale one on the pathological problems that
+// used to dominate placebo wall time.
+static bool nnls_rescue(const arma::mat& B, const arma::vec& b,
+                        arma::vec& x_out) {
+  const arma::uword N = B.n_cols;
+  // tau = largest singular value of B, from the k x k Gram.
+  arma::mat BBt = B * B.t();
   arma::vec ev;
-  arma::mat E;
-  if (!arma::eig_sym(ev, E, arma::symmatu(Qg))) return false;
+  if (!arma::eig_sym(ev, arma::symmatu(BBt))) return false;
   double ev_max = ev.max();
   if (!(ev_max > 0)) return false;
-  double cut = 1e-9 * ev_max;
-  std::vector<arma::uword> keep;
-  for (arma::uword i = 0; i < ev.n_elem; i++) {
-    if (ev(i) > cut) keep.push_back(i);
-  }
-  if (keep.empty()) return false;
-  arma::uvec K   = arma::conv_to<arma::uvec>::from(keep);
-  arma::vec lam  = ev(K);
-  arma::mat Er   = E.cols(K);                                  // N x r
-  arma::mat B    = arma::diagmat(arma::sqrt(lam)) * Er.t();    // r x N
-  // c lies in range(Qg) for every QP built from the SCM predictor
-  // matrices (c = X0' V X1 shares the row space of sqrt(V) X0), so the
-  // least-squares data vector is recovered exactly: c = B' y.
-  arma::vec y = (B * c) / lam;
-  double tau  = std::sqrt(ev_max);
+  double tau = std::sqrt(ev_max);
 
   arma::mat A(B.n_rows + 1, N);
   A.head_rows(B.n_rows) = B;
   A.row(B.n_rows).fill(tau);
   arma::vec rhs(B.n_rows + 1);
-  rhs.head(B.n_rows) = y;
+  rhs.head(B.n_rows) = b;
   rhs(B.n_rows)      = tau;
 
   arma::vec x = nnls_small(A, rhs);
   if (!x.is_finite() || !(arma::accu(x) > 0)) return false;
   arma::uvec S = arma::find(x > 1e-8 * x.max());
   if (S.n_elem == 0) return false;
-  return active_set_simplex_rank1(Q, r, dv, c, S, x_out, 300);
+  return active_set_simplex(B, b, S, x_out, 300);
 }
 
-// Simplex QP for Q_g = Q + dv * r r' (rank-1 term applied implicitly), warm
-// started from x. Strategy: try the exact active-set solve seeded with the
-// warm start's support; if it cannot verify KKT (singular subproblem, pivot
-// cap), fall back to warm-started FISTA with periodic active-set retries.
-// When `nnls_rescue` is set (multi-start internals only -- every other
-// caller keeps the historical path bit-for-bit), a failed warm attempt
-// first tries the NNLS support oracle before resorting to FISTA.
+// Simplex QP min ||b - B w||^2, warm started from x. Strategy: try the exact
+// active-set solve seeded with the warm start's support; if it cannot verify
+// KKT (singular subproblem, pivot cap), fall back to warm-started FISTA with
+// periodic active-set retries. When `use_nnls` is set (multi-start internals
+// only), a failed warm attempt first tries the NNLS support oracle before
+// resorting to FISTA.
 // Pure Armadillo (no Rcpp types): safe to call inside OpenMP threads.
-// L must be an upper bound on lambda_max(Q_g); a loose bound only shrinks
+// L must be an upper bound on lambda_max(B'B); a loose bound only shrinks
 // the FISTA step size, it does not change the minimiser.
-static arma::vec fista_simplex_rank1(const arma::mat& Q, const arma::vec& r,
-                                     double dv, const arma::vec& c,
-                                     double L, arma::vec x,
-                                     int max_iter = 10000, double tol = 1e-6,
-                                     bool nnls_rescue = false,
-                                     bool cheap_face = false) {
+// When `wolfe` is set the Wolfe min-norm-point method replaces the warm
+// active-set attempt (see wolfe_simplex); its failures fall through to the
+// same NNLS/FISTA ladder, so the solver can only ever return a KKT-verified
+// optimum or the same FISTA iterate the default path would return.
+static bool wolfe_simplex(const arma::mat& B, const arma::vec& b,
+                          arma::vec& w_out);
+
+static arma::vec fista_simplex(const arma::mat& B, const arma::vec& b,
+                               double L, arma::vec x,
+                               int max_iter = 10000, double tol = 1e-6,
+                               bool use_nnls = false,
+                               bool cheap_face = false,
+                               bool wolfe = false) {
   x = proj_simplex(x);
 
   arma::vec x_as;
-  if (active_set_simplex_rank1(Q, r, dv, c, arma::find(x > 1e-10), x_as,
-                               100, cheap_face)) {
+  if (wolfe) {
+    if (wolfe_simplex(B, b, x_as)) return x_as;
+  } else if (active_set_simplex(B, b, arma::find(x > 1e-10), x_as, 100,
+                                cheap_face)) {
     return x_as;
   }
-  if (nnls_rescue && nnls_rescue_rank1(Q, r, dv, c, x_as)) {
+  if (use_nnls && nnls_rescue(B, b, x_as)) {
     return x_as;
   }
 
@@ -371,7 +394,7 @@ static arma::vec fista_simplex_rank1(const arma::mat& Q, const arma::vec& r,
 
   for (int iter = 0; iter < max_iter; iter++) {
     arma::vec x_prev = x;
-    arma::vec grad = Q * y + (dv * arma::dot(r, y)) * r - c;
+    arma::vec grad = B.t() * (B * y - b);
     x = proj_simplex(y - t * grad);
     // Adaptive restart (gradient scheme) -- see solve_simplex_qp.
     if (arma::dot(grad, x - x_prev) > 0.0) {
@@ -383,13 +406,138 @@ static arma::vec fista_simplex_rank1(const arma::mat& Q, const arma::vec& r,
     if (arma::norm(x - x_prev, 2) < tol) break;
     // Retry the exact solve once the support has moved on a little.
     if (iter > 0 && iter % 50 == 0) {
-      if (active_set_simplex_rank1(Q, r, dv, c, arma::find(x > 1e-10), x_as,
-                                   100, cheap_face)) {
+      if (active_set_simplex(B, b, arma::find(x > 1e-10), x_as, 100,
+                             cheap_face)) {
         return x_as;
       }
     }
   }
   return x;
+}
+
+// Wolfe (1976) min-norm-point method for min ||b - B w||^2 on the simplex.
+//
+// Bw traces the convex hull of the donor columns as w ranges over the simplex,
+// so the problem is a projection onto a polytope in the k-dimensional
+// predictor space -- not an N-dimensional one. By Caratheodory's theorem some
+// optimal point of that hull is a convex combination of at most k+1 donors, so
+// the method keeps a small affinely independent "corral" S and grows it one
+// vertex at a time:
+//   major cycle: the reduced costs are g = B'(B w - b); the entering donor is
+//     argmin_j g_j, and min_j g_j >= g'w certifies optimality on the simplex.
+//   minor cycle: solve the affine-hull problem on S exactly (face_solve, at
+//     most (k+1)-dimensional); while any coefficient is non-positive, move to
+//     the boundary of the simplex along the segment and drop the blocking
+//     vertex.
+// Termination is finite and the returned point is KKT-verified, so this is an
+// exact solver, not a heuristic. Compared with the default active set -- which
+// starts from the warm start's support (all N donors on a cold start) and
+// sheds one coordinate per pivot -- it grows instead of shrinks, which is the
+// direction the geometry favours when k is small: every face solve stays
+// O(k^3) regardless of the donor pool, and the answer is Caratheodory-sparse
+// rather than one arbitrary dense point of a degenerate optimal face.
+// Returns false without touching w_out if the caps are hit, so the caller can
+// fall back; a false return never costs correctness, only speed.
+static bool wolfe_simplex(const arma::mat& B, const arma::vec& b,
+                          arma::vec& w_out) {
+  const arma::uword N = B.n_cols;
+  const arma::uword k = B.n_rows;
+  if (N == 0) return false;
+
+  // Start at the donor closest to the target in predictor space.
+  arma::vec d2 = arma::sum(arma::square(B.each_col() - b), 0).t();
+  if (!d2.is_finite()) return false;
+  std::vector<arma::uword> S{d2.index_min()};
+  arma::vec alpha = arma::vec{1.0};
+
+  // The corral cannot exceed k+1 affinely independent points, so the major
+  // cycle is bounded by the number of vertices it can swap through; the caps
+  // are generous multiples that only guard against degenerate cycling.
+  const int max_major = (int)(20 * (k + 2)) + 200;
+  const int max_minor = (int)k + 3;
+
+  for (int major = 0; major < max_major; major++) {
+    for (int minor = 0; minor < max_minor; minor++) {
+      arma::uvec Su = arma::conv_to<arma::uvec>::from(S);
+      arma::vec wA;
+      double mu;
+      if (!face_solve(B.cols(Su), b, false, wA, mu)) return false;
+      if (!wA.is_finite()) return false;
+      if (wA.min() > 0.0) {          // interior of the face: corral is valid
+        alpha = wA / arma::accu(wA);
+        break;
+      }
+      // Move from alpha toward wA until the first coordinate hits zero.
+      double theta = 1.0;
+      for (arma::uword i = 0; i < wA.n_elem; i++) {
+        if (wA(i) < alpha(i)) {
+          double denom = alpha(i) - wA(i);
+          if (denom > 0.0) theta = std::min(theta, alpha(i) / denom);
+        }
+      }
+      if (!(theta >= 0.0) || !std::isfinite(theta)) return false;
+      arma::vec anew = (1.0 - theta) * alpha + theta * wA;
+      std::vector<arma::uword> S2;
+      std::vector<double> a2;
+      for (arma::uword i = 0; i < anew.n_elem; i++) {
+        if (anew(i) > 1e-14) { S2.push_back(S[i]); a2.push_back(anew(i)); }
+      }
+      if (S2.empty() || S2.size() == S.size()) return false;  // no progress
+      S = S2;
+      alpha = arma::vec(a2);
+      alpha /= arma::accu(alpha);
+      if (minor == max_minor - 1) return false;
+    }
+
+    arma::vec w(N, arma::fill::zeros);
+    w(arma::conv_to<arma::uvec>::from(S)) = alpha;
+    arma::vec g = B.t() * (B * w - b);
+    double gw = arma::dot(g, w);
+    arma::uword j = g.index_min();
+    double eps = 1e-10 * (1.0 + arma::norm(g, "inf"));
+    if (g(j) >= gw - eps) {          // KKT: no donor improves the objective
+      w_out = w;
+      return true;
+    }
+    if (std::find(S.begin(), S.end(), j) != S.end()) return false;  // cycling
+    S.push_back(j);
+    alpha.resize(alpha.n_elem + 1);
+    alpha(alpha.n_elem - 1) = 0.0;
+  }
+  return false;
+}
+
+// Inner Optimization for SCM: find W given V
+//' SCM Inner Weights (QP Given V)
+//'
+//' Solves the inner-loop QP for SCM: given a fixed diagonal metric matrix V,
+//' finds donor weights W on the simplex minimising the V-weighted covariate
+//' loss. The returned weights are a KKT-verified exact optimum whenever the
+//' active-set solver converges, with accelerated projected gradient as a
+//' fallback.
+//'
+//' @param X0     Covariate matrix for control units (k x N_co)
+//' @param X1     Covariate vector for the treated unit (k x 1)
+//' @param V_diag Diagonal of the metric matrix V (k x 1, non-negative, need not sum to 1)
+//' @param wolfe  If `TRUE`, solve with the Wolfe min-norm-point method, which
+//'   returns a Caratheodory-sparse optimum (at most k+1 donors carry weight)
+//'   instead of one arbitrary point of a degenerate optimal face. `FALSE`
+//'   (default) uses the warm-started active-set solver.
+//' @return Donor weight vector W (N_co x 1) on the unit simplex
+//' @export
+// [[Rcpp::export]]
+arma::vec scm_inner_weights_cpp(const arma::mat& X0, const arma::vec& X1,
+                                const arma::vec& V_diag, bool wolfe = false) {
+  arma::mat B;
+  arma::vec b;
+  scm_make_factor(X0, X1, V_diag, B, b);
+  arma::mat BBt = B * B.t();
+  double L = 1.0;
+  arma::vec ev;
+  if (arma::eig_sym(ev, arma::symmatu(BBt)) && ev.max() > 1e-14) L = ev.max();
+  arma::vec x0 = arma::ones<arma::vec>(X0.n_cols) / X0.n_cols;
+  return fista_simplex(B, b, L, x0, 10000, 1e-6, /*use_nnls=*/true,
+                       /*cheap_face=*/false, wolfe);
 }
 
 // Coordinate-descent core for the nested V/W SCM optimisation. Shared by
@@ -399,16 +547,16 @@ static arma::vec fista_simplex_rank1(const arma::mat& Q, const arma::vec& r,
 // accept rule, per-coordinate renormalisation of V), but each inner QP
 // exploits structure:
 //  * scale invariance: the QP argmin under V/sum(V) equals the argmin under
-//    the unnormalised V, so per-grid-point renormalisation of Q is skipped;
-//  * rank-1 structure: changing one V coordinate shifts Q by dv * r_j r_j',
-//    applied implicitly in the QP instead of rebuilding Q = X0' V X0
-//    (O(k N^2)) for every grid point;
+//    the unnormalised V, so per-grid-point renormalisation is skipped;
+//  * factored form: changing one V coordinate rebuilds the k x N factor B in
+//    O(kN) instead of touching an N x N Gram (see face_solve);
 //  * warm starts: each QP starts from the previous grid point's solution
-//    (active-set exact solve, FISTA fallback -- see fista_simplex_rank1);
-//  * Lipschitz bound: lambda_max is computed by eig_sym once per sweep and
-//    tracked through rank-1 updates via lambda_max(Q + dv r r') <=
-//    lambda_max(Q) + max(dv, 0) ||r||^2 (a valid upper bound, so FISTA
-//    convergence is unaffected).
+//    (active-set exact solve, FISTA fallback -- see fista_simplex);
+//  * Lipschitz bound: lambda_max(B'B) = lambda_max(BB') is computed by
+//    eig_sym on the k x k Gram once per sweep and tracked through the
+//    single-coordinate change via lambda_max(Q + dv r r') <= lambda_max(Q) +
+//    max(dv, 0) ||r||^2 (a valid upper bound, so FISTA convergence is
+//    unaffected).
 // V_diag must come in normalised (sum 1); it is updated in place and leaves
 // normalised. Returns the best weight vector; best_loss is updated in place.
 static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1,
@@ -416,24 +564,49 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
                                         const arma::vec& Z1_eval,
                                         int max_iter, double tol,
                                         arma::vec& V_diag, double& best_loss,
-                                        bool nnls_rescue = false,
-                                        bool cheap_face = false) {
+                                        bool use_nnls = false,
+                                        bool cheap_face = false,
+                                        bool wolfe = false) {
   int k = X0.n_rows;
-  arma::vec best_W = scm_inner_weights_cpp(X0, X1, V_diag);
+  arma::vec best_W = scm_inner_weights_cpp(X0, X1, V_diag, wolfe);
   best_loss = arma::norm(Z1_eval - Z0_eval * best_W, 2);
 
-  // Gram caches for the current (normalised) V_diag
-  arma::mat Q_base = X0.t() * arma::diagmat(V_diag) * X0;  // N x N
-  arma::vec c_base = X0.t() * (V_diag % X1);               // N
-  arma::vec row_n2 = arma::sum(arma::square(X0), 1);       // k: ||r_j||^2
+  // With a single predictor the normalised V is the single point V = 1: every
+  // grid candidate rescales the inner QP by a positive constant and leaves its
+  // argmin unchanged, so the whole sweep evaluates one and the same QP. What
+  // the sweep can still do is improve on the cold solve above, whose FISTA
+  // tolerance leaves it short of the exact optimum -- so run that one QP
+  // through the exact solver (same strict-improvement accept rule as the
+  // sweep) and skip the ten redundant candidates.
+  if (k == 1) {
+    arma::mat B1;
+    arma::vec b1;
+    scm_make_factor(X0, X1, V_diag, B1, b1);
+    arma::mat BBt1 = B1 * B1.t();
+    double L1 = arma::max(arma::eig_sym(arma::symmatu(BBt1)));
+    if (L1 < 1e-14) L1 = 1.0;
+    arma::vec W1 = fista_simplex(B1, b1, L1, best_W, 10000, 1e-6,
+                                 use_nnls, cheap_face, wolfe);
+    double loss1 = arma::norm(Z1_eval - Z0_eval * W1, 2);
+    if (loss1 < best_loss) {
+      best_loss = loss1;
+      best_W    = W1;
+    }
+    return best_W;
+  }
 
-  arma::vec grid = arma::linspace<arma::vec>(0.0, 1.0, 11);
+  arma::vec row_n2 = arma::sum(arma::square(X0), 1);       // k: ||r_j||^2
+  arma::vec grid   = arma::linspace<arma::vec>(0.0, 1.0, 11);
+
+  arma::mat B_base;
+  arma::vec b_base;
 
   for (int iter = 0; iter < max_iter; iter++) {
-    // Exact Lipschitz constant once per sweep; rank-1 bounds accumulate
-    // slack within the sweep only.
-    arma::mat Q_sym = (Q_base + Q_base.t()) / 2.0;
-    double L_base = arma::max(arma::eig_sym(Q_sym));
+    // Exact Lipschitz constant once per sweep, from the k x k Gram; the
+    // single-coordinate bounds accumulate slack within the sweep only.
+    scm_make_factor(X0, X1, V_diag, B_base, b_base);
+    arma::mat BBt = B_base * B_base.t();
+    double L_base = arma::max(arma::eig_sym(arma::symmatu(BBt)));
     if (L_base < 1e-14) L_base = 1.0;
 
     double max_change = 0.0;
@@ -442,7 +615,6 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
       double local_best_v    = orig_v;
       double local_best_loss = best_loss;
       arma::vec local_best_W = best_W;
-      arma::vec r_j  = X0.row(j).t();
       arma::vec warm = best_W;
 
       for (arma::uword g = 0; g < grid.n_elem; g++) {
@@ -450,11 +622,14 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
         double vsum = arma::sum(V_diag) - orig_v + grid(g);
         if (vsum < 1e-14) continue;
         double dv = grid(g) - orig_v;
-        arma::vec c_g = c_base + (dv * X1(j)) * r_j;
-        double    L_g = L_base + std::max(dv, 0.0) * row_n2(j);
-        arma::vec cand_W = fista_simplex_rank1(Q_base, r_j, dv, c_g, L_g, warm,
-                                               10000, 1e-6, nnls_rescue,
-                                               cheap_face);
+        arma::vec V_g = V_diag;
+        V_g(j) = grid(g);
+        arma::mat B_g;
+        arma::vec b_g;
+        scm_make_factor(X0, X1, V_g, B_g, b_g);
+        double L_g = L_base + std::max(dv, 0.0) * row_n2(j);
+        arma::vec cand_W = fista_simplex(B_g, b_g, L_g, warm, 10000, 1e-6,
+                                         use_nnls, cheap_face, wolfe);
         warm = cand_W;
         double cand_loss = arma::norm(Z1_eval - Z0_eval * cand_W, 2);
         if (cand_loss < local_best_loss) {
@@ -466,15 +641,11 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
 
       if (local_best_loss < best_loss) {
         double dv_acc = local_best_v - orig_v;
-        Q_base += dv_acc * (r_j * r_j.t());
-        c_base += (dv_acc * X1(j)) * r_j;
         L_base += std::max(dv_acc, 0.0) * row_n2(j);
         V_diag(j) = local_best_v;
         double vsum_after = arma::sum(V_diag);
         if (vsum_after > 1e-14) {
           V_diag /= vsum_after;
-          Q_base /= vsum_after;
-          c_base /= vsum_after;
           L_base /= vsum_after;
         }
         max_change = std::max(max_change, best_loss - local_best_loss);
@@ -498,18 +669,16 @@ struct scm_outer_eval {
   const arma::vec& X1;
   const arma::mat& Z0_eval;
   const arma::vec& Z1_eval;
-  arma::vec row_n2;  // ||r_j||^2 per predictor row (Lipschitz bound pieces)
-  arma::vec r_zero;  // zero rank-1 term: plain QP through fista_simplex_rank1
   arma::vec warm;    // persistent warm start across evaluations
-  bool nnls_rescue;  // multi-start internals only (see nnls_rescue_rank1)
+  bool use_nnls;     // multi-start internals only (see nnls_rescue)
+  bool wolfe;        // Caratheodory-sparse inner solver (opt-in)
 
   scm_outer_eval(const arma::mat& X0_, const arma::vec& X1_,
                  const arma::mat& Z0_, const arma::vec& Z1_,
-                 bool nnls_rescue_ = false)
-    : X0(X0_), X1(X1_), Z0_eval(Z0_), Z1_eval(Z1_), nnls_rescue(nnls_rescue_) {
-    row_n2 = arma::sum(arma::square(X0), 1);
-    r_zero = arma::zeros<arma::vec>(X0.n_cols);
-    warm   = arma::ones<arma::vec>(X0.n_cols) / X0.n_cols;
+                 bool use_nnls_ = false, bool wolfe_ = false)
+    : X0(X0_), X1(X1_), Z0_eval(Z0_), Z1_eval(Z1_), use_nnls(use_nnls_),
+      wolfe(wolfe_) {
+    warm = arma::ones<arma::vec>(X0.n_cols) / X0.n_cols;
   }
 
   double operator()(const arma::vec& V_raw, arma::vec* W_out = nullptr) {
@@ -517,8 +686,9 @@ struct scm_outer_eval {
     double s = arma::accu(V);
     if (s < 1e-14 || !V.is_finite()) return arma::datum::inf;
     V /= s;
-    arma::mat Q = X0.t() * arma::diagmat(V) * X0;
-    arma::vec c = X0.t() * (V % X1);
+    arma::mat B;
+    arma::vec b;
+    scm_make_factor(X0, X1, V, B, b);
     // Only a KKT-verified exact solve may report a loss: an under-converged
     // W would make the outer objective look flat (every V returns roughly
     // the warm-start's loss) and send the refiner drifting. The active-set
@@ -528,10 +698,11 @@ struct scm_outer_eval {
     // without the milliseconds-scale cold solve. The cold reference solver
     // is the last resort.
     arma::vec W;
-    if (!active_set_simplex_rank1(Q, r_zero, 0.0, c,
-                                  arma::find(warm > 1e-10), W, 300) &&
-        !(nnls_rescue && nnls_rescue_rank1(Q, r_zero, 0.0, c, W))) {
-      W = scm_inner_weights_cpp(X0, X1, V);
+    bool got = wolfe
+      ? wolfe_simplex(B, b, W)
+      : active_set_simplex(B, b, arma::find(warm > 1e-10), W, 300);
+    if (!got && !(use_nnls && nnls_rescue(B, b, W))) {
+      W = scm_inner_weights_cpp(X0, X1, V, wolfe);
     }
     if (!W.is_finite()) return arma::datum::inf;
     warm = W;
@@ -699,18 +870,20 @@ static scm_ms_result scm_ms_pipeline(const arma::mat& X0, const arma::vec& X1,
                                      const arma::vec& Z1_eval,
                                      int max_iter, double tol,
                                      const arma::vec& start,
-                                     bool is_uniform) {
+                                     bool is_uniform, bool wolfe = false) {
   scm_ms_result best;
-  scm_outer_eval eval_q(X0, X1, Z0_eval, Z1_eval, /*nnls_rescue=*/true);
+  scm_outer_eval eval_q(X0, X1, Z0_eval, Z1_eval, /*use_nnls=*/true, wolfe);
 
   if (is_uniform) {
     // The uniform candidate's plain coordinate descent is the never-worse
     // reference: it must reproduce v_optim = "coord_descent" exactly, so it
-    // keeps the historical solver path (nnls_rescue stays false).
+    // keeps the historical solver path (use_nnls stays false).
     arma::vec V = start;
     double loss = 0.0;
     arma::vec W = scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval,
-                                         max_iter, tol, V, loss);
+                                         max_iter, tol, V, loss,
+                                         /*use_nnls=*/false,
+                                         /*cheap_face=*/false, wolfe);
     scm_ms_consider(best, V, W, loss);
   }
 
@@ -727,7 +900,8 @@ static scm_ms_result scm_ms_pipeline(const arma::mat& X0, const arma::vec& X1,
     double f2 = 0.0;
     arma::vec W2 = scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval,
                                           max_iter, tol, V2, f2,
-                                          /*nnls_rescue=*/true);
+                                          /*use_nnls=*/true,
+                                          /*cheap_face=*/false, wolfe);
     scm_ms_consider(best, V2, W2, f2);
 
     double f3 = 0.0;
@@ -747,12 +921,25 @@ static arma::vec scm_multistart_core(const arma::mat& X0, const arma::vec& X1,
                                      const arma::mat& Z0_eval,
                                      const arma::vec& Z1_eval,
                                      int max_iter, double tol,
-                                     arma::vec& V_out, double& best_loss) {
+                                     arma::vec& V_out, double& best_loss,
+                                     bool wolfe = false) {
   const int k = X0.n_rows;
   const int n_top = 4;
+
+  // With a single predictor there is only one normalised V, so every start in
+  // the set is the same point and no refinement can move it: the search
+  // degenerates to the single inner QP that coordinate descent already
+  // short-circuits to.
+  if (k == 1) {
+    V_out = arma::ones<arma::vec>(1);
+    return scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval, max_iter, tol,
+                                  V_out, best_loss, /*use_nnls=*/false,
+                                  /*cheap_face=*/false, wolfe);
+  }
+
   arma::mat starts = scm_ms_start_matrix(k);
 
-  scm_outer_eval eval(X0, X1, Z0_eval, Z1_eval, /*nnls_rescue=*/true);
+  scm_outer_eval eval(X0, X1, Z0_eval, Z1_eval, /*use_nnls=*/true, wolfe);
   std::vector<arma::uword> cand = scm_ms_select(starts, eval, n_top);
 
   const int n_cand = (int)cand.size();
@@ -768,7 +955,7 @@ static arma::vec scm_multistart_core(const arma::mat& X0, const arma::vec& X1,
   for (int qi = 0; qi < n_cand; qi++) {
     try {
       slots[qi] = scm_ms_pipeline(X0, X1, Z0_eval, Z1_eval, max_iter, tol,
-                                  starts.col(cand[qi]), cand[qi] == 0);
+                                  starts.col(cand[qi]), cand[qi] == 0, wolfe);
     } catch (...) {
       // Exceptions must not escape the OpenMP region; a failed pipeline
       // simply contributes nothing (its loss stays Inf).
@@ -791,7 +978,9 @@ static arma::vec scm_multistart_core(const arma::mat& X0, const arma::vec& X1,
     // plain single-start path.
     best_V = starts.col(0);
     best_W = scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval,
-                                    max_iter, tol, best_V, best_loss);
+                                    max_iter, tol, best_V, best_loss,
+                                    /*use_nnls=*/false, /*cheap_face=*/false,
+                                    wolfe);
   }
   V_out = best_V;
   return best_W;
@@ -814,12 +1003,30 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
                           const std::vector<arma::vec>& Z1d,
                           int max_iter, double tol,
                           std::vector<arma::vec>& W_out,
-                          std::vector<char>& ok_out) {
+                          std::vector<char>& ok_out, bool wolfe) {
   const int N = (int)X0d.size();
   const int n_top = 4;
   W_out.assign(N, arma::vec());
   ok_out.assign(N, 0);
   if (N == 0) return;
+
+  // Single predictor: the multi-start search is vacuous (see
+  // scm_multistart_core), so every donor reduces to one inner QP.
+  if (X0d[0].n_rows == 1) {
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (int d = 0; d < N; d++) {
+      try {
+        arma::vec V = arma::ones<arma::vec>(1);
+        double loss = 0.0;
+        W_out[d] = scm_coord_descent_core(X0d[d], X1d[d], Z0d[d], Z1d[d],
+                                          max_iter, tol, V, loss,
+                                          /*use_nnls=*/false,
+                                          /*cheap_face=*/false, wolfe);
+        ok_out[d] = 1;
+      } catch (...) {}
+    }
+    return;
+  }
 
   arma::mat starts = scm_ms_start_matrix((int)X0d[0].n_rows);
 
@@ -834,7 +1041,8 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
   for (int d = 0; d < N; d++) {
     try {
       auto t0 = std::chrono::steady_clock::now();
-      scm_outer_eval ev(X0d[d], X1d[d], Z0d[d], Z1d[d], /*nnls_rescue=*/true);
+      scm_outer_eval ev(X0d[d], X1d[d], Z0d[d], Z1d[d], /*use_nnls=*/true,
+                        wolfe);
       cand[d] = scm_ms_select(starts, ev, n_top);
       screened[d] = 1;
       screen_cost[d] = std::chrono::duration<double>(
@@ -873,7 +1081,7 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
       res[t] = scm_ms_pipeline(X0d[d], X1d[d], Z0d[d], Z1d[d],
                                max_iter, tol,
                                starts.col(task_start[t]),
-                               task_start[t] == 0);
+                               task_start[t] == 0, wolfe);
     } catch (...) {}
   }
 
@@ -897,7 +1105,9 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
         arma::vec V = starts.col(0);
         double loss = 0.0;
         W_out[d] = scm_coord_descent_core(X0d[d], X1d[d], Z0d[d], Z1d[d],
-                                          max_iter, tol, V, loss);
+                                          max_iter, tol, V, loss,
+                                          /*use_nnls=*/false,
+                                          /*cheap_face=*/false, wolfe);
         ok_out[d] = 1;
       } catch (...) {}
     }
@@ -911,17 +1121,17 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
 arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
                                     const arma::mat& Z0, const arma::vec& Z1,
                                     int max_iter, double tol, bool multistart,
-                                    bool cheap_face) {
+                                    bool cheap_face, bool wolfe) {
   int k = X0.n_rows;
   arma::vec V_diag = arma::ones<arma::vec>(k) / k;
   double best_loss = 0.0;
   if (multistart) {
     return scm_multistart_core(X0, X1, Z0, Z1, max_iter, tol,
-                               V_diag, best_loss);
+                               V_diag, best_loss, wolfe);
   }
   return scm_coord_descent_core(X0, X1, Z0, Z1, max_iter, tol,
-                                V_diag, best_loss, /*nnls_rescue=*/false,
-                                cheap_face);
+                                V_diag, best_loss, /*use_nnls=*/false,
+                                cheap_face, wolfe);
 }
 
 // Outer Optimization for SCM using simple Coordinate Descent
@@ -962,13 +1172,19 @@ arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
 //'   polish, Nelder-Mead refinement) instead of a single coordinate-descent
 //'   pass from the uniform V. The result is never worse (in outer loss) than
 //'   the single-start path.
-//' @param cheap_face If `TRUE`, the inner simplex QP solves each active-set
-//'   face with a cheap bordered-KKT direct solve instead of the scale-robust
-//'   null-space projection. Valid only for the outcomes-only regime (no user
-//'   predictors, no predictor rescaling), where it reproduces the null-space
-//'   solution to round-off while running markedly faster. `FALSE` (default)
-//'   keeps the null-space solver required for scale invariance and
-//'   rank-deficient faces when predictors are supplied.
+//' @param cheap_face If `TRUE`, the inner simplex QP first tries a cheap
+//'   bordered-KKT direct solve on each active-set face, falling back to the
+//'   scale-robust null-space solve when that system is singular. Worth trying
+//'   only in the outcomes-only regime (no user predictors, no predictor
+//'   rescaling), where V is dense and the faces that carry the fit are well
+//'   conditioned; it reproduces the null-space solution to round-off.
+//'   `FALSE` (default) goes straight to the null-space solve, which is what
+//'   predictor fits need for scale invariance and rank-deficient faces.
+//' @param wolfe If `TRUE`, every inner QP is solved with the Wolfe
+//'   min-norm-point method, which returns a Caratheodory-sparse optimum (at
+//'   most k+1 donors carry weight) instead of one arbitrary point of a
+//'   degenerate optimal face. `FALSE` (default) uses the warm-started
+//'   active-set solver.
 //' @return A list with:
 //'   * `W`: Donor weight vector (N_co x 1) on the unit simplex
 //'   * `V`: Optimal metric diagonal (k x 1, normalised to sum to 1)
@@ -981,7 +1197,8 @@ Rcpp::List scm_weights_cpp(const arma::mat& X0, const arma::vec& X1,
                             int t_train = -1,
                             Rcpp::Nullable<Rcpp::IntegerVector> z_rows = R_NilValue,
                             bool multistart = false,
-                            bool cheap_face = false) {
+                            bool cheap_face = false,
+                            bool wolfe = false) {
   int k     = X0.n_rows;
   int T_pre = (int)Z0.n_rows;
 
@@ -1017,13 +1234,14 @@ Rcpp::List scm_weights_cpp(const arma::mat& X0, const arma::vec& X1,
   double best_loss = 0.0;
   arma::vec best_W = multistart
     ? scm_multistart_core(X0, X1, Z0_eval, Z1_eval,
-                          max_iter, tol, V_diag, best_loss)
+                          max_iter, tol, V_diag, best_loss, wolfe)
     : scm_coord_descent_core(X0, X1, Z0_eval, Z1_eval,
                              max_iter, tol, V_diag, best_loss,
-                             /*nnls_rescue=*/false, cheap_face);
+                             /*use_nnls=*/false, cheap_face, wolfe);
 
   // OOS mode: refit W on full pre-treatment data with selected V*
-  arma::vec final_W = do_oos ? scm_inner_weights_cpp(X0, X1, V_diag) : best_W;
+  arma::vec final_W = do_oos ? scm_inner_weights_cpp(X0, X1, V_diag, wolfe)
+                             : best_W;
   // Reported loss always covers the full Z window so pre-fit quality stays
   // comparable across evaluation-window choices.
   double final_loss = arma::norm(Z1 - Z0 * final_W, 2);

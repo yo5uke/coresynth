@@ -4,7 +4,14 @@
 \alias{scm_placebo_cpp}
 \title{Fast Leave-One-Out Placebo Test for SCM (Abadie et al. 2010)}
 \usage{
-scm_placebo_cpp(Y_pre, Y_post, max_iter = 100L, tol = 1e-04, z_rows = NULL)
+scm_placebo_cpp(
+  Y_pre,
+  Y_post,
+  max_iter = 100L,
+  tol = 1e-04,
+  z_rows = NULL,
+  wolfe = FALSE
+)
 }
 \arguments{
 \item{Y_pre}{Control pre-treatment outcomes (T_pre x N_co)}
@@ -19,6 +26,10 @@ scm_placebo_cpp(Y_pre, Y_post, max_iter = 100L, tol = 1e-04, z_rows = NULL)
 evaluation window (the \code{v_window} of the treated fit), so each placebo
 refit optimises V on the same window. \code{NULL} (default) uses all rows.
 MSPE components are always computed on the full pre/post windows.}
+
+\item{wolfe}{If \code{TRUE}, each placebo refit uses the Wolfe min-norm-point
+inner solver, matching a treated fit made with \code{qp_solver = "wolfe"} so
+the permutation stays symmetric.}
 }
 \value{
 A list with:

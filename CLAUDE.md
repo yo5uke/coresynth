@@ -182,3 +182,9 @@ RoxygenNote: 8.0.0
 - SI の time-varying covariates — Agarwal et al. (2025) は covariate なしの定式化が原著
 - Callaway & Sant'Anna (2021) 型 group-time CATT — 別フレームワーク（コホート ATT 集計は対応済み）
 - Hirshberg & Klosin (2023) 型 conformal CI — 別枠
+
+---
+
+## その他
+
+- コミット時、コミットメッセージにはClaudeのサインを記載しない。

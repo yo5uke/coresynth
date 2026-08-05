@@ -28,7 +28,7 @@
 
 横断的推論として **Conformal Inference**（`R/conformal.R`）が `scm`/`sdid`/`gsc`/`mc`/`si` の sharp fit に対応（詳細は `.claude/rules/conformal.md`）。
 
-横断的ルール: `.claude/rules/object-model.md`（fit オブジェクトのクラス構造・アクセサ・staggered 推論の共通ロジック）、`.claude/rules/plot.md`（plot 内部規約）、`.claude/rules/input-validation.md`（入力検証）。随時参照: `.claude/docs/theory-crosscheck.md`（全手法横断の論文照合表）、`.claude/docs/performance.md`（ベンチマーク）。
+横断的ルール: `.claude/rules/object-model.md`（fit オブジェクトのクラス構造・アクセサ・staggered 推論の共通ロジック）、`.claude/rules/plot.md`（plot 内部規約）、`.claude/rules/input-validation.md`（入力検証）、`.claude/rules/versioning.md`（バージョン番号・CRAN 提出）。随時参照: `.claude/docs/theory-crosscheck.md`（全手法横断の論文照合表）、`.claude/docs/performance.md`（ベンチマーク）。
 
 論文テキスト・数式整理 MD は `papers/`（.gitignore 管理）に格納。
 
@@ -142,6 +142,10 @@ Copy-Item "$env:USERPROFILE\AppData\Local\R\win-library\4.6\coresynth\libs\x64\c
 ### 新規 export 追加時のチェックリスト
 
 新しいエクスポート関数・S3 method（`plot.*`、`print.*` 等）を追加したら、`pkgdown-check` skill でコミット前に検証する（`_pkgdown.yml` の reference index にトピックが無いと GitHub Actions の pkgdown デプロイがサイト全体停止するため）。手動で行う場合の手順・検証コマンドは `.claude/skills/pkgdown-check/SKILL.md` 参照。
+
+### バージョン番号
+
+番号の決定は Claude に委任されている（破壊的変更と CRAN 提出時期はユーザーに確認）。DESCRIPTION の `Version:` を触る前に **CRAN 現行版を実際に参照**し、GitHub 先行中の未公開版なら番号を据え置いて NEWS.md の同じ見出しに追記する。判断手順・`.9000` サフィックスの使いどころ・CRAN 側の制約は `.claude/rules/versioning.md`（DESCRIPTION / NEWS.md 編集時に自動読込）。
 
 ---
 

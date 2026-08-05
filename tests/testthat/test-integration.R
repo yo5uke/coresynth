@@ -3740,6 +3740,89 @@ test_that("plot.scm_placebo: labels relabel the legend and the ratios axis tick"
                "unrecognized name")
 })
 
+test_that("plot.coresynth trend: linetypes override the series line types", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+
+  built_default <- ggplot2::ggplot_build(plot(fit, type = "trend"))$data[[1]]
+  expect_setequal(built_default$linetype, c("solid", "dashed"))
+
+  # both series solid: the point of the argument
+  built <- ggplot2::ggplot_build(
+    plot(fit, type = "trend", linetypes = c(synthetic = "solid")))$data[[1]]
+  expect_true(all(built$linetype == "solid"))
+
+  # unmentioned series keeps its default, and integer codes are accepted
+  built_num <- ggplot2::ggplot_build(
+    plot(fit, type = "trend", linetypes = c(treated = 3)))$data[[1]]
+  expect_setequal(built_num$linetype, c("dotted", "dashed"))
+})
+
+test_that("plot.coresynth trend: linetypes compose with colors and labels", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  p <- plot(fit, type = "trend",
+            colors    = c(treated = "black"),
+            labels    = c(treated = "California"),
+            linetypes = c(treated = "dashed", synthetic = "solid"))
+  built <- ggplot2::ggplot_build(p)$data[[1]]
+  expect_true("black" %in% built$colour)
+  expect_setequal(built$linetype, c("dashed", "solid"))
+  # legend stays merged: identical labels on the color and linetype scales
+  expect_equal(p$scales$get_scales("linetype")$labels[["Treated"]], "California")
+  expect_equal(p$scales$get_scales("colour")$labels[["Treated"]], "California")
+})
+
+test_that("plot.coresynth trend: linetypes validation", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(plot(fit, type = "trend", linetypes = c(Bogus = "solid")),
+               "unrecognized name")
+  expect_error(plot(fit, type = "trend", linetypes = "solid"), "named vector")
+  expect_error(plot(fit, type = "trend", linetypes = c(treated = 9)),
+               "integer code")
+  # the donors key exists only while donor paths are drawn
+  expect_error(plot(fit, type = "trend", linetypes = c(donors = "solid")),
+               "unrecognized name")
+  p <- plot(fit, type = "trend", show_donors = 2,
+            linetypes = c(donors = "dotted"))
+  expect_equal(ggplot2::ggplot_build(p)$data[[1]]$linetype[1], "dotted")
+})
+
+test_that("plot.coresynth gap: linetypes take a single line type", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_true(all(
+    ggplot2::ggplot_build(plot(fit, type = "gap"))$data[[1]]$linetype == "solid"))
+
+  built <- ggplot2::ggplot_build(
+    plot(fit, type = "gap", linetypes = "dashed"))$data[[1]]
+  expect_true(all(built$linetype == "dashed"))
+
+  built_num <- ggplot2::ggplot_build(
+    plot(fit, type = "gap", linetypes = 3))$data[[1]]
+  expect_true(all(built_num$linetype == "dotted"))
+
+  expect_error(plot(fit, type = "gap", linetypes = 9), "integer code")
+})
+
+test_that("plot.scm_placebo gaps: linetypes override the series line types", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  inf <- mspe_ratio_pval(fit)
+
+  built_default <- ggplot2::ggplot_build(plot(inf, type = "gaps"))$data
+  expect_true(all(built_default[[1]]$linetype == "solid"))
+  expect_true(all(built_default[[2]]$linetype == "solid"))
+
+  p <- plot(inf, type = "gaps", linetypes = c(placebo = "dotted"),
+            labels = c(placebo = "Donors"))
+  built <- ggplot2::ggplot_build(p)$data
+  expect_true(all(built[[1]]$linetype == "dotted"))  # placebo paths
+  expect_true(all(built[[2]]$linetype == "solid"))   # treated path unchanged
+  # merged legend: both scales relabel the same series
+  expect_equal(p$scales$get_scales("linetype")$labels[["Placebo (donor pool)"]],
+               "Donors")
+
+  expect_error(plot(inf, type = "gaps", linetypes = c(Bogus = "solid")),
+               "unrecognized name")
+})
+
 # ── plot_data(): tidy extraction of the plot() data ──────────────────────────
 
 test_that("plot_data(type='trend') mirrors the treated/synthetic accessors", {

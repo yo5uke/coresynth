@@ -10,6 +10,7 @@
   mspe_prune = Inf,
   colors = NULL,
   labels = NULL,
+  linetypes = NULL,
   vline = list(),
   vline_offset = 0,
   hline = list(),
@@ -36,6 +37,14 @@ series, e.g. \code{c(treated = "California")}. Valid keys: \code{"treated"},
 \code{"placebo"}. Series not mentioned keep their default label; \code{colors}
 and \code{labels} address series by the same keys, independent of the
 displayed legend text.}
+
+\item{linetypes}{Only for \code{type = "gaps"}: a named vector overriding the
+line type of individual series, e.g. \code{c(placebo = "dotted")}. Valid keys:
+\code{"treated"}, \code{"placebo"} (both default to \code{"solid"}). Values are
+\code{ggplot2} line type names (\code{"solid"}, \code{"dashed"}, \code{"dotted"},
+\code{"dotdash"}, \code{"longdash"}, \code{"twodash"}, \code{"blank"}) or the equivalent
+integer codes \code{0:6}. Series are addressed by the same keys as \code{colors}
+and \code{labels}. Ignored for \code{type = "ratios"} (points, not lines).}
 
 \item{vline}{Only for \code{type = "gaps"}: aesthetic overrides for the vertical
 treatment-time line, as a list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}}.
@@ -92,6 +101,9 @@ plot(placebo, type = "gaps")
 # Prune poorly fitting placebos and relabel the legend
 plot(placebo, type = "gaps", mspe_prune = 5,
      labels = c(treated = "Unit 5"))
+
+# Set the line type of the placebo paths off against the treated one
+plot(placebo, type = "gaps", linetypes = c(placebo = "dotted"))
 
 # Move the treatment line one period earlier
 plot(placebo, type = "gaps", vline_offset = -1)

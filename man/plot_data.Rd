@@ -86,8 +86,8 @@ weights.
 
 Only the arguments that change \emph{which rows or values} appear are accepted
 (\code{align}, \code{top_n}, \code{show_donors}, \code{mspe_prune}); purely cosmetic arguments
-of \code{\link[=plot]{plot()}} (\code{colors}, \code{labels}, \code{vline}, \code{fill}, ...) have no data
-counterpart and are not part of this interface.
+of \code{\link[=plot]{plot()}} (\code{colors}, \code{labels}, \code{linetypes}, \code{vline}, \code{fill}, ...) have no
+data counterpart and are not part of this interface.
 }
 \examples{
 set.seed(1)

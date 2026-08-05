@@ -101,6 +101,26 @@
                    what = "labels", example = "c(treated = \"California\")")
 }
 
+# Line types may be given by name ("solid") or by the integer codes 0:6 that
+# `par(lty)` uses. Codes are translated to names before merging, because the
+# merged vector is character and ggplot2 reads a bare "2" as a hex dash
+# pattern rather than as "dashed".
+.linetype_names <- c("blank", "solid", "dashed", "dotted", "dotdash",
+                     "longdash", "twodash")
+
+.as_linetype <- function(x, what = "linetypes") {
+  if (is.null(x) || is.character(x)) return(x)
+  if (!is.numeric(x) || anyNA(x) || any(x != trunc(x)) || any(x < 0) || any(x > 6))
+    stop(what, " must be line type name(s) such as \"solid\" or \"dashed\", ",
+         "or integer code(s) in 0:6.", call. = FALSE)
+  stats::setNames(.linetype_names[as.integer(x) + 1L], names(x))
+}
+
+.merge_named_linetypes <- function(default, override) {
+  .merge_named_vec(default, .as_linetype(override), what = "linetypes",
+                   example = "c(synthetic = \"solid\")")
+}
+
 # Pre-treatment level offset between the treated and synthetic series.
 # SDID matches trends only up to a free intercept (omega_0 is concentrated
 # out of the QP), so its raw trend plot shows the two series at different
@@ -136,6 +156,18 @@
 #'   Series not mentioned keep their default label; `colors` and `labels`
 #'   address series by the same keys, independent of the displayed legend
 #'   text. Ignored for other types (no legend).
+#' @param linetypes For `type = "trend"`: a named vector overriding the line
+#'   type of individual series, e.g. `c(synthetic = "solid")` to draw both the
+#'   treated and the synthetic series solid (valid keys: `"treated"`,
+#'   `"synthetic"`, plus `"donors"` when `show_donors > 0`; defaults are
+#'   `"solid"` for the treated and donor series and `"dashed"` for the
+#'   synthetic one). For `type = "gap"`: a single line type for the gap line
+#'   (default `"solid"`). Values are `ggplot2` line type names (`"solid"`,
+#'   `"dashed"`, `"dotted"`, `"dotdash"`, `"longdash"`, `"twodash"`,
+#'   `"blank"`) or the equivalent integer codes `0:6`. Series are addressed by
+#'   the same keys as `colors` and `labels`, so the three compose
+#'   independently. Ignored for `type = "weights"` and `"pred_weights"`
+#'   (bar charts).
 #' @param vline  Aesthetic overrides for the vertical treatment-time line, as a
 #'   list passed to [ggplot2::geom_vline()] (e.g. `list(color = "red")`).
 #'   `NULL` or `FALSE` hides the line entirely. The list may also carry an
@@ -203,11 +235,15 @@
 #' plot(fit_sdid, type = "trend", align = TRUE)
 #' plot(fit_sdid, type = "gap",   align = TRUE)
 #'
-#' # Customize series colors, legend text, and reference lines
+#' # Customize series colors, legend text, line types, and reference lines
 #' plot(fit, type = "trend",
 #'      colors = c(treated = "black"),
 #'      labels = c(treated = "Unit 5"),
 #'      vline  = list(color = "red", linetype = "dashed"))
+#'
+#' # Draw both series solid, or restyle the gap line
+#' plot(fit, type = "trend", linetypes = c(synthetic = "solid"))
+#' plot(fit, type = "gap",   linetypes = "dashed")
 #'
 #' # Move the treatment line one period earlier (last pre-treatment period),
 #' # pin it to an absolute time, or drop it entirely
@@ -219,7 +255,7 @@
 #' @export
 plot.coresynth <- function(x, type = c("trend", "gap", "weights",
                                        "pred_weights"),
-                            colors = NULL, labels = NULL,
+                            colors = NULL, labels = NULL, linetypes = NULL,
                             vline = list(), vline_offset = 0, hline = list(),
                             fill = NULL, top_n = Inf,
                             align = FALSE, show_donors = 0, ...) {
@@ -282,17 +318,19 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 
       key_map        <- c(treated = "Treated", synthetic = "Synthetic Control")
       color_defaults <- c(treated = "#2166ac", synthetic = "#d73027")
-      ltype_values   <- c(Treated = "solid", `Synthetic Control` = "dashed")
+      ltype_defaults <- c(treated = "solid", synthetic = "dashed")
       if (!is.null(df_donors)) {
         key_map        <- c(key_map, donors = "Donors")
         color_defaults <- c(color_defaults, donors = "grey70")
-        ltype_values   <- c(ltype_values, Donors = "solid")
+        ltype_defaults <- c(ltype_defaults, donors = "solid")
       }
       series <- unname(key_map)
       # user overrides are keyed by the one-word identifiers; the ggplot scales
       # need the display names the data frame carries
       series_colors <- stats::setNames(
         .merge_named_colors(color_defaults, colors), series)
+      series_ltypes <- stats::setNames(
+        .merge_named_linetypes(ltype_defaults, linetypes), series)
       series_labels <- stats::setNames(
         .merge_named_labels(key_map, labels), series)
       # Without donors the default (alphabetical) legend order is kept for
@@ -313,7 +351,7 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
         geom_line(linewidth = 0.9) +
         scale_color_manual(values = series_colors, breaks = series_breaks,
                            labels = series_labels) +
-        scale_linetype_manual(values = ltype_values, breaks = series_breaks,
+        scale_linetype_manual(values = series_ltypes, breaks = series_breaks,
                               labels = series_labels) +
         {if(!is.null(vline_style) && !anyNA(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
         theme_minimal(base_size = 13) +
@@ -330,6 +368,8 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 
     if(type == "gap") {
       gap_color   <- if (is.null(colors)) "#1a9641" else unname(colors[[1]])
+      gap_ltype   <- if (is.null(linetypes)) "solid"
+                     else unname(.as_linetype(linetypes)[[1]])
       hline_style <- .line_style(list(color = "gray50", linetype = "dashed"), hline)
       gap <- Y_treat - Y_synth
       df  <- data.frame(time = times, gap = gap)
@@ -342,7 +382,7 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
         "Treated - synthetic control"
       }
       p <- ggplot(df, aes(x = time, y = gap)) +
-        geom_line(color = gap_color, linewidth = 0.9) +
+        geom_line(color = gap_color, linetype = gap_ltype, linewidth = 0.9) +
         {if(!is.null(hline_style)) do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
         {if(!is.null(vline_style) && !anyNA(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
         theme_minimal(base_size = 13) +
@@ -474,6 +514,13 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 #'   `"placebo"`. Series not mentioned keep their default label; `colors`
 #'   and `labels` address series by the same keys, independent of the
 #'   displayed legend text.
+#' @param linetypes Only for `type = "gaps"`: a named vector overriding the
+#'   line type of individual series, e.g. `c(placebo = "dotted")`. Valid keys:
+#'   `"treated"`, `"placebo"` (both default to `"solid"`). Values are
+#'   `ggplot2` line type names (`"solid"`, `"dashed"`, `"dotted"`,
+#'   `"dotdash"`, `"longdash"`, `"twodash"`, `"blank"`) or the equivalent
+#'   integer codes `0:6`. Series are addressed by the same keys as `colors`
+#'   and `labels`. Ignored for `type = "ratios"` (points, not lines).
 #' @param vline Only for `type = "gaps"`: aesthetic overrides for the vertical
 #'   treatment-time line, as a list passed to [ggplot2::geom_vline()].
 #'   `NULL` or `FALSE` hides the line entirely. The list may also carry an
@@ -507,6 +554,9 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 #' plot(placebo, type = "gaps", mspe_prune = 5,
 #'      labels = c(treated = "Unit 5"))
 #'
+#' # Set the line type of the placebo paths off against the treated one
+#' plot(placebo, type = "gaps", linetypes = c(placebo = "dotted"))
+#'
 #' # Move the treatment line one period earlier
 #' plot(placebo, type = "gaps", vline_offset = -1)
 #'
@@ -516,7 +566,7 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 #' @seealso [mspe_ratio_pval()]
 #' @export
 plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
-                              colors = NULL, labels = NULL,
+                              colors = NULL, labels = NULL, linetypes = NULL,
                               vline = list(), vline_offset = 0,
                               hline = list(), ...) {
   type <- match.arg(type)
@@ -557,6 +607,12 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
     series_colors <- stats::setNames(.merge_named_colors(
       c(treated = "#2166ac", placebo = "grey70"), colors
     ), unname(key_map))
+    # both series are solid by default, so the linetype scale is a no-op until
+    # the user overrides it; it must carry the same breaks/labels as the color
+    # scale or the merged legend splits in two
+    series_ltypes <- stats::setNames(.merge_named_linetypes(
+      c(treated = "solid", placebo = "solid"), linetypes
+    ), unname(key_map))
     vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
     hline_style <- .line_style(list(color = "gray50", linetype = "dashed"), hline)
     vl          <- .vline_split(vline_style, times, vline_offset)
@@ -565,19 +621,24 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
 
     p <- ggplot() +
       geom_line(data = df_pl,
-                aes(x = time, y = gap, group = unit, color = "Placebo (donor pool)"),
+                aes(x = time, y = gap, group = unit,
+                    color = "Placebo (donor pool)",
+                    linetype = "Placebo (donor pool)"),
                 linewidth = 0.4, alpha = 0.8) +
-      geom_line(data = df_tr, aes(x = time, y = gap, color = "Treated"),
+      geom_line(data = df_tr, aes(x = time, y = gap, color = "Treated",
+                                  linetype = "Treated"),
                 linewidth = 1.0) +
       {if(!is.null(hline_style)) do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
       {if(!is.null(vline_style) && !anyNA(treat_time)) do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
       scale_color_manual(values = series_colors, breaks = names(series_colors),
                          labels = series_labels) +
+      scale_linetype_manual(values = series_ltypes, breaks = names(series_ltypes),
+                            labels = series_labels) +
       theme_minimal(base_size = 13) +
       labs(title = "Placebo Gaps in the Donor Pool  [SCM]",
            subtitle = subtitle,
            x = "Time", y = "Gap",
-           color = NULL,
+           color = NULL, linetype = NULL,
            caption = if (n_pruned > 0L) {
              paste0("Pruned ", n_pruned, " placebo unit(s) with pre-treatment MSPE > ",
                     mspe_prune, "x the treated unit's.")
@@ -639,8 +700,8 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
 #'
 #' Only the arguments that change *which rows or values* appear are accepted
 #' (`align`, `top_n`, `show_donors`, `mspe_prune`); purely cosmetic arguments
-#' of [plot()] (`colors`, `labels`, `vline`, `fill`, ...) have no data
-#' counterpart and are not part of this interface.
+#' of [plot()] (`colors`, `labels`, `linetypes`, `vline`, `fill`, ...) have no
+#' data counterpart and are not part of this interface.
 #'
 #' @param x A `coresynth` fit (from [scm_fit()]) or a `scm_placebo` object
 #'   (from [mspe_ratio_pval()]).

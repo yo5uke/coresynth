@@ -9,6 +9,7 @@
   type = c("trend", "gap", "weights", "pred_weights"),
   colors = NULL,
   labels = NULL,
+  linetypes = NULL,
   vline = list(),
   vline_offset = 0,
   hline = list(),
@@ -40,6 +41,19 @@ text of individual series, e.g. \code{c(treated = "California")} (valid keys:
 Series not mentioned keep their default label; \code{colors} and \code{labels}
 address series by the same keys, independent of the displayed legend
 text. Ignored for other types (no legend).}
+
+\item{linetypes}{For \code{type = "trend"}: a named vector overriding the line
+type of individual series, e.g. \code{c(synthetic = "solid")} to draw both the
+treated and the synthetic series solid (valid keys: \code{"treated"},
+\code{"synthetic"}, plus \code{"donors"} when \code{show_donors > 0}; defaults are
+\code{"solid"} for the treated and donor series and \code{"dashed"} for the
+synthetic one). For \code{type = "gap"}: a single line type for the gap line
+(default \code{"solid"}). Values are \code{ggplot2} line type names (\code{"solid"},
+\code{"dashed"}, \code{"dotted"}, \code{"dotdash"}, \code{"longdash"}, \code{"twodash"},
+\code{"blank"}) or the equivalent integer codes \code{0:6}. Series are addressed by
+the same keys as \code{colors} and \code{labels}, so the three compose
+independently. Ignored for \code{type = "weights"} and \code{"pred_weights"}
+(bar charts).}
 
 \item{vline}{Aesthetic overrides for the vertical treatment-time line, as a
 list passed to \code{\link[ggplot2:geom_vline]{ggplot2::geom_vline()}} (e.g. \code{list(color = "red")}).
@@ -120,11 +134,15 @@ fit_sdid <- scm_fit(gdp ~ treated | unit + year, data = panel, method = "sdid")
 plot(fit_sdid, type = "trend", align = TRUE)
 plot(fit_sdid, type = "gap",   align = TRUE)
 
-# Customize series colors, legend text, and reference lines
+# Customize series colors, legend text, line types, and reference lines
 plot(fit, type = "trend",
      colors = c(treated = "black"),
      labels = c(treated = "Unit 5"),
      vline  = list(color = "red", linetype = "dashed"))
+
+# Draw both series solid, or restyle the gap line
+plot(fit, type = "trend", linetypes = c(synthetic = "solid"))
+plot(fit, type = "gap",   linetypes = "dashed")
 
 # Move the treatment line one period earlier (last pre-treatment period),
 # pin it to an absolute time, or drop it entirely

@@ -1,3 +1,33 @@
+# coresynth 0.5.0
+
+## New features
+
+- **`linetypes` in `plot.coresynth()` and `plot.scm_placebo()`** makes the
+  line type of each series settable, the third member of the
+  `colors`/`labels` family and keyed the same way. Line types were previously
+  hard-coded, so the treated series was always solid and the synthetic
+  control always dashed; drawing both solid -- the usual choice when the two
+  paths are already distinguished by color, or when the figure is going into
+  a document that separates series by color alone -- meant rebuilding the
+  plot from `plot_data()`.
+
+  For `type = "trend"` it takes a named vector over `"treated"`,
+  `"synthetic"`, and (with `show_donors > 0`) `"donors"`, e.g.
+  `linetypes = c(synthetic = "solid")`; series not mentioned keep their
+  default. For `type = "gap"` it takes a single line type for the gap line,
+  mirroring how `colors` takes a single color there. For
+  `plot.scm_placebo(type = "gaps")` the keys are `"treated"` and
+  `"placebo"`. Values are `ggplot2` line type names (`"solid"`, `"dashed"`,
+  `"dotted"`, ...) or the equivalent integer codes `0:6`; an unknown key
+  errors with the list of valid keys, as for `colors` and `labels`. Bar
+  charts (`"weights"`, `"pred_weights"`) and the point chart
+  (`"ratios"`) ignore the argument.
+
+  All defaults reproduce the previous appearance exactly. The argument sits
+  after `labels` in both signatures, so the arguments that follow it
+  (`vline`, `vline_offset`, `hline`, ...) shift by one position for anyone
+  passing them positionally rather than by name.
+
 # coresynth 0.4.1
 
 ## Changed

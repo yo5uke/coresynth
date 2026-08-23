@@ -106,7 +106,7 @@ coresynth/
 - Armadillo `vec` は R 側で **N×1 行列**になる → R 層で `as.numeric()` 正規化
 - `paste0("Donor ", integer(0))` は zero-length が `""` 扱いになり長さ 1 の `"Donor "` を返す → zero-length を保持する `sprintf()` を使う
 - `R CMD INSTALL` 失敗時は旧版に**サイレントロールバック**される — 失敗に気づかず古い DLL でテストする罠。ビルド・テストは `build-install` skill を使う（Stop-Process 手順込みで実行される）
-- 本マシンに gh CLI はない。PR 作成は `git credential fill` + GitHub REST API で行う
+- `gh` CLI はインストール済み・認証済み（アカウント `yo5uke`）。PR 作成等は `gh` コマンドで行ってよい
 - **plot のタイトル・サブタイトルに非 ASCII 文字を入れない**（ギリシャ文字・Unicode マイナス記号 `−` U+2212 等）— UTF-8 でない ロケール（GitHub Actions macOS ランナー等）で grid のテキストメトリクス計算が `mbcsToSbcs` 変換に失敗し `R CMD check --run-donttest` がクラッシュする。マイナス記号は ASCII ハイフン `-`、ギリシャ文字は綴り（`lambda`/`omega`）で代替する。R ソース自体は ASCII のため `\uXXXX` エスケープで紛れ込みやすい
 
 ---

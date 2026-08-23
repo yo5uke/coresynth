@@ -15,3 +15,4 @@
 ^docs$
 ^pkgdown$
 ^vignettes/articles$
+^\.agents$

@@ -67,20 +67,26 @@ export(tensor_unfold_cpp)
 export(treated_outcomes)
 import(ggplot2)
 importFrom(Rcpp,sourceCpp)
-importFrom(broom,augment)
-importFrom(broom,glance)
-importFrom(broom,tidy)
-importFrom(stats,complete.cases)
-importFrom(stats,median)
-importFrom(stats,optim)
-importFrom(stats,pnorm)
-importFrom(stats,qnorm)
-importFrom(stats,quantile)
-importFrom(stats,reorder)
-importFrom(stats,rnorm)
-importFrom(stats,sd)
-importFrom(stats,setNames)
-importFrom(stats,var)
-importFrom(utils,combn)
-importFrom(utils,packageVersion)
+importFrom(broom,
+  augment,
+  glance,
+  tidy
+)
+importFrom(stats,
+  complete.cases,
+  median,
+  optim,
+  pnorm,
+  qnorm,
+  quantile,
+  reorder,
+  rnorm,
+  sd,
+  setNames,
+  var
+)
+importFrom(utils,
+  combn,
+  packageVersion
+)
 useDynLib(coresynth, .registration = TRUE)

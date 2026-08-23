@@ -12,12 +12,12 @@
 - 開発履歴メモ（いつ・なぜ変更したか、開発フェーズへの言及など）はコメントに書かない。コミットメッセージ・NEWS.md に書く
 - 知らなくても困らないことは書かない（蛇足コメントを避ける）
 
-## roxygen2（バージョン 8.0.0）
+## roxygen2（バージョン 8.1.0）
 ```
 Config/roxygen2/markdown: TRUE
-RoxygenNote: 8.0.0
+RoxygenNote: 8.1.0
 ```
-`devtools::document()` 後に `RoxygenNote:` が 7.x に書き戻された場合は即座に `8.0.0` に修正する。
+`devtools::document()` 後に `RoxygenNote:` が 7.x/8.0.x に書き戻された場合は即座に `8.1.0` に修正する。
 
 ## 新規 export 追加時
 新しい export 関数・S3 method（`plot.*`、`print.*` 等）を追加した場合は `_pkgdown.yml` の reference index にトピックがあるか確認する（無いと GitHub Actions の pkgdown デプロイがサイト全体停止する）。

@@ -164,14 +164,14 @@ Copy-Item "$env:USERPROFILE\AppData\Local\R\win-library\4.6\coresynth\libs\x64\c
 - ggplot の `aes()` 変数は `utils::globalVariables()` に登録（R CMD check NOTE 回避）
 - コメント: 論文セクション参照は `§` でなく `S.`。開発履歴メモ（いつ・なぜ変更したか）はコメントや CLAUDE.md に書かず、コミットメッセージ・NEWS.md に書く
 
-### roxygen2 規約（バージョン 8.0.0）
+### roxygen2 規約（バージョン 8.1.0）
 
 ```
 Config/roxygen2/markdown: TRUE   # DESCRIPTION に記載
-RoxygenNote: 8.0.0
+RoxygenNote: 8.1.0
 ```
 
-`devtools::document()` 後に `RoxygenNote:` が 7.x に書き戻された場合は即座に `8.0.0` に修正する。
+`devtools::document()` 後に `RoxygenNote:` が 7.x/8.0.x に書き戻された場合は即座に `8.1.0` に修正する。
 
 ---
 

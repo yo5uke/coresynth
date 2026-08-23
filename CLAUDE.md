@@ -139,6 +139,12 @@ Copy-Item "$env:USERPROFILE\AppData\Local\R\win-library\4.6\coresynth\libs\x64\c
 
 明示的な指示があるまでコミット・プッシュは行わない（作業後は変更を残して報告のみ）。
 
+### コミットメッセージの書き方
+
+- 件名: Conventional Commits 形式・英語・命令形（`type: summary` または `type(scope): summary`）。主な type は `feat`/`fix`/`perf`/`docs`/`chore`（`chore(release)` を含む）/`ci`
+- 本文: 英語。「何をしたか」ではなく「なぜ」（動機・原因・トレードオフ・検証結果）を書く。自明な変更（typo 修正等）は本文を省略してよい
+- AI ツールの署名・Co-Authored-By は入れない
+
 ### 新規 export 追加時のチェックリスト
 
 新しいエクスポート関数・S3 method（`plot.*`、`print.*` 等）を追加したら、`pkgdown-check` skill でコミット前に検証する（`_pkgdown.yml` の reference index にトピックが無いと GitHub Actions の pkgdown デプロイがサイト全体停止するため）。手動で行う場合の手順・検証コマンドは `.claude/skills/pkgdown-check/SKILL.md` 参照。

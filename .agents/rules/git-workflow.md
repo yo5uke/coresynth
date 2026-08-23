@@ -3,7 +3,10 @@
 Claude Code に適用しているルールと同一。
 
 - **明示的な指示があるまでコミット・プッシュは行わない**。作業後は変更を作業ツリーに残したまま、変更内容を報告するだけにとどめる。
-- コミットメッセージに AI ツールの署名・Co-Authored-By 等は入れない。
+- コミットメッセージの書き方:
+  - 件名: Conventional Commits 形式・英語・命令形（`type: summary` または `type(scope): summary`）。主な type は `feat`/`fix`/`perf`/`docs`/`chore`（`chore(release)` を含む）/`ci`
+  - 本文: 英語。「何をしたか」ではなく「なぜ」（動機・原因・トレードオフ・検証結果）を書く。自明な変更は本文を省略してよい
+  - AI ツールの署名・Co-Authored-By は入れない
 - force push・`git reset --hard`・`git checkout --`/`restore` による変更破棄など、破壊的・元に戻しにくい操作は明示的な指示なしに行わない。
 - 既存コミットへの amend より新規コミットを優先する（明示的に amend を指示された場合を除く）。
 - pre-commit hook 等は `--no-verify` でスキップしない。フックが失敗したら原因を調べて修正してから再コミットする。

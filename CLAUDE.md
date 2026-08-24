@@ -171,7 +171,7 @@ Config/roxygen2/markdown: TRUE   # DESCRIPTION に記載
 RoxygenNote: 8.1.0
 ```
 
-`devtools::document()` 後に `RoxygenNote:` が 7.x/8.0.x に書き戻された場合は即座に `8.1.0` に修正する。
+`devtools::document()` 後に `RoxygenNote:` が 7.x/8.0.x に書き戻された場合は即座に `8.1.0` に修正する。roxygen2 8.1.0 は `RoxygenNote:` 行を**丸ごと削除**するので（`devtools::check()` も内部で document を走らせる）、DESCRIPTION の差分を確認して行ごと復元する。
 
 ---
 

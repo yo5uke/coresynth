@@ -38,7 +38,18 @@ single pre-treatment period (one \code{pred()} per period, jointly covering
 the full pre-treatment window) defines the same predictor matrix and is
 therefore fitted through the same outcomes-only path as \code{NULL},
 returning an identical fit; supply \code{v_optim = "multistart"} explicitly
-to force the predictor-path optimiser instead.
+to force the predictor-path optimiser instead. That window is whatever
+\code{data} carries before the treatment date, not the span of the \code{pred()}
+list: adding earlier periods to \code{data} (to widen a plot, say) leaves the
+same list short of full coverage and moves the fit onto the predictor
+path, so a message reports the mismatch when it happens.
+Restricting the periods the fit is judged on is a separate choice from
+\code{predictors} -- subset \code{data}, or keep \code{data} whole and pass
+\code{v_window}.
+\code{pred()} windows are expected to lie inside the pre-treatment periods
+present in \code{data}: times the panel does not carry, and times at or after
+the treatment date, each raise a warning because the row then aggregates
+something other than what the window reads as.
 Applies to \code{method = "scm"} only. Predictor rows are scaled by their
 standard deviation across all units before optimisation, matching the
 Synth reference implementation (ADH 2011, JSS); pass
@@ -122,7 +133,9 @@ pre-treatment outcome rows in the outcomes-only case) still enter the
 inner QP unchanged, and the reported \code{loss} and \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}}
 MSPE components always cover the full pre-treatment window. Cannot be
 combined with \code{v_selection = "oos"}, which manages its own
-train/validation split.}
+train/validation split. Use it to judge the fit on part of the
+pre-treatment period while keeping the rest of \code{data} available for
+plotting and post-estimation.}
 
 \item{nu}{Partial pooling parameter for \strong{staggered} SCM fits
 (Ben-Michael, Feller & Rothstein 2022, JRSS-B). \code{NULL} (default) keeps

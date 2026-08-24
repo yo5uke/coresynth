@@ -40,6 +40,20 @@ build_design_X <- function(data, unit_var, time_var, units, predictors) {
   X_mat <- do.call(rbind, rows)
   colnames(X_mat) <- as.character(units)
   rownames(X_mat) <- nms
+
+  # A pred() window with no data leaves the operator's empty-input value in
+  # the row; the design QP then reports an infeasible treatment set, which
+  # says nothing about the actual cause. Name the row instead.
+  bad <- rowSums(!is.finite(X_mat)) > 0L
+  if (any(bad)) {
+    stop(
+      "Predictor rows contain missing or non-finite values: ",
+      paste(nms[bad], collapse = ", "),
+      ". Check the pred() time windows against the available data.",
+      call. = FALSE
+    )
+  }
+
   list(X_mat = X_mat, pred_names = nms)
 }
 

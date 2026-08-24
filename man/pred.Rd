@@ -11,7 +11,12 @@ pred(vars, times, op = "mean")
 same \code{times} window and \code{op} operator. Use separate \code{pred()} calls for
 variables with different time windows.}
 
-\item{times}{Numeric/integer vector of time values to aggregate over.}
+\item{times}{Numeric/integer vector of time values to aggregate over.
+Values are matched against the time index of the panel passed to
+\code{\link[=scm_fit]{scm_fit()}}, and are expected to be pre-treatment: a window naming times
+the panel does not carry silently aggregates the overlap only, and one
+reaching past the treatment date aggregates values the treatment has
+already moved, so \code{\link[=scm_fit]{scm_fit()}} warns about both.}
 
 \item{op}{Aggregation operator applied to each variable over \code{times}.
 One of \code{"mean"} (default), \code{"median"}, or \code{"sum"}.}

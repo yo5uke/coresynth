@@ -18,7 +18,18 @@
 #'   the full pre-treatment window) defines the same predictor matrix and is
 #'   therefore fitted through the same outcomes-only path as `NULL`,
 #'   returning an identical fit; supply `v_optim = "multistart"` explicitly
-#'   to force the predictor-path optimiser instead.
+#'   to force the predictor-path optimiser instead. That window is whatever
+#'   `data` carries before the treatment date, not the span of the `pred()`
+#'   list: adding earlier periods to `data` (to widen a plot, say) leaves the
+#'   same list short of full coverage and moves the fit onto the predictor
+#'   path, so a message reports the mismatch when it happens.
+#'   Restricting the periods the fit is judged on is a separate choice from
+#'   `predictors` -- subset `data`, or keep `data` whole and pass
+#'   `v_window`.
+#'   `pred()` windows are expected to lie inside the pre-treatment periods
+#'   present in `data`: times the panel does not carry, and times at or after
+#'   the treatment date, each raise a warning because the row then aggregates
+#'   something other than what the window reads as.
 #'   Applies to `method = "scm"` only. Predictor rows are scaled by their
 #'   standard deviation across all units before optimisation, matching the
 #'   Synth reference implementation (ADH 2011, JSS); pass
@@ -95,7 +106,9 @@
 #'   inner QP unchanged, and the reported `loss` and [mspe_ratio_pval()]
 #'   MSPE components always cover the full pre-treatment window. Cannot be
 #'   combined with `v_selection = "oos"`, which manages its own
-#'   train/validation split.
+#'   train/validation split. Use it to judge the fit on part of the
+#'   pre-treatment period while keeping the rest of `data` available for
+#'   plotting and post-estimation.
 #' @param nu Partial pooling parameter for **staggered** SCM fits
 #'   (Ben-Michael, Feller & Rothstein 2022, JRSS-B). `NULL` (default) keeps
 #'   the per-cohort V-optimised SCM path. A number in `[0, 1]` switches to

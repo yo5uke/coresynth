@@ -55,6 +55,27 @@
   `v_optim = "multistart"` explicitly to force the predictor-path optimiser
   for such a spec.
 
+- **A near miss on that routing is now reported.** Whether a per-period
+  outcome spec is the outcomes-only fit depends on the pre-treatment periods
+  `data` carries, not on the span of the `pred()` list, so the same
+  `predictors` argument switches paths when `data` reaches further back --
+  widening the panel for a plot is enough. Sharp SCM fits whose predictors
+  are all single-period outcome lags but do not cover the pre-treatment
+  window exactly now say so, report the coverage, and point at `v_window`
+  and at subsetting `data` as the two ways to move the window the fit is
+  judged on. Both fits were already correct for the model each one states;
+  what was missing was any sign that the model had changed.
+
+- **`pred()` time windows are checked against the panel.** A window naming
+  times the panel does not carry silently aggregated the overlap alone while
+  keeping its full label, and a window reaching past the treatment date
+  silently aggregated values the treatment had already moved. Both now
+  warn, naming the offending times. A window with no overlap at all keeps
+  the existing hard error. `scm_design()` gained the same non-finite
+  predictor guard `scm_fit()` already had -- such a window previously
+  surfaced as "no feasible treatment set found", which named neither the
+  predictor nor the window.
+
 ## New features
 
 - **`scm_fit(qp_solver = "wolfe")` selects a Caratheodory-sparse inner

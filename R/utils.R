@@ -170,6 +170,11 @@ panel_to_matrices <- function(y, d, id, time) {
 #'   same `times` window and `op` operator. Use separate `pred()` calls for
 #'   variables with different time windows.
 #' @param times Numeric/integer vector of time values to aggregate over.
+#'   Values are matched against the time index of the panel passed to
+#'   [scm_fit()], and are expected to be pre-treatment: a window naming times
+#'   the panel does not carry silently aggregates the overlap only, and one
+#'   reaching past the treatment date aggregates values the treatment has
+#'   already moved, so [scm_fit()] warns about both.
 #' @param op    Aggregation operator applied to each variable over `times`.
 #'   One of `"mean"` (default), `"median"`, or `"sum"`.
 #'
@@ -231,13 +236,38 @@ print.pred_spec <- function(x, ...) {
   invisible(x)
 }
 
+#' Single-period outcome lag times in a predictor specification
+#'
+#' Returns the time points when every pred() entry names the outcome
+#' variable at one single period, and NULL otherwise. That shape builds
+#' predictor rows which are plain pre-treatment outcome rows (any `op`
+#' collapses to the value itself on a single period), so it is the only
+#' shape that can coincide with the outcomes-only fit.
+#'
+#' @param predictors  List of pred_spec objects (non-empty).
+#' @param outcome_var Name of the outcome variable, or NULL when unknown
+#'   (direct internal calls) -- returns NULL then.
+#' @noRd
+.outcome_lag_times <- function(predictors, outcome_var) {
+  if (is.null(outcome_var)) return(NULL)
+  ts <- vector("list", length(predictors))
+  for (i in seq_along(predictors)) {
+    p <- predictors[[i]]
+    if (!inherits(p, "pred_spec")) return(NULL)
+    if (length(p$vars) != 1L || p$vars != outcome_var) return(NULL)
+    if (length(p$times) != 1L) return(NULL)
+    ts[[i]] <- p$times
+  }
+  unlist(ts, use.names = FALSE)
+}
+
 #' Detect the canonical outcomes-only predictor specification
 #'
-#' TRUE when every pred() entry is the outcome variable at one single time
-#' point and the entries jointly cover each pre-treatment period exactly
-#' once. Such a spec builds X0/X1 equal to the pre-treatment outcome rows
-#' (any `op` collapses to the value itself on a single period), so the fit
-#' is the outcomes-only fit and can be routed to that path.
+#' TRUE when the entries are single-period outcome lags that jointly cover
+#' each pre-treatment period exactly once. X0/X1 then equal the
+#' pre-treatment outcome rows, so the fit is the outcomes-only fit and can
+#' be routed to that path. Coverage is judged against `pre_times`, i.e.
+#' against the periods `data` actually carries.
 #'
 #' @param predictors  List of pred_spec objects (non-empty).
 #' @param outcome_var Name of the outcome variable, or NULL when unknown
@@ -245,18 +275,64 @@ print.pred_spec <- function(x, ...) {
 #' @param pre_times   The pre-treatment time values.
 #' @noRd
 .is_outcome_only_spec <- function(predictors, outcome_var, pre_times) {
-  if (is.null(outcome_var)) return(FALSE)
-  ts <- vector("list", length(predictors))
-  for (i in seq_along(predictors)) {
-    p <- predictors[[i]]
-    if (!inherits(p, "pred_spec")) return(FALSE)
-    if (length(p$vars) != 1L || p$vars != outcome_var) return(FALSE)
-    if (length(p$times) != 1L) return(FALSE)
-    ts[[i]] <- p$times
+  ts <- .outcome_lag_times(predictors, outcome_var)
+  !is.null(ts) && length(ts) == length(pre_times) &&
+    anyDuplicated(ts) == 0L && all(ts %in% pre_times)
+}
+
+#' Flag pred() windows that do not aggregate what they read as
+#'
+#' Two silent traps that leave the fit well defined but not the model that
+#' was written down: a window only partly present in the panel is averaged
+#' over the intersection while keeping its full label, and a window reaching
+#' past the treatment date averages values the treatment has already moved.
+#' A window with no overlap at all is left alone -- it produces an all-NA
+#' predictor row, which build_predictor_matrices() rejects outright.
+#'
+#' @param predictors List of pred_spec objects.
+#' @param times      Panel time index, in order.
+#' @param T_pre      Number of pre-treatment periods.
+#' @noRd
+.check_pred_windows <- function(predictors, times, T_pre) {
+  post_times <- times[-seq_len(T_pre)]
+  fmt <- function(x) {
+    if (length(x) > 5L) {
+      paste0(paste(x[seq_len(5L)], collapse = ", "), ", ...")
+    } else {
+      paste(x, collapse = ", ")
+    }
   }
-  ts <- unlist(ts, use.names = FALSE)
-  length(ts) == length(pre_times) && anyDuplicated(ts) == 0L &&
-    all(ts %in% pre_times)
+  absent <- character(0L)
+  post   <- character(0L)
+  for (p in predictors) {
+    if (!inherits(p, "pred_spec")) next
+    lab  <- paste(p$vars, collapse = ", ")
+    miss <- setdiff(p$times, times)
+    if (length(miss) > 0L && length(miss) < length(p$times)) {
+      absent <- c(absent, sprintf("pred(%s, ...): %s", lab, fmt(miss)))
+    }
+    hit <- intersect(p$times, post_times)
+    if (length(hit) > 0L) {
+      post <- c(post, sprintf("pred(%s, ...): %s", lab, fmt(hit)))
+    }
+  }
+  if (length(absent) > 0L) {
+    warning(
+      "pred() windows name times the panel does not contain, so those ",
+      "predictor rows aggregate fewer periods than the window reads as -- ",
+      paste(absent, collapse = "; "), ".",
+      call. = FALSE
+    )
+  }
+  if (length(post) > 0L) {
+    warning(
+      "pred() windows reach into the post-treatment periods, whose values ",
+      "the treatment has already moved -- ", paste(post, collapse = "; "),
+      ". SCM predictors are measured before treatment.",
+      call. = FALSE
+    )
+  }
+  invisible(NULL)
 }
 
 #' Build predictor matrices X0 and X1 for SCM

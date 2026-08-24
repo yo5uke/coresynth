@@ -261,20 +261,45 @@ fit_scm_cpp <- function(
 
   use_cov <- !is.null(predictors) && length(predictors) > 0L
 
+  pre_times <- pan$times[seq_len(T_pre)]
+
   # A spec listing solely the outcome at each single pre-treatment period
   # builds X0/X1 equal to the pre-treatment outcome rows, i.e. it IS the
   # outcomes-only fit. Route it there so both ways of writing that model
   # return the identical (and much faster) fit. An explicit predictor-path
   # optimiser request (multistart/bfgs) overrides the routing.
-  if (use_cov && v_optim %in% c("auto", "coord_descent") &&
-      .is_outcome_only_spec(predictors, outcome_var,
-                            pan$times[seq_len(T_pre)])) {
-    message(
-      "predictors specify the outcome at every pre-treatment period; ",
-      "fitting through the outcomes-only path (identical to ",
-      "predictors = NULL)."
-    )
-    use_cov <- FALSE
+  if (use_cov && v_optim %in% c("auto", "coord_descent")) {
+    if (.is_outcome_only_spec(predictors, outcome_var, pre_times)) {
+      message(
+        "predictors specify the outcome at every pre-treatment period; ",
+        "fitting through the outcomes-only path (identical to ",
+        "predictors = NULL)."
+      )
+      use_cov <- FALSE
+    } else {
+      # Near miss. Coverage is judged against the periods `data` carries, so
+      # the same `predictors` list lands on either path depending on how far
+      # back `data` reaches -- a change of estimand that is invisible from
+      # the call. Name the mismatch instead of letting it pass in silence.
+      lag_times <- .outcome_lag_times(predictors, outcome_var)
+      if (!is.null(lag_times)) {
+        n_cov <- length(unique(lag_times[lag_times %in% pre_times]))
+        message(
+          "predictors are single-period outcome lags covering ", n_cov,
+          " of the ", T_pre, " pre-treatment periods in 'data' (",
+          pre_times[1L], " to ", pre_times[T_pre], "), so this is a ",
+          "predictor-path fit, not the outcomes-only fit. The outer V fit ",
+          "still evaluates the pre-treatment period in full",
+          if (is.null(v_window)) {
+            paste0("; restrict it with v_window, or subset 'data', to move ",
+                   "the pre-treatment window")
+          } else {
+            ""
+          },
+          "."
+        )
+      }
+    }
   }
 
   if (use_cov) {
@@ -284,6 +309,7 @@ fit_scm_cpp <- function(
         call. = FALSE
       )
     }
+    .check_pred_windows(predictors, pan$times, T_pre)
     pm <- build_predictor_matrices(
       data     = data,
       id_var   = id_var,
@@ -341,7 +367,6 @@ fit_scm_cpp <- function(
         call. = FALSE
       )
     }
-    pre_times <- pan$times[seq_len(T_pre)]
     idx <- match(v_window, pre_times)
     if (anyNA(idx)) {
       stop(

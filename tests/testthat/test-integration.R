@@ -1229,6 +1229,15 @@ test_that("scm_design custom population weights f are normalised and applied", {
   expect_equal(res$f[["m1"]], 0.4 / sum(f_raw), tolerance = 1e-10)
 })
 
+test_that("scm_design rejects a pred() window with no data", {
+  df <- make_design_panel(J = 8L, TT = 20L)
+  expect_error(
+    scm_design(df, "outcome", "unit", "time", T0 = 15L,
+               predictors = list(pred("outcome", 100:110))),
+    regexp = "non-finite"
+  )
+})
+
 test_that("scm_design with pred() predictors works", {
   df <- make_design_panel(J = 8L, TT = 20L)
   # Add a covariate
@@ -4566,6 +4575,96 @@ test_that("explicit v_optim = 'multistart' overrides the outcomes-only routing",
   expect_equal(fit$v_optim_effective, "multistart")
   expect_false(is.null(fit$X0_mat))
   expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-8)
+})
+
+# Coverage is judged against the pre-treatment periods `data` carries, so the
+# same predictors list lands on either path depending on how far back `data`
+# reaches. That switch changes the estimand, so it has to be announced.
+
+test_that("a partial-coverage outcome-lag spec reports the missed routing", {
+  spec <- lapply(3:10, function(t) pred("y", t))
+  expect_message(
+    fit_full <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                        predictors = spec),
+    regexp = "covering 8 of the 10 pre-treatment periods"
+  )
+  expect_equal(fit_full$v_optim_effective, "multistart")
+  expect_false(is.null(fit_full$X0_mat))
+
+  # Same spec, `data` trimmed to the periods it covers: now it is the
+  # outcomes-only fit, on the same call.
+  panel_trim <- panel[panel$time >= 3, ]
+  expect_message(
+    fit_trim <- scm_fit(y ~ d | id + time, data = panel_trim, method = "scm",
+                        predictors = spec),
+    regexp = "outcomes-only"
+  )
+  expect_equal(fit_trim$v_optim_effective, "coord_descent")
+  expect_null(fit_trim$X0_mat)
+})
+
+test_that("the missed-routing message names v_window only when it is unset", {
+  spec <- lapply(3:10, function(t) pred("y", t))
+  expect_message(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            predictors = spec),
+    regexp = "v_window"
+  )
+  msgs <- capture_messages(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            predictors = spec, v_window = 3:10)
+  )
+  expect_true(any(grepl("covering 8 of the 10", msgs)))
+  expect_false(any(grepl("v_window", msgs)))
+})
+
+test_that("specs that are not single-period outcome lags stay silent", {
+  msgs <- capture_messages(
+    scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+            predictors = list(pred(c("cov1", "cov2"), 1:10)))
+  )
+  expect_false(any(grepl("pre-treatment periods in 'data'", msgs)))
+
+  msgs_ms <- capture_messages(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            predictors = lapply(3:10, function(t) pred("y", t)),
+            v_optim = "multistart")
+  )
+  expect_false(any(grepl("pre-treatment periods in 'data'", msgs_ms)))
+})
+
+# pred() windows that do not aggregate what they read as ──────────────────────
+
+test_that("pred() windows reaching past the treatment date warn", {
+  expect_warning(
+    scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+            predictors = list(pred("cov1", 1:10), pred("cov2", 8:14))),
+    regexp = "post-treatment"
+  )
+})
+
+test_that("pred() windows only partly present in the panel warn", {
+  expect_warning(
+    scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+            predictors = list(pred("cov1", -3:10))),
+    regexp = "does not contain"
+  )
+})
+
+test_that("a pred() window with no overlap errors instead of warning", {
+  expect_silent(suppressMessages(expect_error(
+    scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+            predictors = list(pred("cov1", 100:110))),
+    regexp = "non-finite"
+  )))
+})
+
+test_that("windows that lie inside the pre-treatment period do not warn", {
+  expect_no_warning(
+    scm_fit(y ~ d | id + time, data = panel_cov, method = "scm",
+            predictors = list(pred(c("cov1", "cov2"), 1:10),
+                              pred("y", c(3, 6, 9))))
+  )
 })
 
 # ── Inner-QP solver: exactness and the Wolfe (Caratheodory-sparse) option ─────

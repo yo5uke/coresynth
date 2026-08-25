@@ -52,8 +52,10 @@ DESCRIPTION の版は GitHub に push した時点で「開発版として公開
 ## リリース時のチェックリスト
 
 1. `NEWS.md` の見出しを確定番号にし、内容が実装と一致しているか確認
-2. `DESCRIPTION` の `Version:` を更新（`RoxygenNote: 8.0.0` が書き戻されていないかも確認）
+2. `DESCRIPTION` の `Version:` を更新（`Config/roxygen2/version` が現行バージョンと一致しているかも確認。`RoxygenNote:` が消えるのは roxygen2 8.0.0 以降の正しい移行動作なので復元しない）
 3. `devtools::document()` → `build-install` skill → `devtools::test()`
 4. `devtools::check(args = c("--no-manual", "--run-donttest"))` で 0 errors / 0 warnings / 0 notes
 5. 新規 export・S3 method があれば `pkgdown-check` skill
 6. コミットは「機能」と「`chore(release): bump version to x.y.z`（DESCRIPTION + NEWS.md）」に分ける
+
+CRAN 提出用の `.tar.gz` の作成・アップロードはユーザーが自分で行う。Claude は行わない（`R CMD build` 等でパッケージ化する作業はスコープ外）。

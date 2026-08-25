@@ -168,10 +168,10 @@ Copy-Item "$env:USERPROFILE\AppData\Local\R\win-library\4.6\coresynth\libs\x64\c
 
 ```
 Config/roxygen2/markdown: TRUE   # DESCRIPTION に記載
-RoxygenNote: 8.1.0
+Config/roxygen2/version: 8.1.0
 ```
 
-`devtools::document()` 後に `RoxygenNote:` が 7.x/8.0.x に書き戻された場合は即座に `8.1.0` に修正する。roxygen2 8.1.0 は `RoxygenNote:` 行を**丸ごと削除**するので（`devtools::check()` も内部で document を走らせる）、DESCRIPTION の差分を確認して行ごと復元する。
+`RoxygenNote:` は roxygen2 8.0.0 で非推奨化され、後継の `Config/roxygen2/version` に統合された（`Roxygen:` → `Config/roxygen2/` フィールド群への移行と同時）。`devtools::document()`（`devtools::check()` 内部の document 呼び出し含む）が `RoxygenNote:` 行を削除するのはこの移行処理そのものであり、正しい挙動。**復元しない** — DESCRIPTION の差分に `RoxygenNote:` の削除が出てもそのままにする。`Config/roxygen2/version` の値が現在の roxygen2 バージョンと一致しているかだけ確認する。
 
 ---
 

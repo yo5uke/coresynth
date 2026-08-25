@@ -15,9 +15,9 @@
 ## roxygen2（バージョン 8.1.0）
 ```
 Config/roxygen2/markdown: TRUE
-RoxygenNote: 8.1.0
+Config/roxygen2/version: 8.1.0
 ```
-`devtools::document()` 後に `RoxygenNote:` が 7.x/8.0.x に書き戻された場合は即座に `8.1.0` に修正する。
+`RoxygenNote:` は roxygen2 8.0.0 で非推奨化され `Config/roxygen2/version` に統合された。`devtools::document()` が `RoxygenNote:` を削除するのはこの移行処理そのものなので復元しない。
 
 ## 新規 export 追加時
 新しい export 関数・S3 method（`plot.*`、`print.*` 等）を追加した場合は `_pkgdown.yml` の reference index にトピックがあるか確認する（無いと GitHub Actions の pkgdown デプロイがサイト全体停止する）。

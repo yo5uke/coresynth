@@ -239,7 +239,7 @@
 ## New features
 
 - **`plot(fit, type = "pred_weights")`** draws the predictor/variable weight
-  matrix \eqn{V} of a sharp SCM fit as a horizontal bar chart, the companion
+  matrix `V` of a sharp SCM fit as a horizontal bar chart, the companion
   to the existing donor `type = "weights"` chart. Bars are labelled with the
   predictor names (or `V1..V_Tpre` for outcomes-only fits) and honour the
   `fill` and `top_n` arguments. Staggered SCM and the other estimators do not

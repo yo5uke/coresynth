@@ -97,6 +97,67 @@
   .aggregate_cohorts(cohort_list[valid])
 }
 
+# ── Internal: Xu (2017) Algorithm 1 -- cross-validate the number of factors ──
+# Leave-one-period-out over the pre-treatment window. For each candidate r the
+# IFE model is estimated once on the control units; then each pre-treatment
+# period s is held out in turn, the treated units' factor loadings are refit by
+# OLS on the remaining pre-treatment periods, and period s is predicted from
+# them. The r with the smallest mean squared prediction error wins.
+#
+# The candidate set starts at 1: r = 0 (no factors, i.e. two-way fixed effects)
+# is what the C++ IFE solver cannot represent, since it takes a rank-r
+# truncated SVD.
+#
+# Dividing by T_pre alone, rather than by T_pre * N_treated, follows the
+# paper's Step 3. The treated count is constant across candidates, so it does
+# not affect which r wins.
+.gsc_cv_r <- function(Y_co, Y_tr_pre, X_co, X_tr_pre, r_max = 5L) {
+  T_pre <- nrow(Y_tr_pre)
+  N_co  <- ncol(Y_co)
+  N_tr  <- ncol(Y_tr_pre)
+  p     <- dim(X_tr_pre)[3L]
+
+  # Holding out one period leaves T_pre - 1 to identify r loadings by OLS
+  hi <- min(as.integer(r_max), T_pre - 1L, N_co)
+  if (hi < 1L)
+    stop("GSC cannot cross-validate the number of factors with T_pre = ",
+         T_pre, " pre-treatment period(s) and ", N_co, " control unit(s). ",
+         "Supply r explicitly.", call. = FALSE)
+
+  cands <- seq_len(hi)
+  mspe  <- vapply(cands, function(r) {
+    res <- tryCatch(gsc_ife_cpp(Y_co, Y_tr_pre, r, X_co, X_tr_pre),
+                    error = function(e) NULL)
+    if (is.null(res)) return(NA_real_)
+    F_pre <- res$F[seq_len(T_pre), , drop = FALSE]        # T_pre x r
+
+    # Take the covariate part out of the treated pre-treatment outcomes, so
+    # what the held-out loadings have to explain is the factor structure.
+    R_tr <- Y_tr_pre
+    if (p > 0L)
+      for (j in seq_len(p))
+        R_tr <- R_tr - matrix(X_tr_pre[, , j], T_pre, N_tr) * res$beta[j]
+
+    err <- vapply(seq_len(T_pre), function(s) {
+      F_ms <- F_pre[-s, , drop = FALSE]
+      lam  <- tryCatch(
+        solve(crossprod(F_ms), crossprod(F_ms, R_tr[-s, , drop = FALSE])),
+        error = function(e) NULL)                         # r x N_tr
+      if (is.null(lam)) return(NA_real_)
+      sum((R_tr[s, ] - drop(F_pre[s, , drop = FALSE] %*% lam))^2)
+    }, numeric(1L))
+
+    if (anyNA(err)) NA_real_ else sum(err) / T_pre
+  }, numeric(1L))
+
+  if (all(is.na(mspe)))
+    stop("GSC cross-validation failed for every candidate number of factors. ",
+         "Supply r explicitly.", call. = FALSE)
+
+  list(r     = cands[which.min(mspe)],
+       table = data.frame(r = cands, mspe = mspe))
+}
+
 #' Fit Generalized Synthetic Control (Xu, 2017)
 #'
 #' Uses the Interactive Fixed Effects (IFE) model:
@@ -110,7 +171,8 @@
 #' @param d    Treatment indicator (long format)
 #' @param id   Unit identifier (long format)
 #' @param time Time identifier (long format)
-#' @param r    Number of latent factors (default 2)
+#' @param r    Number of latent factors. `NULL` (default) selects it by the
+#'   leave-one-period-out cross-validation of Xu (2017, Algorithm 1).
 #' @param data Long-format data frame. Required when `covariates` is non-NULL.
 #' @param id_var   Name of the unit identifier column in `data`.
 #' @param time_var Name of the time identifier column in `data`.
@@ -123,7 +185,7 @@ fit_gsc_cpp <- function(
   d,
   id,
   time,
-  r = 2,
+  r = NULL,
   data = NULL,
   id_var = NULL,
   time_var = NULL,
@@ -134,6 +196,39 @@ fit_gsc_cpp <- function(
   control_group <- match.arg(control_group)
   pan <- panel_to_matrices(y, d, id, time)
   .check_panel_complete(pan$Y, "GSC")
+
+  if (!is.null(r) && (!is.numeric(r) || length(r) != 1L || r < 1 ||
+                      r != as.integer(r)))
+    stop("r must be NULL (cross-validated) or a single positive integer.",
+         call. = FALSE)
+
+  # Xu (2017) Algorithm 1 picks the number of factors before the effect is
+  # estimated. Every treated unit is untreated throughout the global
+  # pre-treatment window, so one cross-validation serves sharp and staggered
+  # panels alike.
+  r_cv <- NULL
+  if (is.null(r)) {
+    T_pre_cv <- pan$T_pre
+    Y_co_cv  <- pan$Y[, pan$idx_control, drop = FALSE]
+    Y_tr_cv  <- pan$Y[seq_len(T_pre_cv), pan$idx_treat, drop = FALSE]
+    if (!is.null(covariates) && !is.null(data)) {
+      if (is.null(id_var) || is.null(time_var))
+        stop("'id_var' and 'time_var' must be provided with covariates.",
+             call. = FALSE)
+      X_co_cv <- build_covariate_array(data, id_var, time_var, covariates,
+                                       pan$units[pan$idx_control], pan$times)
+      X_tr_cv <- build_covariate_array(
+        data, id_var, time_var, covariates,
+        pan$units[pan$idx_treat], pan$times
+      )[seq_len(T_pre_cv), , , drop = FALSE]
+    } else {
+      X_co_cv <- array(0.0, c(nrow(pan$Y), length(pan$idx_control), 0L))
+      X_tr_cv <- array(0.0, c(T_pre_cv,    length(pan$idx_treat),   0L))
+    }
+    cv   <- .gsc_cv_r(Y_co_cv, Y_tr_cv, X_co_cv, X_tr_cv)
+    r    <- cv$r
+    r_cv <- cv$table
+  }
 
   # ── Staggered adoption path ──────────────────────────────────────────────
   if (!pan$is_sharp) {
@@ -153,6 +248,7 @@ fit_gsc_cpp <- function(
     res_st$method              <- "gsc"
     res_st$staggered           <- TRUE
     res_st$r                   <- r
+    res_st$r_cv                <- r_cv
     res_st$Y_treat             <- pan$Y[, pan$idx_treat, drop = FALSE]
     res_st$Y_synth             <- NULL
     res_st$gap                 <- NULL
@@ -255,6 +351,7 @@ fit_gsc_cpp <- function(
   list(
     method = "gsc",
     r = r,
+    r_cv = r_cv,
     F = res$F,
     L_co = res$L_co,
     L_tr = res$L_tr,

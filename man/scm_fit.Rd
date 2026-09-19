@@ -29,13 +29,21 @@ scm_fit(
 \item{method}{One of \code{"scm"}, \code{"sdid"}, \code{"gsc"}, \code{"mc"}, \code{"tasc"}, \code{"si"}.}
 
 \item{...}{Estimator-specific arguments forwarded to the chosen method:
-\code{lambda} (\code{"mc"}), \code{r} (\code{"gsc"}, \code{"tasc"}), \code{em_iter} and \code{fix_A}
-(\code{"tasc"}), \code{zeta2} and \code{zeta_t} (\code{"sdid"}), \code{k} (\code{"si"}),
-\code{control_group} (\code{"scm"}, \code{"sdid"}, \code{"gsc"}, \code{"si"}), and
-\code{scale_predictors} (\code{"scm"}). A name the chosen estimator does not take
-is an error rather than a silently ignored argument. Every argument after
-\code{...} must be named in full: this is what lets \code{lambda} reach
-\code{method = "mc"} instead of partially matching \code{lambda_pen}.}
+\code{lambda} plus \code{cv_folds}, \code{cv_nlambda} and \code{cv_seed} (\code{"mc"}), \code{r}
+(\code{"gsc"}, \code{"tasc"}), \code{em_iter} and \code{fix_A} (\code{"tasc"}), \code{zeta2} and
+\code{zeta_t} (\code{"sdid"}), \code{k} (\code{"si"}), \code{control_group} (\code{"scm"}, \code{"sdid"},
+\code{"gsc"}, \code{"si"}), and \code{scale_predictors} (\code{"scm"}). A name the chosen
+estimator does not take is an error rather than a silently ignored
+argument. Every argument after \code{...} must be named in full: this is what
+lets \code{lambda} reach \code{method = "mc"} instead of partially matching
+\code{lambda_pen}.
+
+The three tuning parameters that govern model complexity are selected
+from the data when left at their \code{NULL} default, each by the rule its
+source paper specifies: \code{r} by the leave-one-period-out cross-validation
+of Xu (2017, Algorithm 1), \code{lambda} by the K-fold cross-validation of
+Athey et al. (2021), and \code{k} by the optimal hard threshold of Donoho &
+Gavish (2014). Supplying a value skips the search.}
 
 \item{predictors}{A \code{list()} of \code{\link[=pred]{pred()}} specifications that define the
 predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each \code{\link[=pred]{pred()}}

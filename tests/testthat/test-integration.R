@@ -656,6 +656,88 @@ test_that("TASC handles staggered adoption and returns finite estimate", {
   expect_true(is.finite(fit$estimate))
 })
 
+# MC and TASC impute the counterfactual from one global fit whose mask already
+# encodes each unit's own adoption date, so their staggered path re-uses that
+# single fit. They must still declare themselves staggered and aggregate the
+# cohort ATTs with the same N_treated,g * T_post,g weights as every other
+# estimator, or the same panel silently yields a different estimand.
+.staggered_impute_fit <- function(method) {
+  args <- list(y ~ d | id + time, data = staggered, method = method)
+  if (method == "tasc") args <- c(args, list(r = 2L, em_iter = 5L))
+  do.call(scm_fit, args)
+}
+
+test_that("MC/TASC staggered fits carry the staggered class and cohort table", {
+  for (m in c("mc", "tasc")) {
+    fit <- .staggered_impute_fit(m)
+    expect_s3_class(fit, "coresynth_staggered")
+    expect_true(isTRUE(fit$staggered))
+    expect_true(broom::glance(fit)$staggered)
+
+    ce <- fit$cohort_estimates
+    expect_equal(ce$cohort, c(9L, 15L))
+    expect_equal(ce$n_treated, c(1L, 1L))
+    expect_equal(ce$T_pre, c(8L, 14L))
+    expect_equal(ce$T_post, c(16L, 10L))
+    expect_equal(sum(ce$weight), 1)
+    expect_length(fit$cohort_fits, 2L)
+  }
+})
+
+test_that("MC/TASC staggered ATT is the cohort-weighted average", {
+  for (m in c("mc", "tasc")) {
+    fit <- .staggered_impute_fit(m)
+    ce  <- fit$cohort_estimates
+    # N_treated,g * T_post,g weights (Clarke et al. 2024), not one per unit
+    w   <- ce$n_treated * ce$T_post
+    expect_equal(fit$estimate, sum(w * ce$estimate) / sum(w))
+    # each cohort ATT is the mean gap over that cohort's own post periods
+    for (i in seq_len(nrow(ce))) {
+      k <- match(fit$cohort_fits[[i]]$idx_tr, fit$idx_tr)
+      expect_equal(
+        ce$estimate[i],
+        mean(fit$gap[(ce$T_pre[i] + 1L):nrow(fit$gap), k, drop = FALSE])
+      )
+    }
+  }
+})
+
+test_that("MC/TASC staggered: tidy/augment use the per-cohort series", {
+  for (m in c("mc", "tasc")) {
+    fit <- .staggered_impute_fit(m)
+    td  <- broom::tidy(fit)
+    expect_equal(td$term, c("cohort_9", "cohort_15"))
+    expect_equal(td$type, rep("cohort_estimate", 2L))
+
+    aug <- broom::augment(fit)
+    expect_true(all(c(".cohort", ".fitted", ".period") %in% names(aug)))
+    expect_equal(sort(unique(aug$.cohort)), c(9L, 15L))
+    # .period must follow each cohort's own adoption date, not a global split
+    per_cohort <- split(aug, aug$.cohort)
+    expect_equal(sum(per_cohort[["9"]]$.period == "pre"), 8L)
+    expect_equal(sum(per_cohort[["15"]]$.period == "pre"), 14L)
+  }
+})
+
+test_that("MC/TASC staggered: plot() and the sharp accessors refuse", {
+  for (m in c("mc", "tasc")) {
+    fit <- .staggered_impute_fit(m)
+    expect_null(synthetic_outcomes(fit))
+    expect_error(plot(fit, type = "trend"), "per cohort")
+  }
+})
+
+test_that("MC/TASC sharp fits are untouched by the staggered path", {
+  for (m in c("mc", "tasc")) {
+    args <- list(y ~ d | id + time, data = panel, method = m)
+    if (m == "tasc") args <- c(args, list(r = 2L, em_iter = 5L))
+    fit <- do.call(scm_fit, args)
+    expect_false(inherits(fit, "coresynth_staggered"))
+    expect_null(fit$cohort_estimates)
+    expect_type(synthetic_outcomes(fit), "double")
+  }
+})
+
 test_that("SCM staggered with predictors arg errors informatively", {
   expect_error(
     scm_fit(y ~ d | id + time, data = staggered, method = "scm",
@@ -4355,12 +4437,14 @@ test_that("Phase 34: sdid_inference staggered placebo also returns SE and CI", {
 
 test_that("plot.coresynth: vline_offset moves the treatment line", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
-  # panel: times 1:20, T_pre = 10, first post-treatment period = 11
-  expect_equal(.vline_x(plot(fit, type = "trend")), 11)
-  expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = -1)), 10)
+  # panel: times 1:20, T_pre = 10, first post-treatment period = 11, so the
+  # default offset of -1 puts the line on period 10
+  expect_equal(.vline_x(plot(fit, type = "trend")), 10)
+  expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = 0)), 11)
+  expect_equal(.vline_x(plot(fit, type = "gap")), 10)
   # fractional offsets interpolate between adjacent observed times
   expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = -0.5)), 10.5)
-  expect_equal(.vline_x(plot(fit, type = "gap", vline_offset = -1)), 10)
+  expect_equal(.vline_x(plot(fit, type = "gap", vline_offset = 0)), 11)
 })
 
 test_that("plot.coresynth: vline_offset is validated and range-checked", {
@@ -4385,7 +4469,7 @@ test_that("plot.coresynth: vline xintercept pins the line to an absolute time", 
   # several positions draw several lines
   expect_equal(.vline_x(plot(fit, type = "trend",
                              vline = list(xintercept = c(5, 11)))), c(5, 11))
-  expect_error(plot(fit, type = "trend", vline_offset = -1,
+  expect_error(plot(fit, type = "trend", vline_offset = 0,
                     vline = list(xintercept = 5)), "not both")
   expect_error(plot(fit, type = "trend", vline = list(xintercept = NA)),
                "non-missing")
@@ -4397,8 +4481,8 @@ test_that("plot.coresynth: vline_offset works on a Date time axis", {
   fit <- scm_fit(y ~ d | id + time, data = dpanel, method = "scm")
 
   d0 <- as.numeric(as.Date("2000-01-01") + 30 * 10) # 11th period
-  expect_equal(.vline_x(plot(fit, type = "trend")), d0)
-  expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = -1)), d0 - 30)
+  expect_equal(.vline_x(plot(fit, type = "trend")), d0 - 30)
+  expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = 0)), d0)
   expect_equal(.vline_x(plot(fit, type = "trend", vline_offset = -0.5)), d0 - 15)
   # absolute positions accept a date string on a Date axis
   expect_equal(
@@ -4411,8 +4495,8 @@ test_that("plot.coresynth: vline_offset works on a Date time axis", {
 test_that("plot.scm_placebo gaps: vline_offset and xintercept work", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
   inf <- mspe_ratio_pval(fit)
-  expect_equal(.vline_x(plot(inf, type = "gaps")), 11)
-  expect_equal(.vline_x(plot(inf, type = "gaps", vline_offset = -1)), 10)
+  expect_equal(.vline_x(plot(inf, type = "gaps")), 10)
+  expect_equal(.vline_x(plot(inf, type = "gaps", vline_offset = 0)), 11)
   expect_equal(.vline_x(plot(inf, type = "gaps",
                              vline = list(xintercept = 4))), 4)
   expect_error(plot(inf, type = "gaps", vline_offset = 2.5,
@@ -4828,4 +4912,64 @@ test_that("mspe_ratio_pval mirrors the fit's qp_solver", {
   expect_true(is.finite(res$p_value))
   expect_gte(res$p_value, 0)
   expect_lte(res$p_value, 1)
+})
+
+# ── scm_fit() argument validation ─────────────────────────────────────────────
+# One formula interface serves six estimators, so an argument meant for another
+# one, or misspelled, used to be absorbed by `...` and silently change nothing.
+
+test_that("scm_fit rejects SCM-only arguments given to other methods", {
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       predictors = list(pred("y", 1:3))), "'predictors'")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "tasc",
+                       nu = 0.5), "'nu'")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       fixedeff = TRUE), "'fixedeff'")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "si",
+                       v_optim = "multistart"), "'v_optim'")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "gsc",
+                       lambda_pen = 1), "'lambda_pen'")
+  # covariates reach three estimators, not six
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "tasc",
+                       covariates = "y"), "'covariates'")
+})
+
+test_that("scm_fit rejects unknown estimator arguments passed through ...", {
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       lambdaa = 1), "unused argument")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "gsc",
+                       rr = 3), "unused argument")
+  # control_group has no meaning for the imputation estimators: their mask
+  # already encodes each unit's own adoption date and the factorisation uses
+  # every observed cell
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       control_group = "never_treated"), "unused argument")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "tasc",
+                       control_group = "never_treated"), "unused argument")
+})
+
+test_that("scm_fit routes MC's lambda past the SCM-only lambda_pen", {
+  # `lambda` is not an exact formal of scm_fit(), so while lambda_pen sat
+  # before `...` R matched it there partially and MC's penalty never moved
+  fit_default <- scm_fit(y ~ d | id + time, data = panel, method = "mc")
+  fit_lambda  <- scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                         lambda = 2)
+  expect_equal(fit_lambda$lambda, 2)
+  expect_false(isTRUE(all.equal(fit_default$lambda, fit_lambda$lambda)))
+  expect_false(isTRUE(all.equal(fit_default$estimate, fit_lambda$estimate)))
+})
+
+test_that("scm_fit still accepts each estimator's own arguments", {
+  expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                          lambda = 0.5), "coresynth")
+  expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "tasc",
+                          r = 2L, em_iter = 3L, fix_A = TRUE), "coresynth")
+  expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "gsc",
+                          r = 2L), "coresynth")
+  expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "sdid",
+                          zeta2 = 1, zeta_t = 1e-6), "coresynth")
+  expect_s3_class(scm_fit(y ~ d | id + time, data = staggered, method = "sdid",
+                          control_group = "never_treated"), "coresynth")
+  expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                          scale_predictors = FALSE), "coresynth")
 })

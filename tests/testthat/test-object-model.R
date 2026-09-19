@@ -206,3 +206,28 @@ test_that("plot gives a clear error for staggered fits", {
   fit <- scm_fit(gdp ~ treated | unit + year, data = stag, method = "sdid")
   expect_error(plot(fit, type = "trend"), "per cohort")
 })
+
+test_that("print and summary report the cohort structure of staggered fits", {
+  stag <- make_staggered_panel()
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
+    fit <- scm_fit(gdp ~ treated | unit + year, data = stag, method = m)
+    expect_output(print(fit), "\\(staggered\\)")
+    expect_output(print(fit), "Cohorts:")
+    # T_pre alone describes the earliest cohort only, so it must not be the
+    # sole period line a staggered fit reports
+    expect_false(any(grepl("Pre-treatment periods:", capture.output(print(fit)))))
+    out <- capture.output(summary(fit))
+    expect_true(any(grepl("\\(staggered\\)", out)))
+    expect_true(any(grepl("Aggregate ATT:", out)))
+    expect_true(any(grepl("T_post", out)))
+  }
+})
+
+test_that("sharp fits keep the plain print and summary output", {
+  fit <- scm_fit(gdp ~ treated | unit + year, data = make_sharp_panel(),
+                 method = "scm")
+  expect_output(print(fit), "Pre-treatment periods:")
+  out <- capture.output(print(fit))
+  expect_false(any(grepl("staggered", out)))
+  expect_output(summary(fit), "Periods : T_pre =")
+})

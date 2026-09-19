@@ -37,8 +37,9 @@
 $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{tr,g} \cdot T_{post,g}}$$
 
 - **コホート g**: 採用タイミングが同じ処置ユニット群
-- **コントロール群**: `"clean"`（デフォルト）= never-treated ＋ 将来採用者（$T_{adopt}[j] > g$）、`"never_treated"` = 統制ユニットのみ
-- **返却構造**: `staggered = TRUE`、`cohort_estimates`（data.frame）、`cohort_fits`（list）
+- **コントロール群**: `"clean"`（デフォルト）= never-treated ＋ 将来採用者（$T_{adopt}[j] > g$）、`"never_treated"` = 統制ユニットのみ。**MC/TASC は `control_group` を持たない**（下記）
+- **返却構造**: `staggered = TRUE`、`cohort_estimates`（data.frame）、`cohort_fits`（list）。集計は全手法 `.aggregate_cohorts()`（`R/utils.R`）に一元化
+- **コホート分割する手法としない手法**: SCM/SDID/GSC/SI はコホートごとに再フィットする。**MC/TASC は補完型**なので再フィットせず、観測マスク（MC は `O`、TASC は `Y_obs` の NA）が各ユニットの採用時点を表現し、単一フィットがそのまま staggered 推定になる。コホート表は `.impute_cohort_fits()` がその単一フィットの `gap` を分割して作る。**どちらも集計は同じ Clarke 加重**でなければならない — ユニット等加重にすると事後長の異なるコホートで他手法と別の推定量を返す
 - **cohort_fits[[g]]** の共通フィールド: `estimate`, `weight`, `idx_co`, `idx_tr`, `T_pre`, `T_post`（inference resampling に利用）。SCM は加えて `Y_treat_mat`（T × n_treated_g、per-unit 処置系列 — wild bootstrap 用）と `alpha`（fixedeff の intercept shift、なければ 0）
 
 ---
@@ -181,7 +182,8 @@ Config/roxygen2/version: 8.1.0
 
 - **SI の共変量**: 未対応（sharp/staggered とも。Agarwal et al. 2025 の原著が covariate なしの定式化）
 - **SCM staggered**: `predictors = NULL` 限定（`covariates` partial-out のみ。エラー時に代替案を案内）
-- **plot()**: staggered fit は `Y_synth = NULL` のため未対応（明示エラー）。cohort 別の系列は `augment()` の long df を使う
+- **plot()**: staggered fit は未対応（明示エラー）。cohort 別の系列は `augment()` の long df を使う
+- **MC/TASC の staggered**: `control_group` を選べない（マスク経由で全観測セルを使う設計のため。渡すとエラー）。推論関数は sharp/staggered とも無し
 
 ---
 

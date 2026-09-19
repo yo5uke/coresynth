@@ -17,14 +17,22 @@ knitr::opts_chunk$set(
 library(coresynth)
 ```
 
-When units adopt treatment at different times, coresynth fits each adoption
-**cohort** separately and aggregates the cohort ATTs with weights proportional
+When units adopt treatment at different times, coresynth groups them into
+adoption **cohorts** and aggregates the cohort ATTs with weights proportional
 to `N_treated × T_post` (Clarke et al. 2024):
 
 $$\hat\tau = \frac{\sum_g N_{tr,g}\, T_{post,g}\, \hat\tau_g}{\sum_g N_{tr,g}\, T_{post,g}}.$$
 
 All six estimators support this; staggered timing is **detected automatically**
 from the treatment column — no extra flag is needed.
+
+The cohort ATTs themselves come about in two different ways. `scm`, `sdid`,
+`gsc`, and `si` fit each cohort separately, against a donor pool you choose
+with `control_group`. `mc` and `tasc` instead impute the counterfactual from a
+single fit: their observation mask already blanks each treated unit from its
+own adoption date, so one factorisation covers every cohort at once. That is
+why those two take no `control_group` argument — all cohorts share the same
+donor set, namely every observed cell in the panel.
 
 ## A staggered panel
 

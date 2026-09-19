@@ -125,9 +125,13 @@ data.frame(
 
 ## Staggered Adoption
 
-All six methods support staggered adoption using a cohort-based approach (Clarke et al. 2024):
-each adoption cohort is fitted separately and the cohort ATTs are aggregated with weights
-proportional to `N_treated × T_post`.
+All six methods support staggered adoption, and all aggregate the cohort ATTs the same way
+(Clarke et al. 2024): with weights proportional to `N_treated × T_post`. How each cohort ATT is
+obtained differs by estimator family. `scm`, `sdid`, `gsc`, and `si` fit every adoption cohort
+separately. `mc` and `tasc` impute the counterfactual instead, from a single fit whose
+observation mask already blanks each treated unit from its own adoption date, so no
+cohort-by-cohort refitting is needed; their cohorts share one donor set and they take no
+`control_group` argument.
 
 ```{r staggered, eval=FALSE}
 # u1: treated from t=11, u2: treated from t=16

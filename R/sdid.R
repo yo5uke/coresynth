@@ -269,23 +269,7 @@
     stop("All cohort-level SDID fits failed; see the preceding warnings for ",
          "per-cohort reasons.", call. = FALSE)
   }
-  r <- cohort_list[valid]
-
-  w   <- vapply(r, `[[`, numeric(1L), "weight")
-  tau <- vapply(r, `[[`, numeric(1L), "estimate")
-  att <- sum(w * tau) / sum(w)
-
-  cohort_df <- data.frame(
-    cohort    = vapply(r, `[[`, integer(1L), "cohort"),
-    n_treated = vapply(r, `[[`, integer(1L), "n_treated"),
-    T_pre     = vapply(r, `[[`, integer(1L), "T_pre"),
-    T_post    = vapply(r, `[[`, integer(1L), "T_post"),
-    estimate  = tau,
-    weight    = w / sum(w),
-    stringsAsFactors = FALSE
-  )
-
-  list(estimate = att, cohort_estimates = cohort_df, cohort_fits = r)
+  .aggregate_cohorts(cohort_list[valid])
 }
 
 # ── Public wrapper ─────────────────────────────────────────────────────────────

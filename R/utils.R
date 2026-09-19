@@ -153,6 +153,84 @@ panel_to_matrices <- function(y, d, id, time) {
     call. = FALSE)
 }
 
+#' Aggregate per-cohort fits into a staggered ATT
+#'
+#' Shared tail of every staggered engine: combines the per-cohort estimates
+#' into the weighted-average ATT of Clarke et al. (2024) and builds the
+#' `cohort_estimates` table. Each element of `r` must carry `cohort`,
+#' `n_treated`, `T_pre`, `T_post`, `estimate`, and `weight`
+#' (`N_treated,g * T_post,g`); `weight` is renormalised to sum to one in the
+#' returned table.
+#'
+#' @param r List of per-cohort fit lists (already filtered to the valid ones).
+#' @return A list with `estimate`, `cohort_estimates`, and `cohort_fits`.
+#' @noRd
+.aggregate_cohorts <- function(r) {
+  w   <- vapply(r, `[[`, numeric(1L), "weight")
+  tau <- vapply(r, `[[`, numeric(1L), "estimate")
+
+  cohort_df <- data.frame(
+    cohort    = vapply(r, `[[`, integer(1L), "cohort"),
+    n_treated = vapply(r, `[[`, integer(1L), "n_treated"),
+    T_pre     = vapply(r, `[[`, integer(1L), "T_pre"),
+    T_post    = vapply(r, `[[`, integer(1L), "T_post"),
+    estimate  = tau,
+    weight    = w / sum(w),
+    stringsAsFactors = FALSE
+  )
+
+  list(
+    estimate         = sum(w * tau) / sum(w),
+    cohort_estimates = cohort_df,
+    cohort_fits      = r
+  )
+}
+
+#' Cohort table for the imputation estimators (MC, TASC)
+#'
+#' MC and TASC recover the counterfactual from a single global fit: treated
+#' post-adoption cells are masked per unit, so staggered adoption needs no
+#' cohort-by-cohort re-fitting. The cohort table is therefore a partition of
+#' that one fit's gaps rather than a set of separate fits, and every cohort
+#' shares the same donor set -- the never-treated units, plus the observed
+#' (pre-adoption) cells of the other treated units, which the factorisation
+#' uses too.
+#'
+#' @param pan     Result of `panel_to_matrices()`.
+#' @param gap     T x N_treated matrix of observed minus imputed outcomes.
+#' @param Y_treat T x N_treated matrix of observed treated outcomes.
+#' @param Y_cf    T x N_treated matrix of imputed counterfactual outcomes.
+#' @return A list with `estimate`, `cohort_estimates`, and `cohort_fits`.
+#' @noRd
+.impute_cohort_fits <- function(pan, gap, Y_treat, Y_cf) {
+  TT      <- nrow(gap)
+  idx_tr  <- pan$idx_treat
+  T_adopt <- pan$T_adopt
+  cohorts <- sort(unique(T_adopt[idx_tr]))
+
+  r <- lapply(cohorts, function(g) {
+    k_g       <- which(T_adopt[idx_tr] == g)   # gap columns for this cohort
+    T_pre_g   <- g - 1L
+    T_post_g  <- TT - T_pre_g
+    post_rows <- (T_pre_g + 1L):TT
+
+    list(
+      cohort    = g,
+      n_treated = length(k_g),
+      T_pre     = T_pre_g,
+      T_post    = T_post_g,
+      estimate  = mean(gap[post_rows, k_g, drop = FALSE], na.rm = TRUE),
+      weight    = as.numeric(length(k_g)) * T_post_g,
+      idx_tr    = idx_tr[k_g],
+      idx_co    = pan$idx_control,
+      Y_treat   = Y_treat[, k_g, drop = FALSE],
+      Y_tr_hat  = Y_cf[, k_g, drop = FALSE]
+    )
+  })
+
+  .aggregate_cohorts(r)
+}
+
 #' NULL-coalescing helper
 #'
 #' Returns `l` unless it is `NULL`, in which case `r` is returned. Shared

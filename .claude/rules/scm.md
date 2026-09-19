@@ -12,6 +12,8 @@ $$Y_{it}^{(0)} = \delta_t + \theta_t Z_i + \lambda_t \mu_i + \varepsilon_{it}$$
 
 重み推定は入れ子最適化: 外側 = V（予測子重み）の座標降下 / L-BFGS-B / multistart、内側 = simplex QP（FISTA + active-set）。推論は `mspe_ratio_pval()`（sharp、MSPE 比率順列検定）と `scm_inference()`（staggered 専用 wild bootstrap）に分離。検証ツール: `placebo_in_time()`（in-time placebo backdating）・`loo_donors()`（V 固定ドナー LOO）。
 
+**Augmented SCM**（`augment_scm()`、Ben-Michael, Feller & Rothstein 2021, JASA）: sharp SCM fit（`coresynth_scm`）に対するリッジ回帰バイアス補正。ドナー横断のリッジ回帰で事後期間平均を予測するアウトカムモデル `beta_hat` を推定し、`tau_aug = tau_SCM + (m_tr_post - sum_j W_j * m_j_post)` で SCM の事前期間フィット不足を補正する。ペナルティ `lambda_ridge` は既定でコントロールユニット横断の LOO-CV により選択する。staggered SCM の partially pooled fit（2022, JRSS-B）とは別の拡張であり、両者を混同しない。
+
 **Staggered**: `predictors = NULL` 限定（`covariates` の partial-out のみ対応）。理論根拠は Ben-Michael, Feller & Rothstein (2022, JRSS-B)。原著 SCM は単一処置ユニット前提のため、staggered 拡張はこの論文に依拠する — コホート内平均（完全プーリング）は同一採用時点内で DGP 異質性項が消えることから正当化される。コホート間は `nu = NULL`（既定、per-cohort 独立 V 最適化）または `nu ∈ [0,1]` / `"auto"` の **partially pooled SCM**（コホート横断の pooled 目的と各コホート separate 目的を ν で線形結合、全コホートの重みを同時最適化）。`fixedeff = TRUE` で intercept shift（各ユニットを自身のプリ平均でデミーンした weighted DiD 形式；報告される `Y_synth` はこの shift を戻した生スケール）。
 
 ## 内側 QP・外側最適化

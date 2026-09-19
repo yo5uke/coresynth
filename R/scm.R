@@ -129,7 +129,7 @@ fit_scm_cpp <- function(
         call. = FALSE
       )
 
-    # Covariate partial-out for staggered SCM (Clarke et al. 2023 S.2.2)
+    # Covariate partial-out for staggered SCM (Clarke et al. 2024 S.2.2)
     use_cov  <- !is.null(covariates) && length(covariates) > 0L && !is.null(data)
     Y_work   <- pan$Y
     beta_hat <- numeric(0)

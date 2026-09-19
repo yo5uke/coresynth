@@ -319,7 +319,7 @@
   weights (omega) and pre-period time weights (lambda) — in the same bar
   style. Other methods keep the single unit-weight panel.
 - **Placebo SE and CI for SDID**: `sdid_inference(method = "placebo")` now
-  also reports the placebo-distribution standard error (Clarke et al. 2023,
+  also reports the placebo-distribution standard error (Clarke et al. 2024,
   Algorithm 4) and the corresponding normal-approximation confidence
   interval, for both sharp and staggered fits. The p-value is unchanged
   (permutation-based). `tidy()`/`glance()` pick the new columns up

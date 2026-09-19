@@ -65,10 +65,10 @@ summary(fit_scm)
 #> === coresynth summary ===
 #> Method : SCM 
 #> Periods : T_pre = 10 | T_post = 10 
-#> ATT estimate: 2.271125 
+#> ATT estimate: 2.271136 
 #> Unit weights (non-zero donors):
 #>     u2     u4     u6     u7    u10 
-#> 0.2475 0.0706 0.1477 0.3277 0.2065
+#> 0.2474 0.0705 0.1476 0.3279 0.2066
 ```
 
 The key arguments of `scm_fit()`:
@@ -144,7 +144,7 @@ across `scm`/`sdid`/`gsc`/`mc`/`si`.
 ## Staggered Adoption
 
 All six methods support staggered adoption using a cohort-based approach
-(Clarke et al. 2023): each adoption cohort is fitted separately and the
+(Clarke et al. 2024): each adoption cohort is fitted separately and the
 cohort ATTs are aggregated with weights proportional to
 `N_treated × T_post`.
 
@@ -366,20 +366,30 @@ Windows 11 / R 4.6.1.
 
 - Abadie, A., Diamond, A., & Hainmueller, J. (2010). Synthetic control
   methods for comparative case studies. *JASA*, 105(490), 493–505.
+- Abadie, A., & Zhao, J. (2026). Synthetic controls for experimental
+  design. *Review of Economics and Statistics*.
+  <doi:10.1162/REST.a.1837>
 - Agarwal, A., Shah, D., & Shen, D. (2025). Synthetic interventions:
   extending synthetic controls to multiple treatments. *Operations
   Research*. <doi:10.1287/opre.2025.1590>
 - Arkhangelsky, D., Athey, S., Hirshberg, D. A., Imbens, G. W., &
   Wager, S. (2021). Synthetic difference-in-differences. *AER*, 111(12),
   4088–4118.
-- Ben-Michael, E., Feller, A., & Rothstein, J. (2022). Synthetic
-  controls with staggered adoption. *JRSS-B*, 84(2), 351–381.
 - Athey, S., Bayati, M., Doudchenko, N., Imbens, G., & Khosravi, K.
   (2021). Matrix completion methods for causal panel data models.
   *JASA*, 116(536), 1716–1730.
+- Ben-Michael, E., Feller, A., & Rothstein, J. (2021). The augmented
+  synthetic control method. *JASA*, 116(536), 1789–1803.
+- Ben-Michael, E., Feller, A., & Rothstein, J. (2022). Synthetic
+  controls with staggered adoption. *JRSS-B*, 84(2), 351–381.
 - Chernozhukov, V., Wüthrich, K., & Zhu, Y. (2021). An exact and robust
   conformal inference method for counterfactual and synthetic controls.
   *JASA*, 116(536), 1849–1864.
-- Rho, H., et al. (2026). Time-aware synthetic control. *Working paper*.
+- Clarke, D., Pailañir, D., Athey, S., & Imbens, G. (2024). On synthetic
+  difference-in-differences and related estimation methods in Stata.
+  *The Stata Journal*, 24(4). <doi:10.1177/1536867X241297914>
+- Rho, S., Illick, C., Narasipura, S., Abadie, A., Hsu, D., & Misra, V.
+  (2026). Time-aware synthetic control. *AISTATS 2026* (poster).
+  arXiv:2601.03099
 - Xu, Y. (2017). Generalized synthetic control method. *Political
   Analysis*, 25(1), 57–76.

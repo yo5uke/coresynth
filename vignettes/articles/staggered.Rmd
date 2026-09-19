@@ -19,7 +19,7 @@ library(coresynth)
 
 When units adopt treatment at different times, coresynth fits each adoption
 **cohort** separately and aggregates the cohort ATTs with weights proportional
-to `N_treated × T_post` (Clarke et al. 2023):
+to `N_treated × T_post` (Clarke et al. 2024):
 
 $$\hat\tau = \frac{\sum_g N_{tr,g}\, T_{post,g}\, \hat\tau_g}{\sum_g N_{tr,g}\, T_{post,g}}.$$
 

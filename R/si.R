@@ -62,7 +62,7 @@
   })
   names(arm_fits) <- as.character(treat_arms)
 
-  # Weighted-average ATT: weight proportional to N_tr_d * T_post (Clarke et al. 2023)
+  # Weighted-average ATT: weight proportional to N_tr_d * T_post (Clarke et al. 2024)
   ws   <- vapply(arm_fits, `[[`, numeric(1L), "weight")
   taus <- vapply(arm_fits, `[[`, numeric(1L), "estimate")
   att  <- sum(ws * taus) / sum(ws)
@@ -89,7 +89,7 @@
 }
 
 # -- Internal: cohort-by-cohort SI for staggered adoption --------------------
-# Clarke et al. (2023); Arkhangelsky et al. (2021) Appendix S.8.
+# Clarke et al. (2024); Arkhangelsky et al. (2021) Appendix S.8.
 # SVD uses only Y_pre_co_g (T_pre_g x N_co_g): future-treated units in the
 # "clean" control group are all pre-treatment during periods 1..T_pre_g, so
 # there is no contamination from treatment in this window.

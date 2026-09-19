@@ -32,7 +32,7 @@
 
 論文テキスト・数式整理 MD は `papers/`（.gitignore 管理）に格納。
 
-### Staggered Adoption 共通仕様（Clarke et al. 2023）
+### Staggered Adoption 共通仕様（Clarke et al. 2024）
 
 $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{tr,g} \cdot T_{post,g}}$$
 

@@ -94,7 +94,7 @@ c(scm = aug$att_scm, augmented = aug$att_aug)
 
 *Arkhangelsky et al. (2021).* Combines unit and time weights with a DiD-style
 double differencing. Time-varying covariates are partialled out first
-(Clarke et al. 2023):
+(Clarke et al. 2024):
 
 ```{r sdid}
 fit_sdid <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",

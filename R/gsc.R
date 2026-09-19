@@ -1,5 +1,5 @@
 # ── Internal: cohort-by-cohort GSC for staggered adoption ────────────────────
-# Clarke et al. (2023); Arkhangelsky et al. (2021) Appendix S.8.
+# Clarke et al. (2024); Arkhangelsky et al. (2021) Appendix S.8.
 # Factors estimated independently per cohort (gsc_ife_cpp per cohort).
 # Y_co_g uses all T periods (pragmatic: future-treated contamination treated as
 # noise, same rationale as SDID staggered). Covariates handled via per-cohort

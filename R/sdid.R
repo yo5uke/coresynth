@@ -28,17 +28,17 @@
 #' @param covariates Character vector of time-varying covariate column names in
 #'   `data`. When provided, covariates are partialled out of Y via OLS on the
 #'   control-unit pre-period block before computing SDID weights and the ATT
-#'   (Arkhangelsky et al. 2021 S.4; Clarke et al. 2023). Requires `data`,
+#'   (Arkhangelsky et al. 2021 S.4; Clarke et al. 2024). Requires `data`,
 #'   `id_var`, and `time_var` to be supplied (done automatically when called
 #'   via [scm_fit()]). For staggered adoption, a global partial-out using all
-#'   Wit=0 observations is applied before cohort-level SDID (Clarke et al. 2023
+#'   Wit=0 observations is applied before cohort-level SDID (Clarke et al. 2024
 #'   S.2.2 "projected" method, Kranz 2022).
 #' @param data        Full long-format data frame (passed by [scm_fit()]).
 #' @param id_var      Name of the unit identifier column (passed by [scm_fit()]).
 #' @param time_var    Name of the time identifier column (passed by [scm_fit()]).
 #' @param control_group For staggered adoption: which units serve as controls
 #'   for each cohort. `"clean"` (default) uses never-treated units plus units
-#'   whose adoption date is strictly later than cohort g (Clarke et al. 2023).
+#'   whose adoption date is strictly later than cohort g (Clarke et al. 2024).
 #'   `"never_treated"` uses only units that are never treated.
 #' @return A list of class `coresynth`.
 #' @noRd
@@ -70,7 +70,7 @@
 # OLS of Y on X using ALL Wit=0 observations:
 #   - control units x all T periods
 #   - treated unit j x periods 1..(T_adopt[j]-1)
-# This is Clarke et al. (2023) S.2.2 "projected" approach (Kranz 2022).
+# This is Clarke et al. (2024) S.2.2 "projected" approach (Kranz 2022).
 # Returns Y_tilde = Y - X * beta_hat (all units, all periods).
 .sdid_partial_out_staggered <- function(Y, X_arr, pan) {
   p       <- dim(X_arr)[3]
@@ -201,7 +201,7 @@
 }
 
 # ── Internal: cohort-by-cohort SDID for staggered adoption ───────────────────
-# Arkhangelsky et al. (2021) Appendix S.8; Clarke et al. (2023).
+# Arkhangelsky et al. (2021) Appendix S.8; Clarke et al. (2024).
 # Y: optional pre-residualised outcome matrix. If NULL, uses pan$Y.
 .fit_sdid_staggered <- function(pan, Y = NULL, zeta2 = NULL, zeta_t = 1e-6,
                                 control_group = "clean") {
@@ -352,7 +352,7 @@ fit_sdid_cpp <- function(y, d, id, time,
   if (T_post < 1)
     stop("No post-treatment periods found.", call. = FALSE)
 
-  # Partial-out covariates (Arkhangelsky 2021 S.4; Clarke et al. 2023)
+  # Partial-out covariates (Arkhangelsky 2021 S.4; Clarke et al. 2024)
   if (use_cov) {
     X_arr    <- build_covariate_array(data, id_var, time_var,
                                      covariates, pan$units, pan$times)
@@ -406,19 +406,19 @@ fit_sdid_cpp <- function(y, d, id, time,
   )
 }
 
-# ── SDID Inference (Clarke et al. 2023, Algorithms 2-4) ────────────────────────
+# ── SDID Inference (Clarke et al. 2024, Algorithms 2-4) ────────────────────────
 
 #' Inference for Synthetic Difference-in-Differences
 #'
 #' Computes standard errors and p-values for a SDID estimate using one of
-#' four methods, following Clarke et al. (2023): permutation placebo test
+#' four methods, following Clarke et al. (2024): permutation placebo test
 #' (Algorithm 4), cluster bootstrap (Algorithm 2), leave-one-out jackknife
 #' (Algorithm 3), or (staggered fits only) a global jackknife across the
 #' unique control units of all cohorts.
 #'
 #' For `method = "placebo"`, the p-value is the permutation p-value, while
 #' the standard error is the dispersion of the placebo distribution
-#' (Clarke et al. 2023, Algorithm 4) and the confidence interval is the
+#' (Clarke et al. 2024, Algorithm 4) and the confidence interval is the
 #' normal approximation around the estimate with that SE. The placebo SE
 #' assumes the treated unit's noise is comparable to the control units';
 #' interpret it with caution when the donor pool is small.
@@ -523,7 +523,7 @@ sdid_inference <- function(
         less      = (1 + sum(placebo_effects <= tau_hat))           / (length(never_co) + 1)
       )
 
-      # Placebo variance (Clarke et al. 2023 Alg. 4): dispersion of the
+      # Placebo variance (Clarke et al. 2024 Alg. 4): dispersion of the
       # placebo distribution, 1/B normalization
       se       <- sqrt(mean((placebo_effects - mean(placebo_effects))^2))
       ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
@@ -631,7 +631,7 @@ sdid_inference <- function(
       ), class = c("sdid_inference", "coresynth_inference")))
     }
 
-    # jackknife (per-cohort LOO + delta-method; Clarke et al. 2023 Alg 3)
+    # jackknife (per-cohort LOO + delta-method; Clarke et al. 2024 Alg 3)
     var_components <- vapply(cohort_fits, function(cf) {
       N_co_g <- length(cf$idx_co)
       if (N_co_g < 2L) return(0)
@@ -691,7 +691,7 @@ sdid_inference <- function(
       less      = (1 + sum(effects <= tau_hat))           / (N_co + 1)
     )
 
-    # Placebo variance (Clarke et al. 2023 Alg. 4): dispersion of the
+    # Placebo variance (Clarke et al. 2024 Alg. 4): dispersion of the
     # placebo distribution, 1/B normalization
     se       <- sqrt(mean((effects - mean(effects))^2))
     ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se

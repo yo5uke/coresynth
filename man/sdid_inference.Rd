@@ -44,7 +44,7 @@ A list with:
 }
 \description{
 Computes standard errors and p-values for a SDID estimate using one of
-four methods, following Clarke et al. (2023): permutation placebo test
+four methods, following Clarke et al. (2024): permutation placebo test
 (Algorithm 4), cluster bootstrap (Algorithm 2), leave-one-out jackknife
 (Algorithm 3), or (staggered fits only) a global jackknife across the
 unique control units of all cohorts.
@@ -52,7 +52,7 @@ unique control units of all cohorts.
 \details{
 For \code{method = "placebo"}, the p-value is the permutation p-value, while
 the standard error is the dispersion of the placebo distribution
-(Clarke et al. 2023, Algorithm 4) and the confidence interval is the
+(Clarke et al. 2024, Algorithm 4) and the confidence interval is the
 normal approximation around the estimate with that SE. The placebo SE
 assumes the treated unit's noise is comparable to the control units';
 interpret it with caution when the donor pool is small.

@@ -29,7 +29,7 @@
 - `.claude/docs/theory-crosscheck.md` — 全手法横断の論文照合表
 - `.claude/docs/performance.md` — ベンチマーク
 
-## Staggered Adoption 共通仕様（Clarke et al. 2023）
+## Staggered Adoption 共通仕様（Clarke et al. 2024）
 コホート g（採用タイミングが同じ処置ユニット群）ごとに推定した推定量を `N_tr,g * T_post,g` で重み付け平均する。コントロール群は `"clean"`（デフォルト、never-treated + 将来採用者）と `"never_treated"`（統制ユニットのみ）の 2 種。返却構造は `staggered = TRUE`、`cohort_estimates`（data.frame）、`cohort_fits`（list）。数式・詳細は `CLAUDE.md` 参照。
 
 ## ファイル構成（要点）

@@ -8,7 +8,7 @@ paths:
 
 $$\hat\tau^{sdid} = (\bar{Y}_{tr,post} - \hat\lambda^\top Y_{tr,pre}) - (\hat\omega^\top \bar{Y}_{co,post} - \hat\omega^\top Y_{co,pre}^\top \hat\lambda)$$
 
-ユニット重み（Eq. 2.1）は列方向デミーニング QP。推論は `sdid_inference(method="placebo"/"bootstrap"/"jackknife"/"jackknife_global")` で sharp/staggered とも全 4 手法に対応。**Covariates**: Clarke et al. (2023) の global `Wit=0` partial-out（sharp = コントロール×事前期間 OLS、staggered = 全 `Wit=0` 観測での global OLS。SCM staggered も同じ実装を再利用している）。partial-out には数値安定化用の微小 ridge（`diag(1e-8)`）を加えている（論文は plain OLS、推定への影響は誤差範囲）。
+ユニット重み（Eq. 2.1）は列方向デミーニング QP。推論は `sdid_inference(method="placebo"/"bootstrap"/"jackknife"/"jackknife_global")` で sharp/staggered とも全 4 手法に対応。**Covariates**: Clarke et al. (2024) の global `Wit=0` partial-out（sharp = コントロール×事前期間 OLS、staggered = 全 `Wit=0` 観測での global OLS。SCM staggered も同じ実装を再利用している）。partial-out には数値安定化用の微小 ridge（`diag(1e-8)`）を加えている（論文は plain OLS、推定への影響は誤差範囲）。
 
 ## staggered placebo
 

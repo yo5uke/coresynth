@@ -86,7 +86,7 @@ see `?plot.scm_placebo`.
 
 ## SDID — four inference methods
 
-*Arkhangelsky et al. (2021); Clarke et al. (2023).* `sdid_inference()` supports
+*Arkhangelsky et al. (2021); Clarke et al. (2024).* `sdid_inference()` supports
 `"placebo"`, `"bootstrap"`, `"jackknife"`, and `"jackknife_global"`. The result
 is `broom`-friendly.
 

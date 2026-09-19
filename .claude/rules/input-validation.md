@@ -12,3 +12,4 @@ paths:
 - **`build_predictor_matrices()`**: X0/X1 の非有限値を predictor 名つきで即エラー（`pred()` の時間窓にデータがないケースで下流 QP が壊れるのを防止）
 - **`.check_pred_windows()`**（sharp SCM の予測子経路のみ）: ①パネルに無い時点を含む窓（重なりが一部でもあれば集約は成功してしまい、ラベルだけが嘘になる）②処置後期間に届く窓（処置で動いた値を集約する）を警告。重なりゼロの窓は上記の非有限エラーに任せる（二重通知を避ける）
 - **`panel_to_tensor()` の T_adopt**: 採用時点判定は `which(D[, j] > 0L)`（`== 1` だと arm≥2 のユニットが NA になり is_sharp 誤判定）
+- **`scm_fit()` の引数検証**（`.check_method_args()`）: ①手法非対応の formal（`predictors`/`nu`/`fixedeff` 等は scm 限定、`covariates` は scm/sdid/gsc）を渡したらエラー ②`...` に当該手法の fit 関数の formal に無い名前があればエラー（誤記・`control_group` を mc/tasc に渡す等）。**`...` は推定量固有 formal より前に置く** — 後ろに置くと R の部分マッチで `lambda`（mc）が `lambda_pen`（scm 限定）に吸われ、MC のペナルティが無言で届かなくなる。`...` より後ろの引数は完全名でしか一致しない性質を利用している

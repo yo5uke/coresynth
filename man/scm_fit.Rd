@@ -8,6 +8,7 @@ scm_fit(
   formula,
   data,
   method = c("scm", "sdid", "gsc", "mc", "tasc", "si"),
+  ...,
   predictors = NULL,
   covariates = NULL,
   v_selection = c("insample", "oos"),
@@ -17,8 +18,7 @@ scm_fit(
   qp_solver = c("active_set", "wolfe"),
   v_window = NULL,
   nu = NULL,
-  fixedeff = FALSE,
-  ...
+  fixedeff = FALSE
 )
 }
 \arguments{
@@ -27,6 +27,15 @@ scm_fit(
 \item{data}{A \code{data.frame} in \strong{long} format (one row per unit-time).}
 
 \item{method}{One of \code{"scm"}, \code{"sdid"}, \code{"gsc"}, \code{"mc"}, \code{"tasc"}, \code{"si"}.}
+
+\item{...}{Estimator-specific arguments forwarded to the chosen method:
+\code{lambda} (\code{"mc"}), \code{r} (\code{"gsc"}, \code{"tasc"}), \code{em_iter} and \code{fix_A}
+(\code{"tasc"}), \code{zeta2} and \code{zeta_t} (\code{"sdid"}), \code{k} (\code{"si"}),
+\code{control_group} (\code{"scm"}, \code{"sdid"}, \code{"gsc"}, \code{"si"}), and
+\code{scale_predictors} (\code{"scm"}). A name the chosen estimator does not take
+is an error rather than a silently ignored argument. Every argument after
+\code{...} must be named in full: this is what lets \code{lambda} reach
+\code{method = "mc"} instead of partially matching \code{lambda_pen}.}
 
 \item{predictors}{A \code{list()} of \code{\link[=pred]{pred()}} specifications that define the
 predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each \code{\link[=pred]{pred()}}
@@ -158,9 +167,6 @@ improves fit when outcome levels differ across units. The reported
 \code{Y_synth} is shifted back to the raw outcome scale. Works with both
 the default and the partially pooled path. For \code{method = "scm"} on
 staggered panels only. Default \code{FALSE}.}
-
-\item{...}{Additional arguments forwarded to the specific method
-(e.g. \code{r}, \code{lambda}, \code{zeta2}).}
 }
 \value{
 An object of classes \code{c("coresynth_<method>", "coresynth")}.

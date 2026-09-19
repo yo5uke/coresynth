@@ -13,6 +13,9 @@ paths:
 - `staggered = TRUE`, `cohort_estimates` (data.frame), `cohort_fits` (list)
 - `estimate`: 加重平均 ATT, `Y_treat`: T × N_tr, `Y_synth = NULL`, `gap = NULL`
 - SDID のみ: `Y_mat` (T × N_all, residualized — inference の per-cohort resample 用)
+- **MC/TASC は例外**で `Y_hat`・`gap` を保持する（単一フィットなので per-unit 反実仮想が実在する）。ただし単一系列に潰すと採用時点の違うコホートを平均してしまうため、`synthetic_outcomes.coresynth_staggered` が NULL を返して `plot()` を明示エラーに倒す。系列は `augment()` のコホート別 long df を使う
+- 集計は全手法 `.aggregate_cohorts()`（`utils.R`）に一元化。各 cohort_fit が `cohort`/`n_treated`/`T_pre`/`T_post`/`estimate`/`weight`（= N_tr,g × T_post,g）を持つことが前提で、`weight` は表側で総和 1 に正規化される
+- `print`/`summary` は `coresynth_staggered` メソッドが `(staggered)` ラベルとコホート表を出す。fit 直下の `T_pre` は**最早採用コホートの値**でしかないため staggered の print では出さない（`glance()` の `T_pre`/`T_post` は同じ理由でパネル水準の値であり、コホート別は `tidy()` を使う）
 
 **multi-arm fit（SI のみ、sharp）の返却フィールド**:
 - `multi_arm = TRUE`, `arm_levels` (integer vector, 制御 arm 0 を除く), `arm_estimates` (named numeric)

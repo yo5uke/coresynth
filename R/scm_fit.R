@@ -130,8 +130,14 @@
 #'   `Y_synth` is shifted back to the raw outcome scale. Works with both
 #'   the default and the partially pooled path. For `method = "scm"` on
 #'   staggered panels only. Default `FALSE`.
-#' @param ...     Additional arguments forwarded to the specific method
-#'                (e.g. `r`, `lambda`, `zeta2`).
+#' @param ...     Estimator-specific arguments forwarded to the chosen method:
+#'   `lambda` (`"mc"`), `r` (`"gsc"`, `"tasc"`), `em_iter` and `fix_A`
+#'   (`"tasc"`), `zeta2` and `zeta_t` (`"sdid"`), `k` (`"si"`),
+#'   `control_group` (`"scm"`, `"sdid"`, `"gsc"`, `"si"`), and
+#'   `scale_predictors` (`"scm"`). A name the chosen estimator does not take
+#'   is an error rather than a silently ignored argument. Every argument after
+#'   `...` must be named in full: this is what lets `lambda` reach
+#'   `method = "mc"` instead of partially matching `lambda_pen`.
 #'
 #' @return An object of classes `c("coresynth_<method>", "coresynth")`.
 #'   Fits with staggered adoption additionally inherit from
@@ -168,6 +174,7 @@ scm_fit <- function(
   formula,
   data,
   method = c("scm", "sdid", "gsc", "mc", "tasc", "si"),
+  ...,
   predictors = NULL,
   covariates = NULL,
   v_selection = c("insample", "oos"),
@@ -177,8 +184,7 @@ scm_fit <- function(
   qp_solver = c("active_set", "wolfe"),
   v_window = NULL,
   nu = NULL,
-  fixedeff = FALSE,
-  ...
+  fixedeff = FALSE
 ) {
   v_selection <- match.arg(v_selection)
   v_optim     <- match.arg(v_optim)
@@ -203,6 +209,12 @@ scm_fit <- function(
   if (!is.null(v_window) && method != "scm") {
     stop("'v_window' applies to method = \"scm\" only.", call. = FALSE)
   }
+
+  .check_method_args(
+    method    = method,
+    supplied  = setdiff(names(match.call(expand.dots = FALSE)), c("", "...")),
+    dot_names = names(list(...))
+  )
 
   # Parse Formula
   f_parts <- Formula::Formula(formula)
@@ -320,6 +332,68 @@ scm_fit <- function(
   new_coresynth(res, method)
 }
 
+# scm_fit() is one interface over six estimators, so an argument meant for a
+# different one -- or simply misspelled -- reaches a fit function that has no
+# formal for it and is absorbed by its `...`, leaving the fit silently
+# unchanged. These two tables turn that into an error.
+#
+# Arguments that scm_fit() takes as its own formals but only forwards to some
+# estimators:
+.SCM_FIT_METHOD_ONLY <- list(
+  predictors           = "scm",
+  v_selection          = "scm",
+  donor_mspe_threshold = "scm",
+  lambda_pen           = "scm",
+  v_optim              = "scm",
+  nu                   = "scm",
+  fixedeff             = "scm",
+  covariates           = c("scm", "sdid", "gsc")
+)
+
+# Estimator-specific arguments travel through `...`; anything not a formal of
+# the chosen fit function is rejected. The plumbing that scm_fit() fills in
+# itself, and its own formals, are excluded so they never show up as choices.
+.method_dot_args <- function(method) {
+  fit_fun <- switch(
+    method,
+    "scm"  = fit_scm_cpp,  "sdid" = fit_sdid_cpp, "gsc" = fit_gsc_cpp,
+    "mc"   = fit_mc_cpp,   "tasc" = fit_tasc_cpp, "si"  = fit_si_cpp
+  )
+  setdiff(
+    names(formals(fit_fun)),
+    c("...", "y", "d", "id", "time", "data", "id_var", "time_var",
+      "outcome_var", names(formals(scm_fit)))
+  )
+}
+
+.check_method_args <- function(method, supplied, dot_names) {
+  for (nm in intersect(supplied, names(.SCM_FIT_METHOD_ONLY))) {
+    ok <- .SCM_FIT_METHOD_ONLY[[nm]]
+    if (!method %in% ok)
+      stop(sprintf(
+        "'%s' applies to method = %s only, not \"%s\", where it would be ignored.",
+        nm, paste0("\"", ok, "\"", collapse = " / "), method), call. = FALSE)
+  }
+
+  if (length(dot_names) == 0L) return(invisible(NULL))
+  if (any(!nzchar(dot_names)))
+    stop("arguments passed through `...` to scm_fit() must be named.",
+         call. = FALSE)
+
+  known <- .method_dot_args(method)
+  bad   <- setdiff(dot_names, known)
+  if (length(bad))
+    stop(sprintf(
+      "unused argument(s) for method = \"%s\": %s. %s",
+      method, paste(bad, collapse = ", "),
+      if (length(known))
+        paste0("This method takes ", paste(known, collapse = ", "),
+               " beyond the shared arguments.")
+      else "This method takes no estimator-specific arguments."),
+      call. = FALSE)
+  invisible(NULL)
+}
+
 # Internal constructor: attach the class tags that drive S3 dispatch.
 # Structural variants get their own subclass so methods (print, tidy,
 # augment, ...) can dispatch instead of branching on isTRUE(res$staggered) /
@@ -339,6 +413,18 @@ print.coresynth <- function(x, ...) {
   cat("Method :", toupper(x$method), "\n")
   cat("Estimate (ATT):", round(x$estimate, 4), "\n")
   cat("Pre-treatment periods:", x$T_pre, "\n")
+  invisible(x)
+}
+
+#' @export
+print.coresynth_staggered <- function(x, ...) {
+  cat("=== coresynth fit ===\n")
+  cat("Method :", toupper(x$method), "(staggered)\n")
+  cat("Estimate (ATT):", round(x$estimate, 4), "\n")
+  # T_pre is the panel-level split (the earliest adoption date), which holds
+  # for one cohort only, so report the cohort count instead and leave the
+  # per-cohort windows to summary() and tidy().
+  cat("Cohorts:", nrow(x$cohort_estimates) %||% NA_integer_, "\n")
   invisible(x)
 }
 
@@ -365,6 +451,28 @@ summary.coresynth <- function(object, ...) {
 }
 
 #' @export
+summary.coresynth_staggered <- function(object, ...) {
+  cat("=== coresynth summary ===\n")
+  cat("Method :", toupper(object$method), "(staggered)\n")
+  .summary_cohort_table(object)
+  cat("Aggregate ATT:", round(object$estimate, 6), "\n")
+  invisible(object)
+}
+
+# Per-cohort estimates, weights, and treatment windows. Shared by
+# summary.coresynth_staggered and the multi-arm summary, whose fits are
+# staggered too whenever they carry a cohort table.
+.summary_cohort_table <- function(object) {
+  ce <- object$cohort_estimates %||% object$cohort_arm_estimates
+  if (is.null(ce) || nrow(ce) == 0L) return(invisible(NULL))
+  cat("Cohorts :", nrow(ce), "\n")
+  ce$estimate <- round(ce$estimate, 6)
+  ce$weight   <- round(ce$weight, 4)
+  print(ce, row.names = FALSE)
+  invisible(NULL)
+}
+
+#' @export
 summary.coresynth_multiarm <- function(object, ...) {
   cat("=== coresynth summary ===\n")
   cat("Method :", toupper(object$method), "\n")
@@ -373,7 +481,12 @@ summary.coresynth_multiarm <- function(object, ...) {
               stag_label, length(object$arm_levels)))
   cat("Per-arm ATT:\n")
   print(round(object$arm_estimates, 6))
-  .summary_coresynth_body(object)
+  if (inherits(object, "coresynth_staggered")) {
+    .summary_cohort_table(object)
+    cat("Aggregate ATT:", round(object$estimate, 6), "\n")
+  } else {
+    .summary_coresynth_body(object)
+  }
   invisible(object)
 }
 

@@ -1062,12 +1062,16 @@ test_that("mspe_ratio_pval covariate placebo matches a per-donor scm_weights_cpp
 
   N_co <- ncol(fit$Y_co_pre)
   for (i in seq_len(N_co)) {
-    # The default predictor-path fit runs the multi-start outer search, and
-    # the placebo batch mirrors it -- so the reference loop must too.
+    # The default predictor-path fit runs the multi-start outer search and the
+    # Wolfe inner solver, and the placebo batch mirrors both -- so the
+    # reference loop must too. With a degenerate QP the optimal set is a face,
+    # and the two solvers pick different points on it, so a reference loop on
+    # the other solver would disagree even though both optima are exact.
     res_i <- scm_weights_cpp(
       fit$X0_mat[, -i, drop = FALSE], fit$X0_mat[, i],
       fit$Y_co_pre[, -i, drop = FALSE], fit$Y_co_pre[, i],
-      multistart = identical(fit$v_optim_effective, "multistart")
+      multistart = identical(fit$v_optim_effective, "multistart"),
+      wolfe = identical(fit$qp_solver, "wolfe")
     )
     synth_post <- fit$Y_co_post[, -i, drop = FALSE] %*% res_i$W
     expect_equal(unname(inf$placebo_effects[i]),
@@ -4880,10 +4884,32 @@ test_that("qp_solver = 'wolfe' leaves a non-degenerate outcomes-only fit alone",
   fit_a <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
   fit_w <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
                    qp_solver = "wolfe")
-  expect_equal(fit_w$unit_weights, fit_a$unit_weights, tolerance = 1e-6)
-  expect_equal(fit_w$estimate, fit_a$estimate, tolerance = 1e-6)
+  fit_d <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                   qp_solver = "active_set")
+  expect_equal(fit_w$unit_weights, fit_d$unit_weights, tolerance = 1e-6)
+  expect_equal(fit_w$estimate, fit_d$estimate, tolerance = 1e-6)
   expect_equal(fit_w$qp_solver, "wolfe")
-  expect_equal(fit_a$qp_solver, "active_set")
+  expect_equal(fit_d$qp_solver, "active_set")
+  # "auto" is the default and resolves to Wolfe on the sharp inner QP
+  expect_equal(fit_a$qp_solver, "wolfe")
+})
+
+test_that("qp_solver = 'auto' falls back where Wolfe is not wired", {
+  # each of these paths runs its own QP, so the default downgrades quietly
+  # rather than erroring the way an explicit qp_solver = "wolfe" does
+  expect_equal(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            v_selection = "oos")$qp_solver, "active_set")
+  expect_equal(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            lambda_pen = 0.1)$qp_solver, "active_set")
+  expect_equal(
+    suppressWarnings(scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                             v_optim = "bfgs"))$qp_solver, "active_set")
+  # staggered fits carry no fit-level qp_solver; they must simply not error
+  expect_s3_class(
+    scm_fit(y ~ d | id + time, data = staggered, method = "scm"),
+    "coresynth_staggered")
 })
 
 test_that("qp_solver = 'wolfe' rejects the paths it is not wired through", {

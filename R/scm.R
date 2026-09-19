@@ -47,7 +47,7 @@ fit_scm_cpp <- function(
   donor_mspe_threshold = Inf,
   lambda_pen = NULL,
   v_optim = c("auto", "coord_descent", "bfgs", "multistart"),
-  qp_solver = c("active_set", "wolfe"),
+  qp_solver = c("auto", "active_set", "wolfe"),
   v_window = NULL,
   control_group = c("clean", "never_treated"),
   scale_predictors = TRUE,
@@ -59,7 +59,6 @@ fit_scm_cpp <- function(
   v_optim       <- match.arg(v_optim)
   qp_solver     <- match.arg(qp_solver)
   control_group <- match.arg(control_group)
-  use_wolfe     <- identical(qp_solver, "wolfe")
   if (!is.null(nu) && !identical(nu, "auto") &&
       (!is.numeric(nu) || length(nu) != 1L || nu < 0 || nu > 1)) {
     stop("nu must be NULL, \"auto\", or a single number in [0, 1].",
@@ -82,24 +81,28 @@ fit_scm_cpp <- function(
   # excluded here either run their own solver (the penalised QP and the
   # partially pooled block descent are solved in R via solve_simplex_qp()) or
   # would report weights from a solver the flag never reached, which is worse
-  # than refusing.
-  if (use_wolfe) {
-    bad <- c(
-      if (!pan$is_sharp) "staggered adoption",
-      if (v_selection == "oos") "v_selection = 'oos'",
-      if (!is.null(lambda_pen)) "lambda_pen",
-      if (v_optim == "bfgs") "v_optim = 'bfgs'"
+  # than refusing. "auto" therefore resolves to Wolfe wherever it is wired and
+  # falls back quietly elsewhere; an explicit "wolfe" still errors, because a
+  # caller who named the solver should be told it cannot be honoured.
+  bad <- c(
+    if (!pan$is_sharp) "staggered adoption",
+    if (v_selection == "oos") "v_selection = 'oos'",
+    if (!is.null(lambda_pen)) "lambda_pen",
+    if (v_optim == "bfgs") "v_optim = 'bfgs'"
+  )
+  if (identical(qp_solver, "wolfe") && length(bad)) {
+    stop(
+      "qp_solver = 'wolfe' is not available with ",
+      paste(bad, collapse = ", "),
+      ". These paths solve their own QP outside the sharp inner solver. ",
+      "Use qp_solver = 'active_set', or the 'auto' default, which falls ",
+      "back to it here.",
+      call. = FALSE
     )
-    if (length(bad)) {
-      stop(
-        "qp_solver = 'wolfe' is not available with ",
-        paste(bad, collapse = ", "),
-        ". These paths solve their own QP outside the sharp inner solver. ",
-        "Use qp_solver = 'active_set' (the default).",
-        call. = FALSE
-      )
-    }
   }
+  if (identical(qp_solver, "auto"))
+    qp_solver <- if (length(bad)) "active_set" else "wolfe"
+  use_wolfe <- identical(qp_solver, "wolfe")
 
   # -- Staggered path (cohort-by-cohort SCM) -----------------------------------
   if (!pan$is_sharp) {

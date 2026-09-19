@@ -28,6 +28,31 @@
   fit previously passed its sharp-only guard unnoticed and returned a p-value
   computed against a single global treatment date.
 
+- **`qp_solver` now defaults to `"auto"`, which is the Wolfe solver wherever
+  it is wired.** The inner SCM problem projects the treated unit onto the
+  convex hull of the donor columns in predictor space, so by Caratheodory's
+  theorem an optimum supported on at most `k + 1` donors always exists, and
+  Wolfe (1976) returns such a solution. `"active_set"` returns an exact
+  optimum too, but when the QP is degenerate — fewer predictors than donors
+  in the support, where the optimal set is a face rather than a point — it
+  breaks the tie on round-off, so its weights can move with the arithmetic.
+  This was opt-in since 0.4.0 precisely because it changes those weights;
+  1.0.0 is where that change belongs.
+
+  On a degenerate predictor spec the difference is not only which optimum is
+  reported. In a 30-donor test panel with one or two aggregated predictors,
+  Wolfe reached a *lower* pre-treatment loss than the active-set path (2.75
+  against 3.25, and 2.79 against 3.31) on 3 and 2 non-zero donors rather than
+  13 and 17 — the sparser, more stable inner solutions give the non-convex
+  outer V search a cleaner objective to descend. Outcomes-only fits, where
+  the QP is not degenerate, are unchanged to machine precision.
+
+  `"auto"` falls back to `"active_set"` on the paths that run their own QP
+  outside the sharp inner solver (`v_selection = "oos"`, `lambda_pen`,
+  `v_optim = "bfgs"`, and staggered adoption). Naming `"wolfe"` explicitly on
+  one of those is still an error rather than a silent downgrade, and
+  `fit$qp_solver` records the value actually used.
+
 - **The default `vline_offset` in `plot.coresynth()` and
   `plot.scm_placebo()` is now `-1` instead of `0`**, moving the treatment
   line from the first post-treatment period to the last pre-treatment one.

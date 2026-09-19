@@ -15,7 +15,7 @@ scm_fit(
   donor_mspe_threshold = Inf,
   lambda_pen = NULL,
   v_optim = c("auto", "coord_descent", "bfgs", "multistart"),
-  qp_solver = c("active_set", "wolfe"),
+  qp_solver = c("auto", "active_set", "wolfe"),
   v_window = NULL,
   nu = NULL,
   fixedeff = FALSE
@@ -116,22 +116,24 @@ dominates it on predictor fits) or \code{"coord_descent"}.
 \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} mirrors a multi-start fit in its placebo refits so
 the permutation test stays symmetric.}
 
-\item{qp_solver}{Inner-QP solver for \code{method = "scm"} (sharp fits only).
-\code{"active_set"} (default) is the warm-started active-set method.
+\item{qp_solver}{Inner-QP solver for \code{method = "scm"}.
 \code{"wolfe"} is the Wolfe (1976) min-norm-point method, which exploits the
 fact that the inner QP is a projection onto the convex hull of the donor
 columns in the k-dimensional predictor space: by Caratheodory's theorem
 an optimum supported on at most \code{k + 1} donors always exists, and Wolfe
-returns such a solution. Both solvers return an exact optimum; they
-differ in \emph{which} optimum when the QP is degenerate (fewer predictors
-than donors in the support), where the optimal set is a face rather than
-a point. Prefer \code{"wolfe"} when you want interpretable, reproducible
-weights: the default solver breaks those ties on round-off, so its
-weights can shift with the arithmetic, while the Wolfe solution is
-sparse and stable. It is opt-in for now because it changes weights for
-such specs; it is intended to become the default in a future major
-release. Not available with \code{v_selection = "oos"}, \code{lambda_pen},
-\code{v_optim = "bfgs"}, or staggered adoption.}
+returns such a solution. \code{"active_set"} is the warm-started active-set
+method. Both return an exact optimum; they differ in \emph{which} optimum when
+the QP is degenerate (fewer predictors than donors in the support), where
+the optimal set is a face rather than a point. \code{"wolfe"} is preferred
+there because its solution is sparse and reproducible, while
+\code{"active_set"} breaks those ties on round-off and can return different
+weights for the same fit under a different build.
+\code{"auto"} (default) is \code{"wolfe"} wherever it is wired, which is the sharp
+inner QP, and \code{"active_set"} on the paths that run their own solver:
+\code{v_selection = "oos"}, \code{lambda_pen}, \code{v_optim = "bfgs"}, and staggered
+adoption. Naming \code{"wolfe"} explicitly on one of those paths is an error
+rather than a silent downgrade. The resolved value is recorded in
+\code{fit$qp_solver}.}
 
 \item{v_window}{Optional vector of pre-treatment time values (matching the
 time index in \code{data}) over which the outer V optimisation evaluates the

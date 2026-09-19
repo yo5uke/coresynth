@@ -141,7 +141,15 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 20, fix_A = FALSE, ...
   }, numeric(1L))
   att <- mean(gap_post_vals, na.rm = TRUE)
 
-  list(
+  # Staggered adoption needs no cohort-by-cohort re-fitting here: Y_obs is
+  # already NA from each treated unit's own adoption date, so the single
+  # state-space fit is the staggered fit. Only the aggregation changes -- the
+  # cohort ATTs combine with the N_treated,g * T_post,g weights of Clarke et
+  # al. (2024), as in every other estimator, instead of weighting each treated
+  # unit equally.
+  stag <- if (!pan$is_sharp) .impute_cohort_fits(pan, gap, Y_treat, Y_hat_tr)
+
+  c(list(
     method       = "tasc",
     r            = r,
     A            = A,
@@ -158,6 +166,10 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 20, fix_A = FALSE, ...
     idx_co       = idx_co,
     idx_tr       = idx_tr,
     unit_weights = NULL,
-    estimate     = att
-  )
+    estimate     = stag$estimate %||% att
+  ), if (!is.null(stag)) list(
+    staggered        = TRUE,
+    cohort_estimates = stag$cohort_estimates,
+    cohort_fits      = stag$cohort_fits
+  ))
 }

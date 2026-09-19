@@ -80,6 +80,17 @@ synthetic_outcomes.coresynth <- function(x, na.rm = FALSE, ...) {
 
 #' @rdname treated_outcomes
 #' @export
+synthetic_outcomes.coresynth_staggered <- function(x, na.rm = FALSE, ...) {
+  # Staggered fits keep their counterfactual per cohort. SCM/SDID/GSC/SI store
+  # no fit-level counterfactual at all, so they already resolve to NULL; MC and
+  # TASC do (their single factorisation covers every unit), and collapsing it
+  # to one series would silently average cohorts whose treatment starts at
+  # different times. Use augment() for the per-cohort series.
+  NULL
+}
+
+#' @rdname treated_outcomes
+#' @export
 synthetic_outcomes.coresynth_tasc <- function(x, na.rm = FALSE, ...) {
   # TASC's Y_hat holds fitted values for all N units (T x N), unlike every
   # other method; the counterfactual is the treated columns, not the

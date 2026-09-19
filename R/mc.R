@@ -52,7 +52,15 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL, ...) {
   }, numeric(1L))
   att <- mean(gap_post_vals, na.rm = TRUE)
 
-  list(
+  # Staggered adoption needs no cohort-by-cohort re-fitting here: the mask O
+  # already blanks each treated unit from its own adoption date, so the single
+  # factorisation is the staggered fit. Only the aggregation changes -- the
+  # cohort ATTs combine with the N_treated,g * T_post,g weights of Clarke et
+  # al. (2024), as in every other estimator, instead of weighting each treated
+  # unit equally.
+  stag <- if (!pan$is_sharp) .impute_cohort_fits(pan, gap, Y_treat, Y_hat)
+
+  c(list(
     method       = "mc",
     lambda       = lambda,
     L_hat        = L_hat,
@@ -65,6 +73,10 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL, ...) {
     idx_tr       = idx_tr,
     Y_co_all     = Y[, idx_co, drop = FALSE],  # T x N_co -- needed by conformal_inference()
     unit_weights = NULL,
-    estimate     = att
-  )
+    estimate     = stag$estimate %||% att
+  ), if (!is.null(stag)) list(
+    staggered        = TRUE,
+    cohort_estimates = stag$cohort_estimates,
+    cohort_fits      = stag$cohort_fits
+  ))
 }

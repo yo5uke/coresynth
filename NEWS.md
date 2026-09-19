@@ -1,3 +1,68 @@
+# coresynth 1.0.0
+
+## Breaking changes
+
+- **Staggered `"mc"` and `"tasc"` fits now report the same estimand as every
+  other method.** Both estimators recover the counterfactual by imputation:
+  their observation mask already blanks each treated unit from its own
+  adoption date, so a staggered panel needs no cohort-by-cohort refitting and
+  the single fit was, and remains, a valid staggered fit. What was wrong was
+  the aggregation. They averaged the per-unit post-treatment gaps with one
+  weight per treated unit, while `"scm"`, `"sdid"`, `"gsc"`, and `"si"` use
+  the `N_treated,g * T_post,g` weights of Clarke et al. (2024). The two agree
+  only when every cohort has the same size and the same number of
+  post-treatment periods; otherwise the same panel yielded a materially
+  different number from `"mc"` and `"tasc"` than from the other four, with
+  nothing to indicate it. They now use the cohort weights as well, so
+  **staggered `"mc"` and `"tasc"` estimates change**. Sharp fits are
+  unaffected and return bit-identical results.
+
+  The fits also declare themselves properly. They gain `staggered = TRUE`,
+  `cohort_estimates`, and `cohort_fits`, and inherit from
+  `"coresynth_staggered"`. Consequently `glance()` reports `staggered = TRUE`
+  rather than `FALSE`, `tidy()` returns the per-cohort table instead of an
+  empty data frame, `augment()` returns one series per cohort with `.period`
+  keyed to that cohort's own adoption date, and `plot()` errors and points at
+  `augment()`, as it already did for the other staggered fits. Most
+  consequentially, `conformal_inference()` rejects them: a staggered `"mc"`
+  fit previously passed its sharp-only guard unnoticed and returned a p-value
+  computed against a single global treatment date.
+
+- **The default `vline_offset` in `plot.coresynth()` and
+  `plot.scm_placebo()` is now `-1` instead of `0`**, moving the treatment
+  line from the first post-treatment period to the last pre-treatment one.
+  At offset 0 the treatment is already in effect, so the treated path and its
+  counterfactual have usually separated by the time the line is reached and
+  the figure reads as though the gap opened before treatment. With `-1`
+  everything left of the line is the period the fit was asked to match. Pass
+  `vline_offset = 0` for the previous position.
+
+- **`scm_fit()` now takes `...` ahead of its estimator-specific arguments**,
+  which must therefore be named in full; partial matches such as `v_opt =`
+  and any use of the fourth or later argument by position no longer work.
+  This is what makes `lambda` reach `method = "mc"`: while `lambda_pen` (an
+  SCM-only argument) sat before `...`, R matched `lambda` to it partially, so
+  MC's nuclear-norm penalty could not be set through `scm_fit()` at all and
+  the value silently went to an argument MC ignores.
+
+- **`scm_fit()` rejects arguments the chosen estimator does not take.**
+  One formula interface serves six estimators, so an argument meant for
+  another one — `predictors`, `nu`, or `fixedeff` with `method = "mc"`,
+  `covariates` with `"tasc"`, `control_group` with either — or simply
+  misspelled, was absorbed by `...` and changed nothing about the fit that
+  came back. These now error and name the methods the argument applies to.
+
+## New features
+
+- **`print()` and `summary()` describe staggered fits as staggered.** Both
+  previously used the sharp output, which reports `T_pre` and `T_post` from
+  the panel-level split — the earliest adoption date, correct for one cohort
+  and wrong for the rest — with nothing to say the fit was staggered at all.
+  `print()` now labels the method `(staggered)` and gives the cohort count in
+  place of that split, and `summary()` prints the per-cohort table of
+  estimates, weights, and treatment windows. Multi-arm SI fits show the
+  cohort-arm table on the same terms.
+
 # coresynth 0.5.0
 
 ## New features

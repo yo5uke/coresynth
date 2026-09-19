@@ -21,7 +21,7 @@
   Y_pre_co  <- Y[pre_rows,  idx_co, drop = FALSE]  # T_pre  x N_co
   Y_post_co <- Y[post_rows, idx_co, drop = FALSE]  # T_post x N_co
 
-  if (is.null(k)) k <- max(1L, floor(sqrt(min(T_pre, N_co))))
+  if (is.null(k)) k <- .si_svht_k(Y_pre_co)
   k <- as.integer(k)
   if (k > min(T_pre, N_co))
     stop(sprintf("k (%d) must be <= min(T_pre=%d, N_co=%d).", k, T_pre, N_co),
@@ -88,6 +88,28 @@
   )
 }
 
+# -- Internal: data-driven PCR rank via the optimal hard threshold -----------
+# Agarwal et al. name cross-validation, universal singular value thresholding
+# and the elbow rule as the data-driven ways to choose k. This is the second:
+# Donoho & Gavish (2014) give the threshold that minimises asymptotic MSE when
+# recovering a low-rank matrix from noise of unknown level, tau = omega(beta) *
+# median(singular values) with beta = min(dim)/max(dim). Keeping the singular
+# values above it is parameter-free and costs one SVD, where cross-validating k
+# would cost a PCR fit per candidate.
+#
+# omega(beta) uses the closed-form approximation of Donoho & Gavish (2014,
+# Eq. 5), which they report as accurate to within 0.0001 across beta in (0, 1].
+.si_svht_k <- function(Y_pre_co) {
+  d <- svd(Y_pre_co, nu = 0, nv = 0)$d
+  d <- d[is.finite(d)]
+  if (length(d) == 0L || max(d) <= 0) return(1L)
+
+  beta  <- min(dim(Y_pre_co)) / max(dim(Y_pre_co))
+  omega <- 0.56 * beta^3 - 0.95 * beta^2 + 1.82 * beta + 1.43
+  k     <- sum(d > omega * stats::median(d))
+  max(1L, min(as.integer(k), length(d)))
+}
+
 # -- Internal: cohort-by-cohort SI for staggered adoption --------------------
 # Clarke et al. (2024); Arkhangelsky et al. (2021) Appendix S.8.
 # SVD uses only Y_pre_co_g (T_pre_g x N_co_g): future-treated units in the
@@ -132,7 +154,7 @@
     k_g <- if (!is.null(k)) {
       max(1L, min(as.integer(k), min(T_pre_g, N_co_g) - 1L))
     } else {
-      max(1L, floor(sqrt(min(T_pre_g, N_co_g))))
+      max(1L, min(.si_svht_k(Y_pre_co_g), min(T_pre_g, N_co_g) - 1L))
     }
 
     res <- tryCatch(
@@ -223,7 +245,7 @@
     k_g <- if (!is.null(k)) {
       max(1L, min(as.integer(k), min(T_pre_g, N_co_g) - 1L))
     } else {
-      max(1L, floor(sqrt(min(T_pre_g, N_co_g))))
+      max(1L, min(.si_svht_k(Y_pre_co_g), min(T_pre_g, N_co_g) - 1L))
     }
 
     for (a in as.character(treat_arms)) {
@@ -338,8 +360,9 @@
 #' @param d    Treatment arm indicator (integer, 0 = control, 1 = treated)
 #' @param id   Unit identifier (long format)
 #' @param time Time identifier (long format)
-#' @param k    Number of SVD components for PCR. Default:
-#'             `floor(sqrt(min(T_pre, N_co)))`, at least 1.
+#' @param k    Number of SVD components for PCR. `NULL` (default) applies the
+#'             optimal hard threshold of Donoho & Gavish (2014) to the
+#'             pre-treatment donor block.
 #' @return A list of class `coresynth` with:
 #'   * `method`: `"si"`
 #'   * `estimate`: ATT (average treatment effect on the treated)
@@ -414,9 +437,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
   Y_post_co <- Y[post_rows, idx_co, drop = FALSE]  # T_post x N_co
   Y_pre_tr  <- Y[pre_rows,  idx_tr, drop = FALSE]  # T_pre  x N_tr
 
-  if (is.null(k)) {
-    k <- max(1L, floor(sqrt(min(T_pre, N_co))))
-  }
+  if (is.null(k)) k <- .si_svht_k(Y_pre_co)
   k <- as.integer(k)
 
   if (k > min(T_pre, N_co))

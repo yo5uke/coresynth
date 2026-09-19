@@ -19,3 +19,5 @@ SI-PCR: $Y_{pre,co}^\top$ の truncated SVD → 疑似逆行列でドナー重�
 $$\hat\tau = \frac{\sum_g\sum_d N_{tr,g,d} T_{post,g} \hat\tau_{g,d}}{\sum_g\sum_d N_{tr,g,d} T_{post,g}}$$
 
 **Multi-arm 推論の注意**: bootstrap はコントロール列を全 arm（staggered ではコホート内全 arm）で**共有サンプリング**する必要がある — SVD 基底が shared donor pool を前提にしているため、arm ごとに独立リサンプルすると基底の整合性が崩れる。sharp multi-arm には `jackknife_global` が無い（staggered 専用のため）。
+
+**k の選択**: Agarwal et al. は CV・universal SVHT・elbow の 3 つをデータ駆動の方法として挙げる。採用したのは 2 番目 — `tau = omega(beta) * median(singular values)`、`beta = min(dim)/max(dim)`、`omega` は原論文 Eq.5 の閉形式近似（beta ∈ (0,1] で誤差 0.0001 以下と報告されている）。**SVD 1 回で済む**のが決め手（CV だと候補ごとに PCR フィットが要る）。旧既定 `floor(sqrt(min(T_pre, N_co)))` は上記いずれでもない独自式だった。既知ランクの DGP で r=1〜4 を完全復元（旧式は常に 4 を返していた）。staggered/multi-arm はコホートの `Y_pre_co_g` に対して同じ閾値を当て、`min(T_pre_g, N_co_g) - 1` で上限を切る

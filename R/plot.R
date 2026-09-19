@@ -37,8 +37,13 @@
   default
 }
 
-# `vline_offset` counts periods relative to the first post-treatment period
-# (offset 0, the historical fixed position of the treatment line).
+# `vline_offset` counts periods relative to the first post-treatment period.
+# The default -1 puts the line on the last period the treated unit and its
+# counterfactual are still required to agree: at offset 0 the treatment is
+# already in effect, so the two paths have usually separated by the time the
+# line is reached, which reads as if the gap opened before treatment.
+.VLINE_OFFSET_DEFAULT <- -1
+
 .check_vline_offset <- function(offset) {
   if (!is.numeric(offset) || length(offset) != 1L || !is.finite(offset))
     stop("`vline_offset` must be a single finite number of periods relative ",
@@ -54,7 +59,10 @@
 .vline_position <- function(times, T_pre, offset) {
   idx <- T_pre + 1 + offset
   if (idx < 1 || idx > length(times)) {
-    if (offset != 0)
+    # Staying quiet on the default keeps a fit with no pre-treatment periods
+    # (T_pre = 0, where the default lands one period before the panel starts)
+    # from warning about a position the caller never chose.
+    if (offset != .VLINE_OFFSET_DEFAULT)
       warning("`vline_offset = ", offset, "` places the treatment line ",
               "outside the observed time range; the line is not drawn.",
               call. = FALSE)
@@ -73,7 +81,9 @@
 .vline_split <- function(style, times, offset) {
   if (is.null(style) || !("xintercept" %in% names(style)))
     return(list(style = style, at = NULL))
-  if (offset != 0)
+  # Only an offset the caller actually chose conflicts with an absolute
+  # position; the default is what `xintercept` is there to replace.
+  if (offset != .VLINE_OFFSET_DEFAULT)
     stop("supply either `vline_offset` or `vline = list(xintercept = ...)`, ",
          "not both.", call. = FALSE)
   at <- style$xintercept
@@ -178,12 +188,14 @@
 #'   `vline_offset` instead. Applies to `"trend"` and `"gap"`.
 #' @param vline_offset For `type = "trend"` and `"gap"`: where to draw the
 #'   vertical treatment line, in periods relative to the first post-treatment
-#'   period. The default `0` keeps the line at the first post-treatment
-#'   period; `-1` moves it to the last pre-treatment period, and fractional
-#'   values interpolate between adjacent observed times (`-0.5` is midway
-#'   between the last pre- and first post-treatment period), which works on
-#'   numeric, `Date`, and `POSIXct` axes alike. Cannot be combined with an
-#'   `xintercept` element in `vline`.
+#'   period. The default `-1` puts the line on the last pre-treatment period,
+#'   so everything to its left is pre-treatment fit and the divergence begins
+#'   to its right; `0` moves it onto the first post-treatment period, where
+#'   the treated unit and its counterfactual have usually separated already.
+#'   Fractional values interpolate between adjacent observed times (`-0.5` is
+#'   midway between the last pre- and first post-treatment period), which
+#'   works on numeric, `Date`, and `POSIXct` axes alike. Cannot be combined
+#'   with an `xintercept` element in `vline`.
 #' @param hline  Aesthetic overrides for the horizontal zero line in `type =
 #'   "gap"`, as a list passed to [ggplot2::geom_hline()]. `NULL` or `FALSE`
 #'   hides the line. Ignored for other types.
@@ -245,9 +257,9 @@
 #' plot(fit, type = "trend", linetypes = c(synthetic = "solid"))
 #' plot(fit, type = "gap",   linetypes = "dashed")
 #'
-#' # Move the treatment line one period earlier (last pre-treatment period),
+#' # Move the treatment line onto the first post-treatment period,
 #' # pin it to an absolute time, or drop it entirely
-#' plot(fit, type = "trend", vline_offset = -1)
+#' plot(fit, type = "trend", vline_offset = 0)
 #' plot(fit, type = "trend", vline = list(xintercept = 15.5))
 #' plot(fit, type = "trend", vline = FALSE)
 #' }
@@ -256,7 +268,9 @@
 plot.coresynth <- function(x, type = c("trend", "gap", "weights",
                                        "pred_weights"),
                             colors = NULL, labels = NULL, linetypes = NULL,
-                            vline = list(), vline_offset = 0, hline = list(),
+                            vline = list(),
+                            vline_offset = .VLINE_OFFSET_DEFAULT,
+                            hline = list(),
                             fill = NULL, top_n = Inf,
                             align = FALSE, show_donors = 0, ...) {
   type <- match.arg(type)
@@ -528,8 +542,8 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 #'   axis, replacing the default treatment-time position.
 #' @param vline_offset Only for `type = "gaps"`: where to draw the vertical
 #'   treatment line, in periods relative to the first post-treatment period.
-#'   The default `0` keeps the line at the first post-treatment period; `-1`
-#'   moves it to the last pre-treatment period, and fractional values
+#'   The default `-1` puts the line on the last pre-treatment period; `0`
+#'   moves it onto the first post-treatment period, and fractional values
 #'   interpolate between adjacent observed times. Cannot be combined with an
 #'   `xintercept` element in `vline`.
 #' @param hline Only for `type = "gaps"`: aesthetic overrides for the
@@ -557,8 +571,8 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 #' # Set the line type of the placebo paths off against the treated one
 #' plot(placebo, type = "gaps", linetypes = c(placebo = "dotted"))
 #'
-#' # Move the treatment line one period earlier
-#' plot(placebo, type = "gaps", vline_offset = -1)
+#' # Move the treatment line onto the first post-treatment period
+#' plot(placebo, type = "gaps", vline_offset = 0)
 #'
 #' # Post/pre-treatment MSPE ratios (ADH 2010, Fig. 8)
 #' plot(placebo, type = "ratios")
@@ -567,7 +581,8 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 #' @export
 plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
                               colors = NULL, labels = NULL, linetypes = NULL,
-                              vline = list(), vline_offset = 0,
+                              vline = list(),
+                              vline_offset = .VLINE_OFFSET_DEFAULT,
                               hline = list(), ...) {
   type <- match.arg(type)
   key_map <- c(treated = "Treated", placebo = "Placebo (donor pool)")

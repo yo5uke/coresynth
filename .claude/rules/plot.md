@@ -13,3 +13,4 @@ paths:
 - **trend の `show_donors`**: `Donors` 系列は color/linetype 両スケールに追加して凡例統合を維持。`breaks` は donors 表示時のみ明示（非表示時に `breaks=NULL` を渡すと凡例自体が消えるので `waiver()`）。ドナー選択は `unit_weights` 降順 → GSC/MC/TASC は明示エラー
 - **SDID weights 2 パネル**: `coord_flip` は `facet_wrap(scales="free")` と併用不可のため SDID パスのみ native 横棒で実装。詳細は `sdid.md` 参照
 - **`vline_offset`（trend/gap/scm_placebo gaps 共通）**: `.vline_position()` が `T_pre + 1 + offset` を実数インデックスとして扱い、整数部で `times` を引いて小数部を隣接時点差で線形補間 — Date/POSIXct は `times` が既に数値化されているため同じ式で動く。範囲外は警告して線を描かない（`NA` を返し `anyNA(treat_time)` でレイヤーごと抑制）。`vline = list(xintercept = ...)` は `.vline_split()` が style リストから分離し（文字列は軸クラスに coerce）、`vline_offset` との併用はエラー — 位置指定が二重にならないようにするための排他制御
+- **既定は `.VLINE_OFFSET_DEFAULT = -1`**（最終プリ期間）。offset 0 だとその時点で既に処置が効いており処置系列と反実仮想が乖離済みなので、線より左が「一致を要求した区間」に見えなくなる。**範囲外警告と `xintercept` 併用エラーの判定はこの定数と比較する**（リテラル 0 と比べると、既定のまま `xintercept` を渡しただけで併用エラーになり、T_pre=0 のパネルで既定が警告を出す）

@@ -12,7 +12,7 @@
   labels = NULL,
   linetypes = NULL,
   vline = list(),
-  vline_offset = 0,
+  vline_offset = .VLINE_OFFSET_DEFAULT,
   hline = list(),
   ...
 )
@@ -54,8 +54,8 @@ axis, replacing the default treatment-time position.}
 
 \item{vline_offset}{Only for \code{type = "gaps"}: where to draw the vertical
 treatment line, in periods relative to the first post-treatment period.
-The default \code{0} keeps the line at the first post-treatment period; \code{-1}
-moves it to the last pre-treatment period, and fractional values
+The default \code{-1} puts the line on the last pre-treatment period; \code{0}
+moves it onto the first post-treatment period, and fractional values
 interpolate between adjacent observed times. Cannot be combined with an
 \code{xintercept} element in \code{vline}.}
 
@@ -105,8 +105,8 @@ plot(placebo, type = "gaps", mspe_prune = 5,
 # Set the line type of the placebo paths off against the treated one
 plot(placebo, type = "gaps", linetypes = c(placebo = "dotted"))
 
-# Move the treatment line one period earlier
-plot(placebo, type = "gaps", vline_offset = -1)
+# Move the treatment line onto the first post-treatment period
+plot(placebo, type = "gaps", vline_offset = 0)
 
 # Post/pre-treatment MSPE ratios (ADH 2010, Fig. 8)
 plot(placebo, type = "ratios")

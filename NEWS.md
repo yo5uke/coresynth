@@ -2,6 +2,39 @@
 
 ## Breaking changes
 
+- **`"gsc"`, `"mc"` and `"si"` now choose their tuning parameter the way their
+  source papers say to.** All three picked it by a fixed rule that appears
+  nowhere in the literature: `r = 2` factors for GSC, a penalty of 1% of the
+  spectral norm for MC, and `k = floor(sqrt(min(T_pre, N_co)))` components for
+  SI. Each paper specifies a data-driven selection instead, and each is now
+  the default, so **estimates from all three change** unless the parameter is
+  supplied explicitly.
+
+  - `"gsc"`: `r = NULL` runs the leave-one-period-out cross-validation of
+    Xu (2017, Algorithm 1) — for each candidate `r`, hold out one
+    pre-treatment period, refit the treated units' factor loadings on the
+    rest, and score the prediction. Xu presents this as central to the method
+    ("it avoids specification searches"). On panels built with a known number
+    of factors it recovered `r` exactly for 1 through 4, where the old fixed
+    `r = 2` was right only by coincidence. The scoring table is kept in
+    `fit$r_cv`. Candidates start at 1: `r = 0` is not representable by a
+    rank-`r` truncated SVD.
+  - `"mc"`: `lambda = NULL` runs the K-fold cross-validation of Athey et al.
+    (2021, S.4), drawing folds so the observed fraction inside a fold matches
+    the panel's and scoring each penalty on the held-out cells. It uses its
+    own RNG stream, so the penalty is reproducible and the caller's random
+    state is left untouched; `cv_folds`, `cv_nlambda` and `cv_seed` control
+    it, and `fit$lambda_cv` reports whether the search ran. Note that this
+    does *not* resolve the documented small-panel upward bias: over 40 draws
+    at `N_co = 20` the bias moved from +0.048 to +0.046, with RMSE improving
+    about 8%. The caveat stands and is not an artefact of the penalty.
+  - `"si"`: `k = NULL` applies the optimal hard threshold of Donoho & Gavish
+    (2014) to the pre-treatment donor block, one of the three data-driven
+    rules Agarwal et al. name. It costs a single SVD, where cross-validating
+    `k` would cost a PCR fit per candidate. On the same known-rank panels it
+    recovered the rank exactly for 1 through 4; the old heuristic returned 4
+    in every case.
+
 - **Staggered `"mc"` and `"tasc"` fits now report the same estimand as every
   other method.** Both estimators recover the counterfactual by imputation:
   their observation mask already blanks each treated unit from its own

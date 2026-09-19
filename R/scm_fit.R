@@ -133,13 +133,21 @@
 #'   the default and the partially pooled path. For `method = "scm"` on
 #'   staggered panels only. Default `FALSE`.
 #' @param ...     Estimator-specific arguments forwarded to the chosen method:
-#'   `lambda` (`"mc"`), `r` (`"gsc"`, `"tasc"`), `em_iter` and `fix_A`
-#'   (`"tasc"`), `zeta2` and `zeta_t` (`"sdid"`), `k` (`"si"`),
-#'   `control_group` (`"scm"`, `"sdid"`, `"gsc"`, `"si"`), and
-#'   `scale_predictors` (`"scm"`). A name the chosen estimator does not take
-#'   is an error rather than a silently ignored argument. Every argument after
-#'   `...` must be named in full: this is what lets `lambda` reach
-#'   `method = "mc"` instead of partially matching `lambda_pen`.
+#'   `lambda` plus `cv_folds`, `cv_nlambda` and `cv_seed` (`"mc"`), `r`
+#'   (`"gsc"`, `"tasc"`), `em_iter` and `fix_A` (`"tasc"`), `zeta2` and
+#'   `zeta_t` (`"sdid"`), `k` (`"si"`), `control_group` (`"scm"`, `"sdid"`,
+#'   `"gsc"`, `"si"`), and `scale_predictors` (`"scm"`). A name the chosen
+#'   estimator does not take is an error rather than a silently ignored
+#'   argument. Every argument after `...` must be named in full: this is what
+#'   lets `lambda` reach `method = "mc"` instead of partially matching
+#'   `lambda_pen`.
+#'
+#'   The three tuning parameters that govern model complexity are selected
+#'   from the data when left at their `NULL` default, each by the rule its
+#'   source paper specifies: `r` by the leave-one-period-out cross-validation
+#'   of Xu (2017, Algorithm 1), `lambda` by the K-fold cross-validation of
+#'   Athey et al. (2021), and `k` by the optimal hard threshold of Donoho &
+#'   Gavish (2014). Supplying a value skips the search.
 #'
 #' @return An object of classes `c("coresynth_<method>", "coresynth")`.
 #'   Fits with staggered adoption additionally inherit from

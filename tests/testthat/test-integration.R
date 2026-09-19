@@ -4999,3 +4999,91 @@ test_that("scm_fit still accepts each estimator's own arguments", {
   expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "scm",
                           scale_predictors = FALSE), "coresynth")
 })
+
+# ── Data-driven tuning parameters (Xu 2017; Athey et al. 2021; Donoho-Gavish) ──
+# Three estimators used to pick their key tuning constant by an arbitrary rule
+# while their source papers specify a data-driven one.
+
+# Panel whose number of latent factors is known, so a selection rule has a
+# right answer to find.
+.factor_panel <- function(r_true, seed = 11, N = 30, TT = 24, T0 = 16,
+                          tau = 2, sd_eps = 0.3) {
+  set.seed(seed)
+  f <- matrix(rnorm(TT * r_true), TT, r_true)
+  L <- matrix(rnorm(N * r_true), N, r_true)
+  Y <- f %*% t(L) + matrix(rnorm(N * TT, sd = sd_eps), TT, N)
+  D <- matrix(0L, TT, N)
+  D[(T0 + 1):TT, 1:3] <- 1L
+  Y[(T0 + 1):TT, 1:3] <- Y[(T0 + 1):TT, 1:3] + tau
+  data.frame(id = rep(1:N, each = TT), time = rep(1:TT, times = N),
+             y = as.vector(Y), d = as.vector(D))
+}
+
+test_that("GSC cross-validation recovers the number of factors (Xu Alg. 1)", {
+  for (r_true in 1:4) {
+    fit <- scm_fit(y ~ d | id + time, data = .factor_panel(r_true),
+                   method = "gsc")
+    expect_equal(fit$r, r_true)
+    expect_s3_class(fit$r_cv, "data.frame")
+    expect_equal(names(fit$r_cv), c("r", "mspe"))
+    # the winner must be the minimiser of the reported MSPE column
+    expect_equal(fit$r_cv$r[which.min(fit$r_cv$mspe)], fit$r)
+  }
+})
+
+test_that("GSC honours an explicit r and validates it", {
+  panel_r <- .factor_panel(3)
+  fit <- scm_fit(y ~ d | id + time, data = panel_r, method = "gsc", r = 2)
+  expect_equal(fit$r, 2)
+  expect_null(fit$r_cv)
+  expect_error(scm_fit(y ~ d | id + time, data = panel_r, method = "gsc",
+                       r = 0), "positive integer")
+  expect_error(scm_fit(y ~ d | id + time, data = panel_r, method = "gsc",
+                       r = 2.5), "positive integer")
+})
+
+test_that("SI picks the PCR rank by the optimal hard threshold", {
+  for (r_true in 1:4) {
+    fit <- scm_fit(y ~ d | id + time, data = .factor_panel(r_true),
+                   method = "si")
+    expect_equal(fit$k, r_true)
+  }
+  # an explicit k still wins
+  fit_k <- scm_fit(y ~ d | id + time, data = .factor_panel(2), method = "si",
+                   k = 5)
+  expect_equal(fit_k$k, 5L)
+})
+
+test_that("MC cross-validates the nuclear norm penalty", {
+  panel_mc <- .factor_panel(2)
+  fit <- scm_fit(y ~ d | id + time, data = panel_mc, method = "mc")
+  expect_true(fit$lambda_cv)
+  expect_true(is.finite(fit$lambda) && fit$lambda > 0)
+
+  # the cross-validated penalty differs from the old fixed 1% of sigma_max
+  sv  <- svd(matrix(panel_mc$y, nrow = 24), nu = 0, nv = 0)$d[1L]
+  expect_false(isTRUE(all.equal(fit$lambda, 0.01 * sv)))
+
+  # an explicit lambda bypasses the search
+  fit_l <- scm_fit(y ~ d | id + time, data = panel_mc, method = "mc",
+                   lambda = 0.5)
+  expect_equal(fit_l$lambda, 0.5)
+  expect_false(fit_l$lambda_cv)
+})
+
+test_that("MC cross-validation is reproducible and leaves the RNG alone", {
+  panel_mc <- .factor_panel(2)
+  a <- scm_fit(y ~ d | id + time, data = panel_mc, method = "mc")
+  b <- scm_fit(y ~ d | id + time, data = panel_mc, method = "mc")
+  expect_equal(a$lambda, b$lambda)
+  # a different fold draw may pick a different penalty
+  c_ <- scm_fit(y ~ d | id + time, data = panel_mc, method = "mc", cv_seed = 99)
+  expect_true(is.finite(c_$lambda))
+
+  # the caller's RNG stream must be where they left it
+  set.seed(4242)
+  before <- runif(1)
+  set.seed(4242)
+  invisible(scm_fit(y ~ d | id + time, data = panel_mc, method = "mc"))
+  expect_equal(runif(1), before)
+})

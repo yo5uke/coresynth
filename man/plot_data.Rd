@@ -20,7 +20,7 @@ plot_data(x, ...)
   ...
 )
 
-\method{plot_data}{scm_placebo}(x, type = c("gaps", "ratios"), mspe_prune = Inf, ...)
+\method{plot_data}{scm_placebo}(x, type = c("gaps", "ratios"), mspe_prune = NULL, ...)
 }
 \arguments{
 \item{x}{A \code{coresynth} fit (from \code{\link[=scm_fit]{scm_fit()}}) or a \code{scm_placebo} object
@@ -46,7 +46,9 @@ synthetic series). Default \code{0} (treated and synthetic series only).}
 
 \item{mspe_prune}{For a \code{scm_placebo} object with \code{type = "gaps"}: drop
 placebo units whose pre-treatment MSPE exceeds \code{mspe_prune} times the
-treated unit's, as in \code{\link[=plot.scm_placebo]{plot.scm_placebo()}}. Default \code{Inf} (no pruning).}
+treated unit's, as in \code{\link[=plot.scm_placebo]{plot.scm_placebo()}}. \code{NULL} (default) reuses the
+cutoff \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} computed the p-value under; \code{Inf} keeps every
+run.}
 }
 \value{
 A tidy \code{data.frame}. Columns by \code{type}:

@@ -518,9 +518,12 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 #'   (ADH 2010, Figure 8).
 #' @param mspe_prune Only for `type = "gaps"`: exclude placebo units whose
 #'   pre-treatment MSPE exceeds `mspe_prune` times the treated unit's.
-#'   Default `Inf` (no pruning). A rule stated on the RMSPE scale, such as
-#'   tidysynth's "2 times the treated unit's pre-period RMSPE", corresponds
-#'   to the squared multiple (`mspe_prune = 4`).
+#'   `NULL` (default) reuses the cutoff [mspe_ratio_pval()] computed the
+#'   p-value under, so the picture and the test describe the same set of
+#'   placebo runs; `Inf` keeps every run whatever the test did. A rule stated
+#'   on the RMSPE scale, such as tidysynth's "2 times the treated unit's
+#'   pre-period RMSPE", corresponds to the squared multiple
+#'   (`mspe_prune = 4`).
 #' @param colors A named vector overriding series colors, e.g.
 #'   `c(treated = "black")`. Valid keys: `"treated"`, `"placebo"`.
 #' @param labels A named vector overriding the legend text of individual
@@ -579,12 +582,15 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 #' }
 #' @seealso [mspe_ratio_pval()]
 #' @export
-plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
+plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = NULL,
                               colors = NULL, labels = NULL, linetypes = NULL,
                               vline = list(),
                               vline_offset = .VLINE_OFFSET_DEFAULT,
                               hline = list(), ...) {
   type <- match.arg(type)
+  # Default to the cutoff the p-value was computed under, so the picture and
+  # the test describe the same set of placebo runs.
+  if (is.null(mspe_prune)) mspe_prune <- x$mspe_prune %||% Inf
   key_map <- c(treated = "Treated", placebo = "Placebo (donor pool)")
   series_labels <- stats::setNames(
     .merge_named_labels(key_map, labels), unname(key_map))
@@ -734,7 +740,9 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = Inf,
 #'   synthetic series). Default `0` (treated and synthetic series only).
 #' @param mspe_prune For a `scm_placebo` object with `type = "gaps"`: drop
 #'   placebo units whose pre-treatment MSPE exceeds `mspe_prune` times the
-#'   treated unit's, as in [plot.scm_placebo()]. Default `Inf` (no pruning).
+#'   treated unit's, as in [plot.scm_placebo()]. `NULL` (default) reuses the
+#'   cutoff [mspe_ratio_pval()] computed the p-value under; `Inf` keeps every
+#'   run.
 #' @param ... Passed to methods (unused by the current methods).
 #' @return A tidy `data.frame`. Columns by `type`:
 #'   \describe{
@@ -909,8 +917,10 @@ plot_data.coresynth <- function(x, type = c("trend", "gap", "weights",
 #' @rdname plot_data
 #' @export
 plot_data.scm_placebo <- function(x, type = c("gaps", "ratios"),
-                                  mspe_prune = Inf, ...) {
+                                  mspe_prune = NULL, ...) {
   type <- match.arg(type)
+  # As in plot(): fall back to the cutoff the p-value was computed under.
+  if (is.null(mspe_prune)) mspe_prune <- x$mspe_prune %||% Inf
   if (!is.numeric(mspe_prune) || length(mspe_prune) != 1L || mspe_prune <= 0)
     stop("mspe_prune must be a single positive number (Inf = no pruning).",
          call. = FALSE)

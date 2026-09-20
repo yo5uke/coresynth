@@ -7,7 +7,7 @@
 \method{plot}{scm_placebo}(
   x,
   type = c("gaps", "ratios"),
-  mspe_prune = Inf,
+  mspe_prune = NULL,
   colors = NULL,
   labels = NULL,
   linetypes = NULL,
@@ -25,9 +25,12 @@
 
 \item{mspe_prune}{Only for \code{type = "gaps"}: exclude placebo units whose
 pre-treatment MSPE exceeds \code{mspe_prune} times the treated unit's.
-Default \code{Inf} (no pruning). A rule stated on the RMSPE scale, such as
-tidysynth's "2 times the treated unit's pre-period RMSPE", corresponds
-to the squared multiple (\code{mspe_prune = 4}).}
+\code{NULL} (default) reuses the cutoff \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} computed the
+p-value under, so the picture and the test describe the same set of
+placebo runs; \code{Inf} keeps every run whatever the test did. A rule stated
+on the RMSPE scale, such as tidysynth's "2 times the treated unit's
+pre-period RMSPE", corresponds to the squared multiple
+(\code{mspe_prune = 4}).}
 
 \item{colors}{A named vector overriding series colors, e.g.
 \code{c(treated = "black")}. Valid keys: \code{"treated"}, \code{"placebo"}.}

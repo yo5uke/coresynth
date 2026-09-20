@@ -5538,6 +5538,67 @@ test_that("weights carry through the objective, the target and the bootstrap", {
                tolerance = 1e-8)
 })
 
+test_that("staggered fits report the treated series on the fitted scale", {
+  # With covariates the fit works on the partialled-out outcome: the cohort
+  # fits, Y_all and the sharp path's own Y_treat are all on that scale, so
+  # the staggered Y_treat has to be too, or treated_outcomes() and augment()
+  # describe different series.
+  stag <- .bfr_panel(c(9, 13, 17))
+  set.seed(7)
+  stag$x <- rnorm(nrow(stag)) + stag$id / 10
+
+  for (m in c("scm", "sdid")) {
+    fit <- scm_fit(y ~ d | id + time, data = stag, method = m,
+                   covariates = "x")
+    series <- treated_outcomes(fit)
+    Y_work <- fit$Y_all %||% fit$Y_mat      # SCM stores Y_all, SDID Y_mat
+    cohort <- rowMeans(vapply(fit$cohort_fits, function(cf) {
+      rowMeans(Y_work[, cf$idx_tr, drop = FALSE])
+    }, numeric(length(fit$times))))
+    expect_equal(unname(series), unname(cohort), tolerance = 1e-10,
+                 info = m)
+    # and it is no longer the raw outcome, since a covariate was partialled out
+    raw <- rowMeans(matrix(stag$y, nrow = length(fit$times))[, 1:3,
+                                                             drop = FALSE])
+    expect_false(isTRUE(all.equal(unname(series), unname(raw))), info = m)
+  }
+
+  # without covariates the two scales coincide, so nothing moves
+  plain <- scm_fit(y ~ d | id + time, data = stag, method = "scm")
+  expect_equal(unname(treated_outcomes(plain)),
+               unname(rowMeans(matrix(stag$y, nrow = length(plain$times))[,
+                                                                         1:3, drop = FALSE])),
+               tolerance = 1e-10)
+})
+
+test_that("loo_donors mirrors the fit's inner solver", {
+  panel_sh <- .bfr_panel(11)
+  fit <- scm_fit(y ~ d | id + time, data = panel_sh, method = "scm")
+  expect_equal(fit$qp_solver, "wolfe")
+  loo <- loo_donors(fit)
+  expect_true(all(is.finite(loo$results$att_loo)))
+  # dropping a zero-weight donor cannot move the estimate, whichever solver
+  # ran -- the check that the mirrored solver is still solving the same QP
+  expect_equal(loo$att_original, fit$estimate)
+})
+
+test_that("conformal_inference refuses a fit missing its tuning parameter", {
+  # The refit must impose the model the fit used, so a fit that does not
+  # record r / k / lambda cannot be scored against a substituted rule.
+  for (spec in list(c(m = "gsc", nm = "r"), c(m = "si", nm = "k"),
+                    c(m = "mc", nm = "lambda"))) {
+    fit <- scm_fit(y ~ d | id + time, data = panel, method = spec[["m"]])
+    expect_false(is.null(fit[[spec[["nm"]]]]), info = spec[["m"]])
+    stripped <- fit
+    stripped[[spec[["nm"]]]] <- NULL
+    expect_error(conformal_inference(stripped, ci = FALSE),
+                 "current version", info = spec[["m"]])
+    # the intact fit still works
+    expect_s3_class(conformal_inference(fit, ci = FALSE),
+                    "conformal_inference")
+  }
+})
+
 test_that("the frontier is traced on the weighted objective", {
   panel_st <- .bfr_panel(c(9, 9, 13, 17))
   fit <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",

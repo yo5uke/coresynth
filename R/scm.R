@@ -242,7 +242,10 @@ fit_scm_cpp <- function(
       treated_weights  = agg_w,
       unit_weights     = NULL,
       v_weights        = NULL,
-      Y_treat          = pan$Y[, pan$idx_treat, drop = FALSE],
+      # On the partialled-out scale, matching the cohort fits and Y_all, so
+      # treated_outcomes() and augment() describe the same series. Identical
+      # to the raw outcome when no covariates are given.
+      Y_treat          = Y_work[, pan$idx_treat, drop = FALSE],
       Y_synth          = NULL,
       gap              = NULL,
       times            = pan$times,
@@ -1779,11 +1782,16 @@ loo_donors <- function(fit, weight_threshold = 1e-6) {
     X1 <- fit$Y_treat[v_rows]
   }
   use_pen <- is.finite(fit$lambda_pen) && fit$lambda_pen > 0
+  # Mirror the fit's inner solver. On a degenerate predictor spec the optimal
+  # set is a face rather than a point, so the two solvers return different
+  # (equally optimal) weights; dropping a donor should not also change which
+  # optimum is reported.
+  wolfe_fit <- identical(fit$qp_solver, "wolfe")
 
   refit_w <- function(keep) {
     X0_k <- X0[, keep, drop = FALSE]
     if (!use_pen) {
-      return(drop(scm_inner_weights_cpp(X0_k, X1, V)))
+      return(drop(scm_inner_weights_cpp(X0_k, X1, V, wolfe = wolfe_fit)))
     }
     d_pen  <- colSums(V * (X1 - X0_k)^2)
     V_sqrt <- sqrt(pmax(V, 0))

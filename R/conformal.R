@@ -17,6 +17,22 @@
 # and the observed donor matrix Yco. Dispatches on the estimator class.
 .conformal_refit <- function(fit, Yco, y1) UseMethod(".conformal_refit")
 
+# The refit has to impose the model the fit used, so a tuning parameter the
+# fit does not carry cannot be guessed: substituting some other rule would
+# score the null against a differently specified counterfactual. Every
+# current fit stores its own, so this only catches objects saved by an
+# earlier version. Callers read the field with [[ ]], not $: a GSC fit also
+# carries r_cv and an MC fit lambda_cv, which $ would partial-match to if the
+# exact name were ever absent.
+.conformal_tuning <- function(value, name, method) {
+  if (is.null(value))
+    stop(sprintf(paste0(
+      "this %s fit does not record '%s', so conformal_inference() cannot ",
+      "refit under the same model. Re-run scm_fit() with the current ",
+      "version of coresynth."), method, name), call. = FALSE)
+  value
+}
+
 .conformal_refit.default <- function(fit, Yco, y1) {
   stop(sprintf("conformal_inference(): method '%s' is not supported.",
                fit$method), call. = FALSE)
@@ -33,8 +49,7 @@
 .conformal_refit.coresynth_si <- function(fit, Yco, y1) {
   TT   <- nrow(Yco)
   N_co <- ncol(Yco)
-  k <- fit$k %||% max(1L, floor(sqrt(min(TT, N_co))))
-  k <- as.integer(min(k, min(TT, N_co)))
+  k <- as.integer(min(.conformal_tuning(fit[["k"]], "k", "si"), TT, N_co))
   res <- si_pcr_cpp(Yco, Yco, matrix(y1, ncol = 1L), k)
   drop(res$Y_hat)
 }
@@ -56,8 +71,7 @@
 .conformal_refit.coresynth_gsc <- function(fit, Yco, y1) {
   TT   <- nrow(Yco)
   N_co <- ncol(Yco)
-  r <- fit$r %||% 2L
-  r <- as.integer(min(r, min(TT, N_co)))
+  r <- as.integer(min(.conformal_tuning(fit[["r"]], "r", "gsc"), TT, N_co))
   empty_co <- array(0.0, dim = c(TT, N_co, 0L))
   empty_tr <- array(0.0, dim = c(TT, 1L, 0L))
   res <- gsc_ife_cpp(Yco, matrix(y1, ncol = 1L), r, empty_co, empty_tr)
@@ -69,7 +83,7 @@
   N_co <- ncol(Yco)
   M <- cbind(Yco, y1)                       # T x (N_co + 1), treated last
   O <- matrix(1.0, nrow = TT, ncol = N_co + 1L)  # fully observed under null
-  lambda <- fit$lambda %||% (0.01 * svd(M, nu = 0, nv = 0)$d[1])
+  lambda <- .conformal_tuning(fit[["lambda"]], "lambda", "mc")
   # Refit under the same model the fit used: leaving the fixed effects out
   # here would score the null against a differently specified counterfactual.
   L <- soft_impute_fe_cpp(M, O, lambda,

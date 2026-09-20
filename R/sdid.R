@@ -312,7 +312,10 @@ fit_sdid_cpp <- function(y, d, id, time,
       estimate         = stag$estimate,
       cohort_estimates = stag$cohort_estimates,
       cohort_fits      = stag$cohort_fits,
-      Y_treat          = pan$Y[, pan$idx_treat, drop = FALSE],
+      # On the partialled-out scale, which is the one every other series in
+      # the fit is on -- the cohort fits, Y_mat, and the sharp path's own
+      # Y_treat. Identical to the raw outcome when no covariates are given.
+      Y_treat          = Y_work[, pan$idx_treat, drop = FALSE],
       Y_mat            = Y_work,
       Y_synth          = NULL,
       gap              = NULL,

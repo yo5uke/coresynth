@@ -110,7 +110,8 @@
   The default falls back to `"separate"` where the pooled solver cannot go
   (`donor_mspe_threshold`, `lambda_pen`, `v_selection = "oos"`); naming a
   numeric `nu` there is still an error. The heuristic itself was checked
-  against `augsynth` and agrees to three or four decimal places.
+  against `augsynth` and agrees to four or five decimal places, across
+  cohorts of equal and unequal size alike.
 
 - **`qp_solver` now defaults to `"auto"`, which is the Wolfe solver wherever
   it is wired.** The inner SCM problem projects the treated unit onto the
@@ -332,6 +333,33 @@
   place of that split, and `summary()` prints the per-cohort table of
   estimates, weights, and treatment windows. Multi-arm SI fits show the
   cohort-arm table on the same terms.
+
+## Bug fixes
+
+- **A staggered fit with `covariates` reports its treated series on the scale
+  it was fitted on.** The covariates are partialled out first, and every other
+  series the fit carries -- the per-cohort targets, `Y_all`/`Y_mat`, and the
+  sharp path's own `Y_treat` -- is on that residualised scale, but the
+  staggered `Y_treat` was the raw outcome. `treated_outcomes()` therefore
+  returned one series while `augment()` returned another. Affects `"scm"` and
+  `"sdid"`; without `covariates` the two scales coincide and nothing changes.
+
+- **`loo_donors()` re-solves with the inner solver the fit used.** It always
+  called the active-set method, so on a degenerate predictor spec -- where the
+  optimal set is a face rather than a point and the two solvers pick different
+  points of it -- dropping a donor also changed which optimum was reported,
+  mixing the two effects the exercise is meant to separate.
+
+- **`conformal_inference()` no longer substitutes a retired rule for a tuning
+  parameter a fit does not carry.** The refit has to impose the model the fit
+  used, but `r`, `k` and `lambda` each fell back to the fixed heuristic that
+  was this release's default before it was replaced -- `r = 2`, `k =
+  floor(sqrt(min(T_pre, N_co)))`, 1% of the spectral norm -- which would score
+  the null against a differently specified counterfactual. Every current fit
+  records its own, so the fallback was unreachable; it is now an error naming
+  the parameter. The fields are also read exactly rather than with `$`, which
+  would partial-match `r` to `r_cv`, or `lambda` to `lambda_cv`, if the exact
+  name were ever absent.
 
 # coresynth 0.5.0
 

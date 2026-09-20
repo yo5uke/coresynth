@@ -156,24 +156,36 @@ train/validation split. Use it to judge the fit on part of the
 pre-treatment period while keeping the rest of \code{data} available for
 plotting and post-estimation.}
 
-\item{nu}{Partial pooling parameter for \strong{staggered} SCM fits
-(Ben-Michael, Feller & Rothstein 2022, JRSS-B). \code{NULL} (default) keeps
-the per-cohort V-optimised SCM path. A number in \verb{[0, 1]} switches to
-partially pooled SCM: all cohort weight vectors are chosen jointly to
-minimise \verb{nu * (normalised pooled pre-treatment imbalance)^2 + (1 - nu) * (normalised per-cohort imbalance)^2}, so the aggregate ATT
-is anchored by the pooled fit. \code{nu = 0} is separate per-cohort SCM
-with uniform lag weights, \code{nu = 1} fully pooled, and \code{nu = "auto"}
-uses the paper's heuristic (the ratio of the pooled to the average
-per-cohort imbalance of the separate solution). The pooled path is
-outcomes-only and cannot be combined with \code{donor_mspe_threshold},
-\code{lambda_pen}, or \code{v_selection = "oos"}. Balance diagnostics are stored
-in \code{fit$pooling}. For \code{method = "scm"} on staggered panels only.}
+\item{nu}{How strongly the adoption cohorts are pooled in \strong{staggered}
+SCM fits (Ben-Michael, Feller & Rothstein 2022, JRSS-B). Cohort weight
+vectors are chosen jointly to minimise
+\verb{nu * (normalised pooled pre-treatment imbalance)^2 + (1 - nu) * (normalised per-cohort imbalance)^2}, trading the fit of each
+cohort against the fit of their average, which is what the aggregate ATT
+rests on.
+\code{"auto"} (the default) is the paper's heuristic, the ratio of the pooled
+to the average per-cohort imbalance of the separate solution; it is also
+what \code{augsynth}, the authors' implementation, uses when \code{nu} is unset.
+A number in \verb{[0, 1]} sets it directly, with \code{0} separate and \code{1} fully
+pooled -- the paper advises against both extremes. \code{"separate"} is
+\code{0} reached through the older per-cohort path, which keeps the
+V optimisation and donor filtering that the pooled solver has no room
+for; it is also what the default falls back to when
+\code{donor_mspe_threshold}, \code{lambda_pen}, or \code{v_selection = "oos"} rules the
+pooled solver out. Balance diagnostics are stored in \code{fit$pooling}.
+
+Staggered panels only. Under a single adoption date there are no cohorts
+to pool across, and several units sharing one date are already fully
+pooled into that cohort: S.4.1 of the paper shows the across-unit
+variation that would justify doing otherwise is zero when the adoption
+date is shared.}
 
 \item{fixedeff}{Unpenalised additive level terms. For \code{method = "mc"} it
 estimates unit and time fixed effects outside the nuclear norm, as in
 Athey et al. (2021, S.8.1), and defaults to \code{TRUE}; \code{FALSE} recovers the
 S.4 baseline where the level is absorbed into the penalised matrix.
-For \code{method = "scm"} it defaults to \code{FALSE} and means the following.
+For \code{method = "scm"} it defaults to \code{TRUE} on staggered panels, matching
+\code{augsynth} and the S.6 finding that the intercept-shifted estimator
+"dominates either of the alternatives"; it does not apply to sharp fits.
 If \code{TRUE}, staggered SCM demeans every unit by its own
 pre-treatment mean within each cohort before fitting (intercept shift;
 Ben-Michael, Feller & Rothstein 2022, Section 5.1), which turns the

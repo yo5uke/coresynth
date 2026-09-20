@@ -111,24 +111,36 @@
 #'   train/validation split. Use it to judge the fit on part of the
 #'   pre-treatment period while keeping the rest of `data` available for
 #'   plotting and post-estimation.
-#' @param nu Partial pooling parameter for **staggered** SCM fits
-#'   (Ben-Michael, Feller & Rothstein 2022, JRSS-B). `NULL` (default) keeps
-#'   the per-cohort V-optimised SCM path. A number in `[0, 1]` switches to
-#'   partially pooled SCM: all cohort weight vectors are chosen jointly to
-#'   minimise `nu * (normalised pooled pre-treatment imbalance)^2 +
-#'   (1 - nu) * (normalised per-cohort imbalance)^2`, so the aggregate ATT
-#'   is anchored by the pooled fit. `nu = 0` is separate per-cohort SCM
-#'   with uniform lag weights, `nu = 1` fully pooled, and `nu = "auto"`
-#'   uses the paper's heuristic (the ratio of the pooled to the average
-#'   per-cohort imbalance of the separate solution). The pooled path is
-#'   outcomes-only and cannot be combined with `donor_mspe_threshold`,
-#'   `lambda_pen`, or `v_selection = "oos"`. Balance diagnostics are stored
-#'   in `fit$pooling`. For `method = "scm"` on staggered panels only.
+#' @param nu How strongly the adoption cohorts are pooled in **staggered**
+#'   SCM fits (Ben-Michael, Feller & Rothstein 2022, JRSS-B). Cohort weight
+#'   vectors are chosen jointly to minimise
+#'   `nu * (normalised pooled pre-treatment imbalance)^2 +
+#'   (1 - nu) * (normalised per-cohort imbalance)^2`, trading the fit of each
+#'   cohort against the fit of their average, which is what the aggregate ATT
+#'   rests on.
+#'   `"auto"` (the default) is the paper's heuristic, the ratio of the pooled
+#'   to the average per-cohort imbalance of the separate solution; it is also
+#'   what `augsynth`, the authors' implementation, uses when `nu` is unset.
+#'   A number in `[0, 1]` sets it directly, with `0` separate and `1` fully
+#'   pooled -- the paper advises against both extremes. `"separate"` is
+#'   `0` reached through the older per-cohort path, which keeps the
+#'   V optimisation and donor filtering that the pooled solver has no room
+#'   for; it is also what the default falls back to when
+#'   `donor_mspe_threshold`, `lambda_pen`, or `v_selection = "oos"` rules the
+#'   pooled solver out. Balance diagnostics are stored in `fit$pooling`.
+#'
+#'   Staggered panels only. Under a single adoption date there are no cohorts
+#'   to pool across, and several units sharing one date are already fully
+#'   pooled into that cohort: S.4.1 of the paper shows the across-unit
+#'   variation that would justify doing otherwise is zero when the adoption
+#'   date is shared.
 #' @param fixedeff Unpenalised additive level terms. For `method = "mc"` it
 #'   estimates unit and time fixed effects outside the nuclear norm, as in
 #'   Athey et al. (2021, S.8.1), and defaults to `TRUE`; `FALSE` recovers the
 #'   S.4 baseline where the level is absorbed into the penalised matrix.
-#'   For `method = "scm"` it defaults to `FALSE` and means the following.
+#'   For `method = "scm"` it defaults to `TRUE` on staggered panels, matching
+#'   `augsynth` and the S.6 finding that the intercept-shifted estimator
+#'   "dominates either of the alternatives"; it does not apply to sharp fits.
 #'   If `TRUE`, staggered SCM demeans every unit by its own
 #'   pre-treatment mean within each cohort before fitting (intercept shift;
 #'   Ben-Michael, Feller & Rothstein 2022, Section 5.1), which turns the
@@ -312,7 +324,7 @@ scm_fit <- function(
       qp_solver = qp_solver,
       v_window = v_window,
       nu = nu,
-      fixedeff = isTRUE(fixedeff),
+      fixedeff = fixedeff,
       ...
     ),
     "sdid" = fit_sdid_cpp(

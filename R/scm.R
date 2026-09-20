@@ -52,17 +52,17 @@ fit_scm_cpp <- function(
   control_group = c("clean", "never_treated"),
   scale_predictors = TRUE,
   nu = NULL,
-  fixedeff = FALSE,
+  fixedeff = NULL,
   ...
 ) {
   v_selection   <- match.arg(v_selection)
   v_optim       <- match.arg(v_optim)
   qp_solver     <- match.arg(qp_solver)
   control_group <- match.arg(control_group)
-  if (!is.null(nu) && !identical(nu, "auto") &&
+  if (!is.null(nu) && !identical(nu, "auto") && !identical(nu, "separate") &&
       (!is.numeric(nu) || length(nu) != 1L || nu < 0 || nu > 1)) {
-    stop("nu must be NULL, \"auto\", or a single number in [0, 1].",
-         call. = FALSE)
+    stop("nu must be NULL, \"auto\", \"separate\", or a single number in ",
+         "[0, 1].", call. = FALSE)
   }
   pan <- panel_to_matrices(y, d, id, time)
   .check_panel_complete(pan$Y, "SCM")
@@ -71,11 +71,17 @@ fit_scm_cpp <- function(
     stop(
       "nu and fixedeff apply to staggered SCM fits only ",
       "(Ben-Michael, Feller & Rothstein 2022). ",
-      "For a single treated unit there is nothing to pool across; ",
-      "fit the sharp SCM without these arguments.",
+      "Under a single adoption date there is nothing to pool across cohorts, ",
+      "and several treated units are already fully pooled into one cohort; ",
+      "fit without these arguments.",
       call. = FALSE
     )
   }
+  # BFR S.5.1 add an intercept shift to partially pooled SCM, and report in
+  # S.6 that the intercept-shifted estimator "dominates either of the
+  # alternatives in terms of both overall and unit-level estimates". augsynth,
+  # their implementation, therefore defaults to it as well.
+  if (is.null(fixedeff)) fixedeff <- !pan$is_sharp
 
   # The Wolfe solver is wired through the sharp inner QP only. The paths
   # excluded here either run their own solver (the penalised QP and the
@@ -144,19 +150,27 @@ fit_scm_cpp <- function(
       beta_hat <- po$beta_hat
     }
 
-    if (!is.null(nu)) {
-      # Partially pooled SCM (Ben-Michael, Feller & Rothstein 2022):
-      # outcomes-only with uniform lag weights, so the legacy path's
-      # V-selection / donor-filtering / penalty knobs do not apply.
-      if (!identical(donor_mspe_threshold, Inf) || !is.null(lambda_pen) ||
-          v_selection == "oos") {
-        stop(
-          "nu (partially pooled SCM) cannot be combined with ",
-          "donor_mspe_threshold, lambda_pen, or v_selection = 'oos'. ",
-          "Use nu = NULL for the per-cohort V-optimised path.",
-          call. = FALSE
-        )
-      }
+    # Partially pooled SCM (Ben-Michael, Feller & Rothstein 2022) is
+    # outcomes-only with uniform lag weights, so the per-cohort path's
+    # V-selection / donor-filtering / penalty knobs do not reach it.
+    pooled_blocked <- !identical(donor_mspe_threshold, Inf) ||
+      !is.null(lambda_pen) || v_selection == "oos"
+    if (!is.null(nu) && !identical(nu, "separate") && pooled_blocked) {
+      stop(
+        "nu (partially pooled SCM) cannot be combined with ",
+        "donor_mspe_threshold, lambda_pen, or v_selection = 'oos'. ",
+        "Use nu = 'separate' for the per-cohort V-optimised path.",
+        call. = FALSE
+      )
+    }
+    # BFR choose nu by their own heuristic and warn against values close to 0
+    # or 1; augsynth, their implementation, does the same when nu is left
+    # unset. Separate SCM (nu = 0) is the practice they argue against, so it
+    # is opt-in rather than the default -- except where the knobs above have
+    # already ruled the pooled solver out.
+    if (is.null(nu)) nu <- if (pooled_blocked) "separate" else "auto"
+
+    if (!identical(nu, "separate")) {
       stag <- .fit_scm_staggered_pooled(
         pan,
         Y_matrix      = Y_work,
@@ -204,9 +218,6 @@ fit_scm_cpp <- function(
   idx_tr <- pan$idx_treat
   idx_co <- pan$idx_control
 
-  if (length(idx_tr) != 1L) {
-    stop("SCM currently supports exactly one treated unit.")
-  }
   if (length(idx_co) < 2L) {
     stop("SCM requires at least two control units.")
   }
@@ -216,10 +227,21 @@ fit_scm_cpp <- function(
          "fit donor weights.", call. = FALSE)
   }
 
+  # Simultaneous adoption by several units is one cohort. Ben-Michael, Feller
+  # & Rothstein (2022) S.4.1 show the across-unit variation that makes
+  # unit-level fits enter the ATT error bound is zero when every treated unit
+  # shares an adoption date, so the bound is minimised by fully pooling them
+  # -- that is, by fitting one synthetic control to their average. This is the
+  # same step their Appendix A.2 hierarchy takes within each cohort, and the
+  # same one the staggered path here already takes.
+  n_treated  <- length(idx_tr)
+  Y_treat_mat <- Y[, idx_tr, drop = FALSE]          # T x n_treated, raw series
+  Y_tr_pre <- if (n_treated == 1L) Y[seq_len(T_pre), idx_tr] else
+    rowMeans(Y_treat_mat[seq_len(T_pre), , drop = FALSE])
+  Y_tr_all <- if (n_treated == 1L) Y[, idx_tr] else rowMeans(Y_treat_mat)
+
   Y_co_pre <- Y[seq_len(T_pre), idx_co, drop = FALSE]
   Y_co_all <- Y[, idx_co, drop = FALSE]
-  Y_tr_pre <- Y[seq_len(T_pre), idx_tr]
-  Y_tr_all <- Y[, idx_tr]
 
   # -- Donor pool filtering (Abadie 2021 S.4) ----------------------------------
   excluded_donors <- character(0L)
@@ -505,6 +527,12 @@ fit_scm_cpp <- function(
     v_weights       = setNames(V_final, pred_names),
     Y_synth         = Y_synth,
     Y_treat         = Y_treat,
+    # Raw per-unit series behind the fitted average, under the same name the
+    # staggered cohort_fits use. With one treated unit it is Y_treat as a
+    # one-column matrix.
+    Y_treat_mat     = Y_treat_mat,
+    n_treated       = n_treated,
+    idx_tr          = idx_tr,
     gap             = Y_treat - Y_synth,
     times           = pan$times,
     T_pre           = T_pre,
@@ -1271,6 +1299,21 @@ mspe_ratio_pval <- function(
       "Alternatives:\n",
       "  * Apply mspe_ratio_pval() to each cohort_fit individually after re-fitting it as sharp SCM.\n",
       "  * Use method = 'sdid' with sdid_inference(method = 'placebo') for staggered placebo inference.",
+      call. = FALSE
+    )
+  }
+  if (isTRUE((fit$n_treated %||% 1L) > 1L)) {
+    stop(
+      "mspe_ratio_pval() compares the treated unit against placebo runs on ",
+      "single donors, so it is not valid for a fit pooling ",
+      fit$n_treated, " treated units: their average is less noisy than any ",
+      "one donor, which inflates its pre/post MSPE ratio. Simulated under no ",
+      "treatment effect, the test rejected at 28% (3 treated units) and 53% ",
+      "(6) against a nominal 10%.\n",
+      "Alternatives:\n",
+      "  * Fit each treated unit on its own (subset data) and test it there.\n",
+      "  * Use conformal_inference(), which permutes over time rather than ",
+      "across units.",
       call. = FALSE
     )
   }

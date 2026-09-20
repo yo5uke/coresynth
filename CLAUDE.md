@@ -51,6 +51,8 @@ coresynth/
 ├── R/
 │   ├── scm_fit.R          Formula インターフェース・dispatch・new_coresynth()
 │   ├── scm.R              SCM・mspe_ratio_pval()・placebo_in_time()・loo_donors()
+│   ├── scm_rank.R         scm_rank_pval()（Abadie & L'Hour 順位検定）
+│   ├── scm_frontier.R     scm_balance_frontier()・plot.scm_frontier()
 │   ├── sdid.R             SDID・sdid_inference()
 │   ├── gsc.R              GSC・gsc_boot()・gsc_inference()
 │   ├── mc.R               MC ラッパー

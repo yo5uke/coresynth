@@ -182,6 +182,52 @@
 
 ## New features
 
+- **`scm_rank_pval()` tests the aggregate effect when several units are
+  treated** (Abadie & L'Hour 2021, S.3.2). Each treated unit contributes its
+  own statistic, the identities of the treated are reassigned at random, and
+  the sum of the ranks of the real treated units is compared with its
+  permutation distribution. Ranking is what makes this work where
+  `mspe_ratio_pval()` cannot: every statistic being compared comes from a
+  single unit, so the averaged treated series never enters. Simulated with no
+  treatment effect it rejected at 7.0% and 10.0% against a nominal 10% (three
+  and six treated units), where `mspe_ratio_pval()` on the same fits reached
+  28% and 53%; with an effect of 1.5 its power was 77% and 85%.
+
+- **`pool_cohorts = FALSE` fits one synthetic control per treated unit.**
+  Staggered SCM pools units sharing an adoption date into a cohort, which is
+  the Appendix A.2 hierarchy of Ben-Michael, Feller & Rothstein (2022). Their
+  S.4 formulation instead gives every treated unit its own weight vector, and
+  that is what `pool_cohorts = FALSE` fits; `cohort_fits` then names the unit
+  behind each block, which is what `scm_rank_pval()` needs. The default stays
+  with the appendix, where S.4.1 shows there is no across-unit variation to
+  exploit inside a cohort. (`augsynth` defaults the other way.)
+
+- **`weights` sets how much each treated unit counts towards the ATT.**
+  Abadie (2021, S.8) notes that with regions or countries a population- or
+  GDP-weighted average effect is often the quantity of interest. A staggered
+  fit multiplies the supplied mass by each block's `T_post`; a sharp fit makes
+  the pooled target a weighted average of the treated series. Left `NULL` the
+  units count equally, as before.
+
+- **`scm_balance_frontier()` and `plot()` trace the pooling trade-off.**
+  Ben-Michael, Feller & Rothstein call this plot "an important tool for using
+  partially pooled SCM in practice" (S.4.2). It refits across a grid of `nu`
+  and reports the imbalance of the treated average, which the aggregate ATT
+  rests on, against the root mean square of the per-block imbalances, which
+  the block-level effects rest on. The curve is strongly convex in practice,
+  so it shows where more pooling stops paying for itself: on a test panel,
+  moving `nu` from 0 to 0.5 cut the pooled imbalance by 21% for a 6% rise in
+  per-block imbalance, while the last quarter cost 39% for a further 8%.
+
+  This is worth looking at because the `nu` heuristic does not always pick
+  well. Where treatment is assigned without selection on the unit effects,
+  every block already fits to the noise floor and the block-level gaps are
+  near-independent, so their average shrinks by about `1/sqrt(J)` and the
+  heuristic returns roughly that -- a number driven by noise averaging rather
+  than by imbalance pooling could remove. Separating the two would need an
+  estimate of the noise floor, which is neither in the paper nor in
+  `augsynth`, so the default is unchanged and the frontier is offered instead.
+
 - **`print()` and `summary()` describe staggered fits as staggered.** Both
   previously used the sharp output, which reports `T_pre` and `T_post` from
   the panel-level split — the earliest adoption date, correct for one cohort

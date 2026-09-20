@@ -26,6 +26,16 @@ $$Y_{it}^{(0)} = \delta_t + \theta_t Z_i + \lambda_t \mu_i + \varepsilon_{it}$$
 
 **staggered の既定は `nu = "auto"` / `fixedeff = TRUE`**（v1.0.0 で変更、旧既定は separate / FALSE）。BFR は要旨で separate SCM を「良い結果を生みそうにない」と述べ、S.4.2 で ν を 0 や 1 に近づけないよう勧める。参照実装 augsynth も `nu = NULL` → ヒューリスティック計算、`fixedeff = TRUE` が既定。**ヒューリスティックは augsynth と 6 seed で 3〜4 桁一致を確認済み**。S.6 の設計（N=49・T=39・**処置への選択** π_i=logit(θ0+θ1·unit_i)・処置ユニット約 20・sharp null）を再現すると論文の主張が再現する（two-way FE: separate bias −0.0068/MAD 0.0413 → auto −0.0039/0.0395、factor: ν=1 の MAD 0.1492 が auto 0.0607 より大幅に悪い）。**選択を入れない DGP では auto が separate に劣る**ので、再現実験を書くときは selection を必ず入れること。
 
+**ブロック粒度 `pool_cohorts`**（既定 TRUE）: BFR 本体 S.4 の Γ は N×J で**ブロック＝処置ユニット**。Appendix A.2 がその上に「同一採用時点のユニットは完全プーリング」の層を足す（S.4.1 の「コホート内はユニット横断変動ゼロ」が根拠）。既定は付録側。`FALSE` で本体側になる。**BCD ソルバ・ヒューリスティック・診断量・集計はブロックが何を表すか知らない**ので、実装差はブロック構築（`Y1_raw` を rowMeans にするか単一列にするか、`T_pre` をコホートから取るかユニットから取るか）だけ。参照実装 augsynth の `time_cohort` は既定 FALSE で**論文の付録推奨と逆**。ユニット単位ブロックは `cohort_fits[[i]]$unit` にユニット名が入り、`scm_rank_pval()` の前提になる。
+
+**集計の重み `weights`**（Abadie 2021 S.8）: 処置ユニット名で名付けた数値ベクトル。staggered では各ブロックの重みが `sum(該当ユニットの重み) × T_post`、sharp では**プーリング対象が加重平均**になる（`treated_weights` に正規化後の値を保持）。未指定なら等加重＝従来どおり。
+
+**`scm_rank_pval()`**（Abadie & L'Hour 2021 S.3.2）: 複数処置ユニットの集計 p 値。ユニット別統計量 → 処置割当を B 回置換 → n₁×(B+1) 個をまとめて順位付け → 順位和の極端さ。**ランク化が肝**で、`mspe_ratio_pval()` が平均系列で壊れる（低ノイズゆえ比率が過大）のに対し、比較に入る統計量が全て単一ユニット由来なので歪まない。置換時も採用時点は**スロットに紐づけたまま**にしてイベントタイム構造を保つ。実測サイズは名目 10%/5% に対し τ=0 で 7.0%/4.5%（3 ユニット）・10.0%/3.0%（6 ユニット）、検出力は τ=1.5 で 77%/85%。staggered は `pool_cohorts = FALSE` が必要。
+
+**`scm_balance_frontier()` / `plot.scm_frontier`**（BFR S.4.2）: ν グリッドで再フィットし `q_sep`/`q_pool` のトレードオフ曲線を返す。論文が「実務で partially pooled SCM を使ううえで重要なツール」と呼ぶもの。再フィットには `Y_all`・`control_group`・`pooling$fixedeff`・`pooling$pool_cohorts` が要るので staggered fit はこれらを保持する。曲線は凸で、実測では ν 0→0.5 が pooled 不均衡 −21% / per-block +6%、0.75→1.0 が −8% / +39%。
+
+**ν̂ がノイズ平均化を拾う件**: 選択のない DGP では各ブロックが既にノイズ下限まで当たっており、ブロック別ギャップはほぼ独立なので平均すると 1/√J に縮む。結果 **ν̂ ≈ 1/√J** となり、プーリングで除去できる不均衡量とは無関係な値が出る（実測: 選択なしで ν̂ 0.733/0.569/0.531 に対し 1/√J 0.707/0.535/0.444）。真の信号は「プーリングで減らせる pooled 不均衡の割合」（選択なし 20〜65%、選択あり 80%）だが ν̂ はこれを使わない。**ノイズ下限の推定なしに両者を分離できず、BFR にも augsynth にも無い独自ヒューリスティックの発明になるため既定は変更していない**。利用者には frontier で判断してもらう。
+
 `nu = "separate"` は旧 per-cohort 経路（V 最適化・ドナー filtering つき）。`donor_mspe_threshold`/`lambda_pen`/`v_selection="oos"` 併用時は既定が自動で `"separate"` にフォールバックする（明示の数値 ν はエラーのまま）。`predictors = NULL` 限定（`covariates` の partial-out のみ対応）。`fixedeff` は各ユニットを自身のプリ平均でデミーンした weighted DiD 形式；報告される `Y_synth` はこの shift を戻した生スケール。
 
 ## 内側 QP・外側最適化

@@ -5252,3 +5252,141 @@ test_that("the staggered default falls back where the pooled solver cannot go", 
   expect_error(scm_fit(y ~ d | id + time, data = stag, method = "scm",
                        nu = 0.5, lambda_pen = 0.1), "cannot be combined")
 })
+
+# ── BFR S.4 unit-level blocks, aggregation weights, rank test, frontier ──────
+
+.bfr_panel <- function(adopt, N = 25, TT = 22, tau = 2, seed = 3) {
+  set.seed(seed)
+  f <- matrix(rnorm(TT * 2), TT, 2); L <- matrix(rnorm(N * 2), N, 2)
+  Y <- f %*% t(L) + matrix(rnorm(N * TT, sd = 0.3), TT, N)
+  D <- matrix(0L, TT, N)
+  for (k in seq_along(adopt)) {
+    t0 <- adopt[k]; D[t0:TT, k] <- 1L; Y[t0:TT, k] <- Y[t0:TT, k] + tau
+  }
+  data.frame(id = rep(1:N, each = TT), time = rep(1:TT, times = N),
+             y = as.vector(Y), d = as.vector(D))
+}
+
+test_that("pool_cohorts = FALSE gives one block per treated unit", {
+  # BFR S.4 makes Gamma an N-by-J matrix over treated units; their Appendix
+  # A.2 adds the layer that pools units sharing an adoption date.
+  panel_st <- .bfr_panel(c(9, 9, 13, 17))
+  pooled <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm")
+  units  <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",
+                    pool_cohorts = FALSE)
+
+  expect_equal(nrow(pooled$cohort_estimates), 3L)   # cohorts 9, 13, 17
+  expect_equal(nrow(units$cohort_estimates), 4L)    # one per treated unit
+  expect_true(pooled$pooling$pool_cohorts)
+  expect_false(units$pooling$pool_cohorts)
+  expect_equal(pooled$cohort_estimates$n_treated, c(2L, 1L, 1L))
+  expect_equal(units$cohort_estimates$n_treated, rep(1L, 4L))
+  # unit-level blocks name their unit; a pooled multi-unit cohort cannot
+  expect_true(is.na(pooled$cohort_fits[[1]]$unit))
+  expect_equal(vapply(units$cohort_fits, `[[`, character(1), "unit"),
+               as.character(1:4))
+  # both remain valid staggered fits
+  expect_s3_class(units, "coresynth_staggered")
+  expect_true(is.finite(units$estimate))
+})
+
+test_that("weights set the mass each treated unit carries", {
+  panel_sh <- .bfr_panel(c(11, 11, 11))
+  equal <- scm_fit(y ~ d | id + time, data = panel_sh, method = "scm")
+  heavy <- scm_fit(y ~ d | id + time, data = panel_sh, method = "scm",
+                   weights = c("1" = 1, "2" = 8, "3" = 1))
+  expect_null(equal$treated_weights)
+  expect_equal(sum(heavy$treated_weights), 1)
+  expect_equal(unname(heavy$treated_weights["2"]), 8 / 10)
+  expect_false(isTRUE(all.equal(equal$estimate, heavy$estimate)))
+  # uniform weights reproduce the unweighted fit
+  flat <- scm_fit(y ~ d | id + time, data = panel_sh, method = "scm",
+                  weights = c("1" = 2, "2" = 2, "3" = 2))
+  expect_equal(flat$estimate, equal$estimate, tolerance = 1e-8)
+
+  # staggered: weights multiply each block's T_post, not replace it
+  panel_st <- .bfr_panel(c(9, 13, 17))
+  w_st <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",
+                  weights = c("1" = 5, "2" = 1, "3" = 1))
+  ce <- w_st$cohort_estimates
+  expect_equal(w_st$estimate, sum(ce$weight * ce$estimate) / sum(ce$weight))
+  expect_gt(ce$weight[1], ce$weight[2])
+})
+
+test_that("weights are validated against the treated units", {
+  panel_sh <- .bfr_panel(c(11, 11, 11))
+  expect_error(scm_fit(y ~ d | id + time, data = panel_sh, method = "scm",
+                       weights = c(1, 2, 3)), "must be named")
+  expect_error(scm_fit(y ~ d | id + time, data = panel_sh, method = "scm",
+                       weights = c("1" = 1)), "missing the treated unit")
+  expect_error(scm_fit(y ~ d | id + time, data = panel_sh, method = "scm",
+                       weights = c("1" = 1, "2" = -1, "3" = 1)), "non-negative")
+  expect_error(scm_fit(y ~ d | id + time, data = panel_sh, method = "scm",
+                       weights = c("1" = 0, "2" = 0, "3" = 0)), "positive sum")
+})
+
+test_that("scm_rank_pval runs on both fits that expose per-unit effects", {
+  sharp <- scm_fit(y ~ d | id + time, data = .bfr_panel(c(11, 11, 11)),
+                   method = "scm")
+  res <- scm_rank_pval(sharp, B = 40L)
+  expect_s3_class(res, "scm_rank_test")
+  expect_gte(res$p_value, 0); expect_lte(res$p_value, 1)
+  expect_length(res$rank_sums, 40L)
+  expect_length(res$unit_statistics, 3L)
+  expect_output(print(res), "rank-based permutation test")
+
+  units <- scm_fit(y ~ d | id + time, data = .bfr_panel(c(9, 13, 17)),
+                   method = "scm", pool_cohorts = FALSE)
+  expect_s3_class(scm_rank_pval(units, B = 40L), "scm_rank_test")
+})
+
+test_that("scm_rank_pval is reproducible and leaves the RNG alone", {
+  sharp <- scm_fit(y ~ d | id + time, data = .bfr_panel(c(11, 11, 11)),
+                   method = "scm")
+  expect_equal(scm_rank_pval(sharp, B = 30L)$p_value,
+               scm_rank_pval(sharp, B = 30L)$p_value)
+  set.seed(99); before <- runif(1)
+  set.seed(99); invisible(scm_rank_pval(sharp, B = 30L))
+  expect_equal(runif(1), before)
+})
+
+test_that("scm_rank_pval refuses fits without per-unit effects", {
+  one <- scm_fit(y ~ d | id + time, data = .bfr_panel(11), method = "scm")
+  expect_error(scm_rank_pval(one), "mspe_ratio_pval")
+  pooled <- scm_fit(y ~ d | id + time, data = .bfr_panel(c(9, 9, 13)),
+                    method = "scm")
+  expect_error(scm_rank_pval(pooled), "pool_cohorts = FALSE")
+  expect_error(scm_rank_pval(scm_fit(y ~ d | id + time,
+                                     data = .bfr_panel(c(11, 11, 11)),
+                                     method = "mc")), "method = 'scm'")
+})
+
+test_that("scm_balance_frontier traces the pooling trade-off", {
+  fit <- scm_fit(y ~ d | id + time, data = .bfr_panel(c(11, 11, 14, 18)),
+                 method = "scm")
+  fr <- scm_balance_frontier(fit, nu_grid = seq(0, 1, by = 0.25))
+  expect_s3_class(fr, "scm_frontier")
+  expect_equal(nrow(fr), 5L)
+  # pooling buys pooled fit at the cost of per-block fit, monotonically
+  expect_true(all(diff(fr$q_pool) <= 1e-8))
+  expect_true(all(diff(fr$q_sep) >= -1e-8))
+  # normalised against the separate solution, nu = 0 is the unit point
+  expect_equal(fr$q_sep_rel[1], 1, tolerance = 1e-6)
+  expect_equal(fr$q_pool_rel[1], 1, tolerance = 1e-6)
+  expect_equal(sum(fr$heuristic), 1L)
+  expect_output(print(fr), "balance possibility frontier")
+  expect_s3_class(plot(fr), "ggplot")
+})
+
+test_that("scm_balance_frontier refuses fits it cannot trace", {
+  sharp <- scm_fit(y ~ d | id + time, data = .bfr_panel(c(11, 11, 11)),
+                   method = "scm")
+  expect_error(scm_balance_frontier(sharp), "staggered")
+  sep <- scm_fit(y ~ d | id + time, data = .bfr_panel(c(9, 13, 17)),
+                 method = "scm", nu = "separate")
+  expect_error(scm_balance_frontier(sep), "no pooling")
+  fit <- scm_fit(y ~ d | id + time, data = .bfr_panel(c(9, 13, 17)),
+                 method = "scm")
+  expect_error(scm_balance_frontier(fit, nu_grid = 0.5), "two or more")
+  expect_error(scm_balance_frontier(fit, nu_grid = c(0, 2)), "two or more")
+})

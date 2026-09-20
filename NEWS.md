@@ -24,10 +24,7 @@
     the panel's and scoring each penalty on the held-out cells. It uses its
     own RNG stream, so the penalty is reproducible and the caller's random
     state is left untouched; `cv_folds`, `cv_nlambda` and `cv_seed` control
-    it, and `fit$lambda_cv` reports whether the search ran. Note that this
-    does *not* resolve the documented small-panel upward bias: over 40 draws
-    at `N_co = 20` the bias moved from +0.048 to +0.046, with RMSE improving
-    about 8%. The caveat stands and is not an artefact of the penalty.
+    it, and `fit$lambda_cv` reports whether the search ran.
   - `"si"`: `k = NULL` applies the optimal hard threshold of Donoho & Gavish
     (2014) to the pre-treatment donor block, one of the three data-driven
     rules Agarwal et al. name. It costs a single SVD, where cross-validating
@@ -105,10 +102,34 @@
 
 - **`scm_fit()` rejects arguments the chosen estimator does not take.**
   One formula interface serves six estimators, so an argument meant for
-  another one — `predictors`, `nu`, or `fixedeff` with `method = "mc"`,
-  `covariates` with `"tasc"`, `control_group` with either — or simply
+  another one — `predictors` or `nu` with `method = "mc"`, `covariates` or
+  `fixedeff` with `"tasc"`, `control_group` with either — or simply
   misspelled, was absorbed by `...` and changed nothing about the fit that
   came back. These now error and name the methods the argument applies to.
+
+- **`"mc"` estimates unit and time fixed effects outside the nuclear norm.**
+  The S.4 model these fits implemented, `Y = L + e`, leaves the panel's level
+  inside the penalised matrix, so the nuclear norm shrinks it along with the
+  factor structure and the imputed counterfactual is pulled towards zero. On a
+  panel shifted to a level of 20 the ATT came out at +0.230 against a true 2
+  (z = 4.5 over 40 draws). S.8.1 of the same paper keeps unit and time effects
+  out of the penalty -- "we regularize the estimates of L*, but do not wish to
+  regularize the estimates of the fixed effects" -- and MCPanel, the authors'
+  own implementation, estimates them by default. Doing so removes the bias
+  (-0.020, z = -0.4) and cuts RMSE by about 30%. The previous behaviour
+  matched MCPanel with its fixed effects switched off, and the new behaviour
+  matches its default, to within simulation error in both cases.
+
+  `fixedeff = FALSE` recovers the S.4 baseline. The fit gains `fe_unit`,
+  `fe_time` and `L_lowrank`; `L_hat` remains the completed matrix and now
+  includes the fixed effects. `conformal_inference()` refits under whichever
+  model the fit used.
+
+  This also corrects the note published with the cross-validated penalty
+  above: the small-panel upward bias recorded as a known limitation was this
+  misspecification, not a property of nuclear-norm regularisation. The
+  debiasing of Choi & Yuan (2024, Eq. 3.1) was tested against it and only
+  halves it (+0.123, z = 2.5), adding nothing once the fixed effects are in.
 
 ## New features
 

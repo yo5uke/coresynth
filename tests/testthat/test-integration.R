@@ -4949,7 +4949,7 @@ test_that("scm_fit rejects SCM-only arguments given to other methods", {
                        predictors = list(pred("y", 1:3))), "'predictors'")
   expect_error(scm_fit(y ~ d | id + time, data = panel, method = "tasc",
                        nu = 0.5), "'nu'")
-  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "tasc",
                        fixedeff = TRUE), "'fixedeff'")
   expect_error(scm_fit(y ~ d | id + time, data = panel, method = "si",
                        v_optim = "multistart"), "'v_optim'")
@@ -5086,4 +5086,77 @@ test_that("MC cross-validation is reproducible and leaves the RNG alone", {
   set.seed(4242)
   invisible(scm_fit(y ~ d | id + time, data = panel_mc, method = "mc"))
   expect_equal(runif(1), before)
+})
+
+# ── MC: unpenalised two-way fixed effects (Athey et al. 2021, S.8.1) ──────────
+# The S.4 baseline absorbs the panel's level into the penalised matrix L, so the
+# nuclear norm shrinks it along with the factor structure and the imputed
+# counterfactual is pulled towards zero. S.8.1 keeps unit and time effects out
+# of the penalty; MCPanel, the authors' own implementation, estimates them by
+# default (to_estimate_u = to_estimate_v = 1).
+
+.level_panel <- function(seed, level, N = 21, TT = 24, T0 = 16, tau = 2) {
+  set.seed(seed)
+  f <- matrix(rnorm(TT * 2), TT, 2); L <- matrix(rnorm(N * 2), N, 2)
+  Y <- level + f %*% t(L) +
+    matrix(rnorm(N, sd = 3), TT, N, byrow = TRUE) + rnorm(TT, sd = 1) +
+    matrix(rnorm(N * TT, sd = 0.5), TT, N)
+  D <- matrix(0L, TT, N)
+  D[(T0 + 1):TT, 1] <- 1L; Y[(T0 + 1):TT, 1] <- Y[(T0 + 1):TT, 1] + tau
+  data.frame(id = rep(1:N, each = TT), time = rep(1:TT, times = N),
+             y = as.vector(Y), d = as.vector(D))
+}
+
+test_that("MC estimates unpenalised fixed effects by default", {
+  fit <- scm_fit(y ~ d | id + time, data = .level_panel(1, 20), method = "mc")
+  expect_true(fit$fixedeff)
+  expect_length(fit$fe_time, 24L)
+  expect_length(fit$fe_unit, 21L)
+  # L_hat is the completed matrix; the low-rank part is kept separately
+  expect_equal(dim(fit$L_lowrank), dim(fit$L_hat))
+  expect_false(isTRUE(all.equal(fit$L_lowrank, fit$L_hat)))
+  # switching them off returns the S.4 baseline, where L carries the level
+  off <- scm_fit(y ~ d | id + time, data = .level_panel(1, 20), method = "mc",
+                 fixedeff = FALSE)
+  expect_false(off$fixedeff)
+  expect_equal(off$L_lowrank, off$L_hat)
+  expect_false(isTRUE(all.equal(fit$estimate, off$estimate)))
+})
+
+test_that("MC fixed effects remove the level-driven bias", {
+  # A shifted panel is the case the S.4 baseline gets wrong: with the level
+  # inside L the penalty shrinks it and the ATT is biased upwards.
+  bias <- function(fixedeff) {
+    est <- vapply(1:15, function(s)
+      scm_fit(y ~ d | id + time, data = .level_panel(s, 20), method = "mc",
+              fixedeff = fixedeff)$estimate, numeric(1L))
+    mean(est) - 2
+  }
+  b_on  <- bias(TRUE)
+  b_off <- bias(FALSE)
+  expect_lt(abs(b_on), abs(b_off))
+  expect_lt(abs(b_on), 0.1)
+  expect_gt(b_off, 0.1)
+})
+
+test_that("soft_impute_cpp still solves the no-fixed-effect problem", {
+  set.seed(5)
+  Y <- matrix(rnorm(60), 12, 5)
+  O <- matrix(1, 12, 5); O[10:12, 1] <- 0
+  res <- soft_impute_fe_cpp(Y, O, 0.5, estimate_fe = FALSE)
+  expect_equal(soft_impute_cpp(Y, O, 0.5), res$L)
+  expect_equal(res$M, res$L)
+  expect_true(all(res$a == 0) && all(res$b == 0))
+})
+
+test_that("conformal_inference refits MC under the fit's own model", {
+  panel_lv <- .level_panel(2, 20)
+  for (fe in c(TRUE, FALSE)) {
+    fit <- scm_fit(y ~ d | id + time, data = panel_lv, method = "mc",
+                   fixedeff = fe)
+    ci <- conformal_inference(fit, grid = seq(0, 4, by = 1))
+    expect_true(is.finite(ci$p_value))
+    expect_gte(ci$p_value, 0)
+    expect_lte(ci$p_value, 1)
+  }
 })

@@ -18,7 +18,9 @@ scm_fit(
   qp_solver = c("auto", "active_set", "wolfe"),
   v_window = NULL,
   nu = NULL,
-  fixedeff = NULL
+  fixedeff = NULL,
+  pool_cohorts = TRUE,
+  weights = NULL
 )
 }
 \arguments{
@@ -194,6 +196,25 @@ improves fit when outcome levels differ across units. The reported
 \code{Y_synth} is shifted back to the raw outcome scale. Works with both
 the default and the partially pooled path. For \code{method = "scm"} on
 staggered panels only. Default \code{FALSE}.}
+
+\item{pool_cohorts}{For \strong{staggered} \code{method = "scm"}: whether treated
+units sharing an adoption date are averaged into one cohort before the
+pooling problem is solved. \code{TRUE} (default) is the Appendix A.2 hierarchy
+of Ben-Michael, Feller & Rothstein (2022), whose S.4.1 shows there is no
+across-unit variation to exploit within a cohort. \code{FALSE} is their S.4
+formulation, one weight vector per treated unit, which is what
+\code{unit_estimates} and the rank-based permutation test in
+\code{\link[=scm_rank_pval]{scm_rank_pval()}} need. \code{augsynth} makes the unit-level form its default;
+the paper's own appendix does not.}
+
+\item{weights}{Optional named numeric vector over the treated units giving
+the mass each carries in the aggregate ATT, for \code{method = "scm"}. \code{NULL}
+(default) weights them equally, which for a shared adoption date is the
+\code{N_treated * T_post} weighting used throughout. Abadie (2021, S.8) notes
+that with regions or countries a population- or GDP-weighted average
+effect is often the quantity of interest; supply those figures here. A
+staggered fit still multiplies by each cohort's \code{T_post}, and a sharp fit
+makes the pooled target a weighted average of the treated series.}
 }
 \value{
 An object of classes \code{c("coresynth_<method>", "coresynth")}.

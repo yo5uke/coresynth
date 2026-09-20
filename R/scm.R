@@ -53,6 +53,8 @@ fit_scm_cpp <- function(
   scale_predictors = TRUE,
   nu = NULL,
   fixedeff = NULL,
+  pool_cohorts = TRUE,
+  weights = NULL,
   ...
 ) {
   v_selection   <- match.arg(v_selection)
@@ -82,6 +84,11 @@ fit_scm_cpp <- function(
   # alternatives in terms of both overall and unit-level estimates". augsynth,
   # their implementation, therefore defaults to it as well.
   if (is.null(fixedeff)) fixedeff <- !pan$is_sharp
+
+  # Aggregation weights over the treated units (Abadie 2021 S.8: with regions
+  # or countries a population- or GDP-weighted average effect is often the
+  # quantity of interest). Resolved here so both paths see the same vector.
+  agg_w <- .scm_treated_weights(weights, pan)
 
   # The Wolfe solver is wired through the sharp inner QP only. The paths
   # excluded here either run their own solver (the penalised QP and the
@@ -176,11 +183,14 @@ fit_scm_cpp <- function(
         Y_matrix      = Y_work,
         nu            = nu,
         fixedeff      = fixedeff,
-        control_group = control_group
+        control_group = control_group,
+        pool_cohorts  = pool_cohorts,
+        unit_weights  = agg_w
       )
     } else {
       stag <- .fit_scm_staggered(
         pan,
+        unit_weights         = agg_w,
         Y_matrix             = Y_work,
         v_selection          = v_selection,
         v_optim              = v_optim,
@@ -208,7 +218,9 @@ fit_scm_cpp <- function(
       excluded_donors  = character(0L),
       lambda_pen       = NA_real_,
       beta_hat         = beta_hat,
-      covariates       = covariates
+      covariates       = covariates,
+      control_group    = control_group,
+      Y_all            = Y_work   # T x N -- scm_rank_pval() / frontier refits
     )
     return(res)  # class tags are attached by new_coresynth() in scm_fit()
   }
@@ -236,9 +248,14 @@ fit_scm_cpp <- function(
   # same one the staggered path here already takes.
   n_treated  <- length(idx_tr)
   Y_treat_mat <- Y[, idx_tr, drop = FALSE]          # T x n_treated, raw series
-  Y_tr_pre <- if (n_treated == 1L) Y[seq_len(T_pre), idx_tr] else
-    rowMeans(Y_treat_mat[seq_len(T_pre), , drop = FALSE])
-  Y_tr_all <- if (n_treated == 1L) Y[, idx_tr] else rowMeans(Y_treat_mat)
+  # `weights` makes the pooled target a weighted rather than simple average,
+  # which is what carries a population-weighted ATT through the sharp path.
+  w_tr <- if (is.null(agg_w)) rep(1, n_treated) else
+    unname(agg_w[as.character(pan$units[idx_tr])])
+  w_tr <- w_tr / sum(w_tr)
+  Y_tr_all <- if (n_treated == 1L) Y[, idx_tr] else
+    drop(Y_treat_mat %*% w_tr)
+  Y_tr_pre <- Y_tr_all[seq_len(T_pre)]
 
   Y_co_pre <- Y[seq_len(T_pre), idx_co, drop = FALSE]
   Y_co_all <- Y[, idx_co, drop = FALSE]
@@ -532,6 +549,9 @@ fit_scm_cpp <- function(
     # one-column matrix.
     Y_treat_mat     = Y_treat_mat,
     n_treated       = n_treated,
+    treated_weights = if (is.null(agg_w)) NULL
+                      else stats::setNames(w_tr,
+                             as.character(pan$units[idx_tr])),
     idx_tr          = idx_tr,
     gap             = Y_treat - Y_synth,
     times           = pan$times,
@@ -709,6 +729,7 @@ fit_scm_cpp <- function(
 # the level in the reported Y_synth via the closed-form alpha of their Eq. 8.
 .fit_scm_staggered <- function(pan,
                                Y_matrix             = NULL,
+                               unit_weights         = NULL,
                                v_selection          = "insample",
                                v_optim              = "coord_descent",
                                donor_mspe_threshold = Inf,
@@ -874,7 +895,7 @@ fit_scm_cpp <- function(
     stop("All cohort-level SCM fits failed; see the preceding warnings for ",
          "per-cohort reasons.", call. = FALSE)
   }
-  .aggregate_cohorts(cohort_list[valid])
+  .aggregate_cohorts(cohort_list[valid], unit_weights, pan$units)
 }
 
 # -- Internal: partially pooled SCM for staggered adoption -------------------
@@ -895,9 +916,11 @@ fit_scm_cpp <- function(
 # simplex constraints, so BCD converges to the global optimum).
 .fit_scm_staggered_pooled <- function(pan,
                                       Y_matrix      = NULL,
+                                      unit_weights  = NULL,
                                       nu            = "auto",
                                       fixedeff      = FALSE,
                                       control_group = "clean",
+                                      pool_cohorts  = TRUE,
                                       max_sweeps    = 200L,
                                       tol           = 1e-7) {
   # tol is the relative objective-improvement threshold for the BCD loop.
@@ -911,9 +934,23 @@ fit_scm_cpp <- function(
   idx_co  <- pan$idx_control
   cohorts <- sort(unique(T_adopt[idx_tr]))
 
-  # ---- assemble per-cohort blocks in event-time (lag) order ----------------
-  blocks <- lapply(cohorts, function(g) {
-    idx_tr_g <- idx_tr[T_adopt[idx_tr] == g]
+  # A block is what the pooling parameter trades off against the pooled fit.
+  # BFR S.4 makes it a treated unit, with Gamma an N-by-J matrix; their
+  # Appendix A.2 adds a layer that fully pools units sharing an adoption date,
+  # justified in S.4.1 by there being no across-unit variation within a
+  # cohort. pool_cohorts picks between the two, and the solver below is
+  # indifferent: a block is a target series, its donors, and its lag window.
+  block_ids <- if (pool_cohorts) as.list(cohorts) else as.list(idx_tr)
+
+  # ---- assemble blocks in event-time (lag) order ---------------------------
+  blocks <- lapply(block_ids, function(key) {
+    if (pool_cohorts) {
+      g        <- key
+      idx_tr_g <- idx_tr[T_adopt[idx_tr] == g]
+    } else {
+      idx_tr_g <- key
+      g        <- T_adopt[key]
+    }
     T_pre_g  <- g - 1L
     T_post_g <- TT - T_pre_g
 
@@ -925,8 +962,10 @@ fit_scm_cpp <- function(
     }
     if (length(idx_co_g) < 2L || T_pre_g < 2L) {
       warning(sprintf(
-        "SCM staggered: cohort g=%d skipped (T_pre=%d, N_co=%d).",
-        g, T_pre_g, length(idx_co_g)
+        "SCM staggered: %s skipped (T_pre=%d, N_co=%d).",
+        if (pool_cohorts) sprintf("cohort g=%d", g) else
+          sprintf("treated unit %s", as.character(pan$units[idx_tr_g])),
+        T_pre_g, length(idx_co_g)
       ), call. = FALSE)
       return(NULL)
     }
@@ -1049,6 +1088,8 @@ fit_scm_cpp <- function(
     ATT_g     <- mean((bl$Y1_raw - Y_synth_g)[bl$post_rows])
     list(
       cohort          = bl$cohort,
+      unit            = if (length(bl$idx_tr) == 1L)
+        as.character(pan$units[bl$idx_tr]) else NA_character_,
       n_treated       = length(bl$idx_tr),
       T_pre           = bl$T_pre,
       T_post          = bl$T_post,
@@ -1066,11 +1107,12 @@ fit_scm_cpp <- function(
     )
   })
 
-  c(.aggregate_cohorts(r), list(
+  c(.aggregate_cohorts(r, unit_weights, pan$units), list(
     pooling          = list(
       nu              = nu_num,
       nu_heuristic    = nu_heur,
       fixedeff        = fixedeff,
+      pool_cohorts    = pool_cohorts,
       q_sep           = q_sep_of(Gamma),
       q_pool          = q_pool_of(Gamma),
       q_sep_separate  = C_sep,

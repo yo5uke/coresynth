@@ -134,6 +134,23 @@
 #'   pooled into that cohort: S.4.1 of the paper shows the across-unit
 #'   variation that would justify doing otherwise is zero when the adoption
 #'   date is shared.
+#' @param pool_cohorts For **staggered** `method = "scm"`: whether treated
+#'   units sharing an adoption date are averaged into one cohort before the
+#'   pooling problem is solved. `TRUE` (default) is the Appendix A.2 hierarchy
+#'   of Ben-Michael, Feller & Rothstein (2022), whose S.4.1 shows there is no
+#'   across-unit variation to exploit within a cohort. `FALSE` is their S.4
+#'   formulation, one weight vector per treated unit, which is what
+#'   `unit_estimates` and the rank-based permutation test in
+#'   [scm_rank_pval()] need. `augsynth` makes the unit-level form its default;
+#'   the paper's own appendix does not.
+#' @param weights Optional named numeric vector over the treated units giving
+#'   the mass each carries in the aggregate ATT, for `method = "scm"`. `NULL`
+#'   (default) weights them equally, which for a shared adoption date is the
+#'   `N_treated * T_post` weighting used throughout. Abadie (2021, S.8) notes
+#'   that with regions or countries a population- or GDP-weighted average
+#'   effect is often the quantity of interest; supply those figures here. A
+#'   staggered fit still multiplies by each cohort's `T_post`, and a sharp fit
+#'   makes the pooled target a weighted average of the treated series.
 #' @param fixedeff Unpenalised additive level terms. For `method = "mc"` it
 #'   estimates unit and time fixed effects outside the nuclear norm, as in
 #'   Athey et al. (2021, S.8.1), and defaults to `TRUE`; `FALSE` recovers the
@@ -211,7 +228,9 @@ scm_fit <- function(
   qp_solver = c("auto", "active_set", "wolfe"),
   v_window = NULL,
   nu = NULL,
-  fixedeff = NULL
+  fixedeff = NULL,
+  pool_cohorts = TRUE,
+  weights = NULL
 ) {
   v_selection <- match.arg(v_selection)
   v_optim     <- match.arg(v_optim)
@@ -325,6 +344,8 @@ scm_fit <- function(
       v_window = v_window,
       nu = nu,
       fixedeff = fixedeff,
+      pool_cohorts = pool_cohorts,
+      weights = weights,
       ...
     ),
     "sdid" = fit_sdid_cpp(
@@ -371,6 +392,8 @@ scm_fit <- function(
   v_optim              = "scm",
   qp_solver            = "scm",
   nu                   = "scm",
+  pool_cohorts         = "scm",
+  weights              = "scm",
   fixedeff             = c("scm", "mc"),
   covariates           = c("scm", "sdid", "gsc")
 )

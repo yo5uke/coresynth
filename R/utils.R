@@ -162,10 +162,30 @@ panel_to_matrices <- function(y, d, id, time) {
 #' (`N_treated,g * T_post,g`); `weight` is renormalised to sum to one in the
 #' returned table.
 #'
+#' Supplying `unit_weights` replaces the treated-unit count in each block's
+#' weight, so a block contributes `sum(weights of its units) * T_post,g`. This
+#' is how Abadie (2021, S.8) describes reporting a population- or GDP-weighted
+#' average effect, which is often the quantity of interest when the units are
+#' regions or countries.
+#'
 #' @param r List of per-cohort fit lists (already filtered to the valid ones).
+#' @param unit_weights Optional named numeric vector over treated unit labels.
+#' @param unit_labels Optional character vector naming every panel column, so
+#'   each block's `idx_tr` can be matched against `unit_weights`.
 #' @return A list with `estimate`, `cohort_estimates`, and `cohort_fits`.
 #' @noRd
-.aggregate_cohorts <- function(r) {
+.aggregate_cohorts <- function(r, unit_weights = NULL, unit_labels = NULL) {
+  if (!is.null(unit_weights)) {
+    if (is.null(unit_labels))
+      stop("internal: unit_weights needs unit_labels.", call. = FALSE)
+    r <- lapply(r, function(z) {
+      lab <- as.character(unit_labels[z$idx_tr])
+      wt  <- sum(unit_weights[lab])
+      z$weight    <- wt * z$T_post
+      z$unit_mass <- wt
+      z
+    })
+  }
   w   <- vapply(r, `[[`, numeric(1L), "weight")
   tau <- vapply(r, `[[`, numeric(1L), "estimate")
 
@@ -587,4 +607,29 @@ panel_to_tensor <- function(y, d, id, time) {
   )
 
   c(pan, list(arm_levels = arm_levels, idx_by_arm = idx_by_arm))
+}
+
+# Validate and align aggregation weights over the treated units. Abadie (2021)
+# S.8 notes that with aggregate units a population- or GDP-weighted average
+# effect is often the quantity of interest; `weights` supplies that mass.
+# Returned named over the treated units' labels, or NULL for equal weights.
+.scm_treated_weights <- function(weights, pan) {
+  if (is.null(weights)) return(NULL)
+  labs <- as.character(pan$units[pan$idx_treat])
+  if (!is.numeric(weights) || anyNA(weights))
+    stop("`weights` must be a numeric vector without NA values, named over ",
+         "the treated units.", call. = FALSE)
+  if (is.null(names(weights)))
+    stop("`weights` must be named over the treated units (",
+         paste(labs, collapse = ", "), ").", call. = FALSE)
+  missing_lab <- setdiff(labs, names(weights))
+  if (length(missing_lab))
+    stop("`weights` is missing the treated unit(s): ",
+         paste(missing_lab, collapse = ", "), ".", call. = FALSE)
+  w <- weights[labs]
+  if (any(w < 0))
+    stop("`weights` must be non-negative.", call. = FALSE)
+  if (sum(w) <= 0)
+    stop("`weights` must have a positive sum.", call. = FALSE)
+  w
 }

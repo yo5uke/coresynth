@@ -540,6 +540,69 @@ build_predictor_matrices <- function(
   list(X0 = X0, X1 = X1, pred_names = pred_names)
 }
 
+#' Build the covariate balance matrix for partially pooled SCM
+#'
+#' Ben-Michael, Feller & Rothstein (2022, S.5.2) add auxiliary covariates to
+#' the partially pooled problem by *balancing* them alongside the lagged
+#' outcomes, not by partialling them out. Each unit contributes one vector
+#' X_i: the paper takes covariates measured before treatment, and says a
+#' time-varying one enters through "the values at time periods before the
+#' first treatment time T1", so each column here is that covariate's mean
+#' over the periods preceding the earliest adoption.
+#'
+#' The covariates are standardised across units and then multiplied by
+#' `xi_sd`. Squaring inside the imbalance norm turns that factor into the
+#' hyperparameter xi of their Equation (11), which is why the paper can
+#' describe xi as a variance while it is applied here as a standard
+#' deviation.
+#'
+#' @param data        Long-format data frame.
+#' @param id_var,time_var Names of the unit and time columns.
+#' @param covariates  Character vector of covariate column names.
+#' @param units,times Panel unit and time indices, in matrix order.
+#' @param T_pre       Number of periods before the earliest adoption.
+#' @param idx_ref     Column indices of the never-treated units, whose mean and
+#'   standard deviation standardise each covariate.
+#' @param xi_sd       Scale applied after standardising (see above).
+#' @return An N x d numeric matrix, units in rows.
+#' @noRd
+.scm_cov_balance_matrix <- function(data, id_var, time_var, covariates,
+                                    units, times, T_pre, idx_ref, xi_sd) {
+  pre_times <- times[seq_len(T_pre)]
+  rows      <- data[[time_var]] %in% pre_times
+  id_pos    <- match(data[[id_var]], units)
+
+  Z <- vapply(covariates, function(v) {
+    if (!v %in% names(data))
+      stop(sprintf("Covariate '%s' not found in data.", v), call. = FALSE)
+    grp <- split(data[[v]][rows], id_pos[rows])
+    out <- rep(NA_real_, length(units))
+    out[as.integer(names(grp))] <- vapply(grp, mean, numeric(1L), na.rm = TRUE)
+    out
+  }, numeric(length(units)))
+  Z <- matrix(Z, nrow = length(units),
+              dimnames = list(as.character(units), covariates))
+
+  bad <- covariates[colSums(!is.finite(Z)) > 0L]
+  if (length(bad))
+    stop("Covariate(s) with missing pre-treatment values for some units: ",
+         paste(bad, collapse = ", "),
+         ". Balancing needs one value per unit.", call. = FALSE)
+
+  # Standardised on the never-treated units, as `augsynth` does: they are the
+  # pool the weights are drawn from, and their moments do not move with which
+  # units of the panel happen to be treated.
+  ctr <- colMeans(Z[idx_ref, , drop = FALSE])
+  sds <- apply(Z[idx_ref, , drop = FALSE], 2L, stats::sd)
+  flat <- covariates[!is.finite(sds) | sds < 1e-12]
+  if (length(flat))
+    stop("Covariate(s) with no variation across the donor units: ",
+         paste(flat, collapse = ", "),
+         ". A constant cannot be balanced.", call. = FALSE)
+
+  sweep(sweep(Z, 2L, ctr, "-"), 2L, sds / xi_sd, "/")
+}
+
 #' Build a time-varying covariate array for GSC
 #'
 #' Constructs a T x N x p 3D R array suitable for passing to gsc_ife_cpp as an

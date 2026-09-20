@@ -146,6 +146,28 @@ Two further arguments control what the fit is aimed at:
   block's target series, its weight in the pooled objective, and its
   aggregation weight alike.
 
+### Auxiliary covariates
+
+`covariates` partials the covariates out of the outcome before fitting, which
+is the device SDID uses (Clarke et al. 2024, S.2.2). SCM has another option:
+Ben-Michael, Feller & Rothstein (2022, S.5.2) *balance* the covariates
+alongside the lagged outcomes, adding a second imbalance measure to the
+objective weighted against the first by `xi`.
+
+```{r scm-cov-balance, eval=FALSE}
+scm_fit(y ~ d | id + time, data = dat, method = "scm",
+        covariates = c("x1", "x2"), cov_method = "balance")
+```
+
+Each covariate enters as its average over the periods before the earliest
+adoption, standardised on the donor units. `xi` defaults to the paper's rule,
+the sample variance of those units' outcomes before the last adoption date;
+raising it buys covariate balance at the cost of outcome balance, and letting
+it fall to zero recovers the fit without covariates. The balance term needs
+the partially pooled solver, so it cannot be combined with `nu = "separate"`,
+`donor_mspe_threshold`, `lambda_pen` or `v_selection = "oos"`.
+`fit$pooling` then also reports `q_cov_sep` and `q_cov_pool`.
+
 ## Inference under staggered adoption
 
 `sdid_inference()`, `gsc_inference()`, and `si_inference()` all extend to

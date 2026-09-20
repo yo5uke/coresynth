@@ -34,11 +34,23 @@ scm_fit(
 \code{lambda} plus \code{cv_folds}, \code{cv_nlambda} and \code{cv_seed} (\code{"mc"}), \code{r}
 (\code{"gsc"}, \code{"tasc"}), \code{em_iter} and \code{fix_A} (\code{"tasc"}), \code{zeta2} and
 \code{zeta_t} (\code{"sdid"}), \code{k} (\code{"si"}), \code{control_group} (\code{"scm"}, \code{"sdid"},
-\code{"gsc"}, \code{"si"}), and \code{scale_predictors} (\code{"scm"}). A name the chosen
+\code{"gsc"}, \code{"si"}), and \code{scale_predictors}, \code{cov_method} and \code{xi}
+(\code{"scm"}). A name the chosen
 estimator does not take is an error rather than a silently ignored
 argument. Every argument after \code{...} must be named in full: this is what
 lets \code{lambda} reach \code{method = "mc"} instead of partially matching
 \code{lambda_pen}.
+
+\code{cov_method} chooses how \code{covariates} enter a \strong{staggered} \code{"scm"} fit.
+\code{"partial_out"} (default) residualises the outcome on them first, the
+device of Clarke et al. (2024, S.2.2). \code{"balance"} is the formulation of
+Ben-Michael, Feller & Rothstein (2022, S.5.2, Equation 11): each
+covariate's pre-treatment average enters the partially pooled objective
+as a second imbalance measure, weighted against the lagged outcomes by
+\code{xi}. It requires the partially pooled solver, so it cannot be combined
+with \code{nu = "separate"}, \code{donor_mspe_threshold}, \code{lambda_pen} or
+\code{v_selection = "oos"}. \code{xi} defaults to the paper's rule, the sample
+variance of the donor units' outcomes before the last adoption date.
 
 The three tuning parameters that govern model complexity are selected
 from the data when left at their \code{NULL} default, each by the rule its

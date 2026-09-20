@@ -55,12 +55,18 @@ fit_scm_cpp <- function(
   fixedeff = NULL,
   pool_cohorts = TRUE,
   weights = NULL,
+  cov_method = c("partial_out", "balance"),
+  xi = NULL,
   ...
 ) {
   v_selection   <- match.arg(v_selection)
   v_optim       <- match.arg(v_optim)
   qp_solver     <- match.arg(qp_solver)
   control_group <- match.arg(control_group)
+  cov_method    <- match.arg(cov_method)
+  if (!is.null(xi) && (!is.numeric(xi) || length(xi) != 1L ||
+                       !is.finite(xi) || xi <= 0))
+    stop("xi must be NULL or a single positive number.", call. = FALSE)
   if (!is.null(nu) && !identical(nu, "auto") && !identical(nu, "separate") &&
       (!is.numeric(nu) || length(nu) != 1L || nu < 0 || nu > 1)) {
     stop("nu must be NULL, \"auto\", \"separate\", or a single number in ",
@@ -80,6 +86,19 @@ fit_scm_cpp <- function(
       call. = FALSE
     )
   }
+  if (identical(cov_method, "balance") &&
+      (pan$is_sharp || is.null(covariates) || length(covariates) == 0L))
+    stop(
+      "cov_method = 'balance' is the auxiliary-covariate term of ",
+      "Ben-Michael, Feller & Rothstein (2022, S.5.2), which belongs to the ",
+      "partially pooled staggered problem. ",
+      if (pan$is_sharp)
+        paste0("This is a sharp fit: balance covariates through ",
+               "predictors = list(pred(...)) instead.")
+      else "Supply the covariates to balance.",
+      call. = FALSE
+    )
+
   # Covariates enter SCM by being balanced, not by being partialled out:
   # Abadie et al. (2010) S.2.3 put them in the V-weighted predictor distance,
   # and BFR (2022) S.5.2 add a separate xi-weighted balance term, noting in
@@ -173,7 +192,28 @@ fit_scm_cpp <- function(
     use_cov  <- !is.null(covariates) && length(covariates) > 0L && !is.null(data)
     Y_work   <- pan$Y
     beta_hat <- numeric(0)
-    if (use_cov) {
+    Z_bal    <- NULL
+    if (use_cov && identical(cov_method, "balance")) {
+      # BFR S.5.2: balance the covariates alongside the lagged outcomes
+      # rather than residualising the outcome on them. xi weights the two
+      # sides of Eq. (11); the paper sets it to the sample variance of the
+      # never-treated units' outcomes before the last adoption, which is
+      # applied here as the matching standard deviation (see
+      # .scm_cov_balance_matrix()).
+      T_last <- max(pan$T_adopt[pan$idx_treat], na.rm = TRUE)
+      xi_sd  <- if (is.null(xi)) {
+        stats::sd(pan$Y[seq_len(T_last - 1L), pan$idx_control, drop = FALSE])
+      } else {
+        sqrt(xi)
+      }
+      if (!is.finite(xi_sd) || xi_sd <= 0)
+        stop("xi must be a positive number; the default rule returned ",
+             format(xi_sd^2), " from the donor units' pre-treatment ",
+             "outcomes.", call. = FALSE)
+      Z_bal <- .scm_cov_balance_matrix(
+        data, id_var, time_var, covariates, pan$units, pan$times,
+        T_pre = pan$T_pre, idx_ref = pan$idx_control, xi_sd = xi_sd)
+    } else if (use_cov) {
       X_arr    <- build_covariate_array(data, id_var, time_var,
                                        covariates, pan$units, pan$times)
       po       <- .sdid_partial_out_staggered(pan$Y, X_arr, pan)
@@ -186,6 +226,17 @@ fit_scm_cpp <- function(
     # V-selection / donor-filtering / penalty knobs do not reach it.
     pooled_blocked <- !identical(donor_mspe_threshold, Inf) ||
       !is.null(lambda_pen) || v_selection == "oos"
+    if (identical(cov_method, "balance") &&
+        (pooled_blocked || identical(nu, "separate"))) {
+      stop(
+        "cov_method = 'balance' adds the covariate term to the partially ",
+        "pooled objective, so it cannot be combined with nu = 'separate', ",
+        "donor_mspe_threshold, lambda_pen, or v_selection = 'oos', which ",
+        "all send the fit down the per-cohort path. Use the default ",
+        "cov_method = 'partial_out' there.",
+        call. = FALSE
+      )
+    }
     if (!is.null(nu) && !identical(nu, "separate") && pooled_blocked) {
       stop(
         "nu (partially pooled SCM) cannot be combined with ",
@@ -209,6 +260,7 @@ fit_scm_cpp <- function(
         fixedeff      = fixedeff,
         control_group = control_group,
         pool_cohorts  = pool_cohorts,
+        Z             = Z_bal,
         unit_weights  = agg_w
       )
     } else {
@@ -240,6 +292,9 @@ fit_scm_cpp <- function(
       # Rescaled aggregation masses, kept so scm_balance_frontier() can refit
       # the same objective. NULL when the units count equally.
       treated_weights  = agg_w,
+      cov_method       = if (use_cov) cov_method else NA_character_,
+      # The xi-scaled covariate matrix, for the same reason.
+      Z_balance        = Z_bal,
       unit_weights     = NULL,
       v_weights        = NULL,
       # On the partialled-out scale, matching the cohort fits and Y_all, so
@@ -988,6 +1043,7 @@ fit_scm_cpp <- function(
                                       fixedeff      = FALSE,
                                       control_group = "clean",
                                       pool_cohorts  = TRUE,
+                                      Z             = NULL,
                                       max_sweeps    = 200L,
                                       tol           = 1e-7) {
   # tol is the relative objective-improvement threshold for the BCD loop.
@@ -1054,6 +1110,16 @@ fit_scm_cpp <- function(
     # lag l (= 1..T_pre_g) is calendar row T_pre_g + 1 - l, so that lag
     # vectors from different cohorts align in event time for the pooled fit
     lag_rows <- rev(pre_rows)
+    # Covariate balance targets (BFR S.5.2): the block's own covariate vector
+    # is the same weighted average of its treated units the outcome target is.
+    if (is.null(Z)) {
+      bz <- NULL; Xz <- NULL
+    } else {
+      wz <- blk$masses / blk$mass
+      bz <- drop(crossprod(Z[idx_tr_g, , drop = FALSE], wz))
+      Xz <- t(Z[idx_co_g, , drop = FALSE])        # d x N_co_g
+    }
+
     list(
       cohort = g, idx_tr = idx_tr_g, idx_co = idx_co_g,
       mass = blk$mass, masses = blk$masses,
@@ -1061,7 +1127,8 @@ fit_scm_cpp <- function(
       pre_rows = pre_rows, post_rows = post_rows,
       Y1_raw = Y1_raw, Y_co_raw = Y_co_raw,
       b = Y1_fit[lag_rows],                       # length T_pre_g
-      X = Y_co_fit[lag_rows, , drop = FALSE]      # T_pre_g x N_co_g
+      X = Y_co_fit[lag_rows, , drop = FALSE],     # T_pre_g x N_co_g
+      bz = bz, Xz = Xz                            # d, d x N_co_g
     )
   })
   blocks <- blocks[!vapply(blocks, is.null, logical(1L))]
@@ -1081,16 +1148,16 @@ fit_scm_cpp <- function(
   # and the mass as a multiplier is the same objective, and keeps Y_synth and
   # ATT_g on the outcome's own scale for reporting.
   m_g  <- vapply(blocks, `[[`, numeric(1L), "mass")
-
-  # ---- separate SCM baseline (nu = 0; also the normalisation constants) ----
-  # The mass cancels out of each block's own least-squares problem, so the
-  # separate solution does not depend on it.
-  Gamma <- lapply(blocks, function(bl) {
-    as.numeric(solve_simplex_qp(crossprod(bl$X), crossprod(bl$X, bl$b)))
-  })
+  # Auxiliary covariates enter as a second imbalance measure alongside the
+  # lagged outcomes (BFR S.5.2, Eq. 11), on the same J blocks and with the
+  # same masses; xi is already folded into Z's scale.
+  use_z <- !is.null(Z)
+  dz    <- if (use_z) ncol(Z) else 0L
 
   block_gap <- function(Gamma, j)
     blocks[[j]]$b - as.numeric(blocks[[j]]$X %*% Gamma[[j]])
+  block_gap_z <- function(Gamma, j)
+    blocks[[j]]$bz - as.numeric(blocks[[j]]$Xz %*% Gamma[[j]])
 
   # q^{pool,cohort} of Appendix A.2: the mass-weighted average gap at each
   # event-time lag, zero-padded past a block's own window, over max_g L_g.
@@ -1102,17 +1169,51 @@ fit_scm_cpp <- function(
     }
     P
   }
+  pooled_gap_z <- function(Gamma) {
+    if (!use_z) return(numeric(0L))
+    Reduce(`+`, lapply(seq_len(J),
+                       function(j) m_g[j] * block_gap_z(Gamma, j) / J))
+  }
   # L2 norms of the (unweighted) per-block gaps; the mass enters where they
   # are used, so this stays the plain imbalance of each block's own fit.
   sep_norms <- function(Gamma)
     vapply(seq_len(J), function(j) sqrt(sum(block_gap(Gamma, j)^2)),
            numeric(1L))
+  sep_norms_z <- function(Gamma) {
+    if (!use_z) return(numeric(J))
+    vapply(seq_len(J), function(j) sqrt(sum(block_gap_z(Gamma, j)^2)),
+           numeric(1L))
+  }
   # q^{sep,cohort} squares the block SUM, hence the mass squared.
-  q_sep_of  <- function(Gamma) sqrt(mean(m_g^2 * sep_norms(Gamma)^2 / L_g))
-  q_pool_of <- function(Gamma) sqrt(mean(pooled_gap(Gamma)^2))
+  q_sep_of    <- function(Gamma) sqrt(mean(m_g^2 * sep_norms(Gamma)^2 / L_g))
+  q_pool_of   <- function(Gamma) sqrt(mean(pooled_gap(Gamma)^2))
+  q_sep_z_of  <- function(Gamma)
+    if (!use_z) 0 else sqrt(mean(m_g^2 * sep_norms_z(Gamma)^2 / dz))
+  q_pool_z_of <- function(Gamma)
+    if (!use_z) 0 else sqrt(mean(pooled_gap_z(Gamma)^2))
+  # Footnote 7: both normalisation constants are the COMBINED measure at the
+  # nu = 0 solution, and both parts of each side are divided by it.
+  comb_sep  <- function(Gamma) q_sep_of(Gamma)^2  + q_sep_z_of(Gamma)^2
+  comb_pool <- function(Gamma) q_pool_of(Gamma)^2 + q_pool_z_of(Gamma)^2
 
-  C_sep  <- q_sep_of(Gamma)
-  C_pool <- q_pool_of(Gamma)
+  # ---- separate SCM baseline (nu = 0; also the normalisation constants) ----
+  # Without covariates the mass cancels out of each block's own least-squares
+  # problem. With them the nu = 0 objective is the combined sep measure of
+  # footnote 7, whose block terms carry m_j^2 / L_j and m_j^2 / dz, so the
+  # relative weight of the two parts depends on the block after all.
+  Gamma <- lapply(seq_len(J), function(j) {
+    bl <- blocks[[j]]
+    Q  <- crossprod(bl$X) / L_g[j]
+    cv <- as.numeric(crossprod(bl$X, bl$b)) / L_g[j]
+    if (use_z) {
+      Q  <- Q  + crossprod(bl$Xz) / dz
+      cv <- cv + as.numeric(crossprod(bl$Xz, bl$bz)) / dz
+    }
+    as.numeric(solve_simplex_qp(Q, cv))
+  })
+
+  C_sep  <- sqrt(comb_sep(Gamma))
+  C_pool <- sqrt(comb_pool(Gamma))
 
   # Heuristic nu (BFR S.4.2, p.367): the ratio of the pooled fit of separate
   # SCM to its average block-level fit,
@@ -1128,10 +1229,15 @@ fit_scm_cpp <- function(
   sweeps_used <- 0L
   if (nu_num > 0 && C_pool > .Machine$double.eps &&
       C_sep > .Machine$double.eps) {
-    A_pool <- nu_num / (C_pool^2 * L)
-    P      <- pooled_gap(Gamma)
+    A_pool   <- nu_num / (C_pool^2 * L)
+    A_pool_z <- if (use_z) nu_num / (C_pool^2 * dz) else 0
+    P        <- pooled_gap(Gamma)
+    P_z      <- pooled_gap_z(Gamma)
     XtX_l  <- lapply(blocks, function(bl) crossprod(bl$X))
     Xtb_l  <- lapply(blocks, function(bl) as.numeric(crossprod(bl$X, bl$b)))
+    ZtZ_l  <- if (use_z) lapply(blocks, function(bl) crossprod(bl$Xz))
+    Ztb_l  <- if (use_z) lapply(blocks,
+                               function(bl) as.numeric(crossprod(bl$Xz, bl$bz)))
     obj_prev <- Inf
     for (s in seq_len(max_sweeps)) {
       obj_sep <- 0
@@ -1147,6 +1253,17 @@ fit_scm_cpp <- function(
         Q     <- 2 * (A_pool * mj^2 / J^2 + A_sep) * XtX_l[[j]]
         cvec  <- 2 * (A_pool * mj / J * as.numeric(crossprod(bl$X, u)) +
                         A_sep * Xtb_l[[j]])
+        if (use_z) {
+          # the covariate side of the same two terms
+          gz      <- bl$bz - as.numeric(bl$Xz %*% Gamma[[j]])
+          R_z     <- P_z - mj * gz / J
+          A_sep_z <- (1 - nu_num) * mj^2 / (C_sep^2 * J * dz)
+          u_z     <- R_z + mj * bl$bz / J
+          Q       <- Q + 2 * (A_pool_z * mj^2 / J^2 + A_sep_z) * ZtZ_l[[j]]
+          cvec    <- cvec +
+            2 * (A_pool_z * mj / J * as.numeric(crossprod(bl$Xz, u_z)) +
+                   A_sep_z * Ztb_l[[j]])
+        }
         # warm start from the previous block solution: successive sweeps
         # resolve near-identical QPs, so FISTA converges in a few iterations
         w_new <- as.numeric(solve_simplex_qp(Q, cvec, x0 = Gamma[[j]]))
@@ -1154,8 +1271,14 @@ fit_scm_cpp <- function(
         gap_new <- bl$b - as.numeric(bl$X %*% w_new)
         P[seq_len(lg)] <- R + mj * gap_new / J
         obj_sep <- obj_sep + A_sep * sum(gap_new^2)
+        if (use_z) {
+          gz_new  <- bl$bz - as.numeric(bl$Xz %*% w_new)
+          P_z     <- R_z + mj * gz_new / J
+          obj_sep <- obj_sep + A_sep_z * sum(gz_new^2)
+        }
       }
       obj <- A_pool * sum(P^2) + obj_sep
+      if (use_z) obj <- obj + A_pool_z * sum(P_z^2)
       sweeps_used <- s
       if (obj_prev - obj < tol * max(obj_prev, .Machine$double.eps)) break
       obj_prev <- obj
@@ -1208,8 +1331,13 @@ fit_scm_cpp <- function(
       pool_cohorts    = pool_cohorts,
       q_sep           = q_sep_of(Gamma),
       q_pool          = q_pool_of(Gamma),
+      # Footnote 7's constants are the combined measure, so with covariates
+      # they are not the outcome imbalance of the nu = 0 solution alone.
       q_sep_separate  = C_sep,
       q_pool_separate = C_pool,
+      q_cov_sep       = if (use_z) q_sep_z_of(Gamma)  else NULL,
+      q_cov_pool      = if (use_z) q_pool_z_of(Gamma) else NULL,
+      n_covariates    = dz,
       sweeps          = sweeps_used
     )
   ))

@@ -88,6 +88,9 @@ scm_balance_frontier <- function(fit, nu_grid = seq(0, 1, length.out = 11L)) {
       # The block masses are part of the objective, so a frontier drawn
       # without them would not be the frontier the fit sits on.
       unit_weights  = fit$treated_weights,
+      # A fit that balances covariates is traced on the objective that
+      # includes them; without this the curve would be another estimator's.
+      Z             = fit$Z_balance,
       fixedeff      = isTRUE(fit$pooling$fixedeff),
       control_group = fit$control_group %||% "clean",
       pool_cohorts  = fit$pooling$pool_cohorts %||% TRUE)

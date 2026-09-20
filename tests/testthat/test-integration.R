@@ -5599,6 +5599,79 @@ test_that("conformal_inference refuses a fit missing its tuning parameter", {
   }
 })
 
+test_that("cov_method = 'balance' adds the covariate term of BFR Eq. (11)", {
+  # S.5.2 balances the covariates alongside the lagged outcomes instead of
+  # residualising the outcome on them, weighting the two sides by xi.
+  set.seed(4)
+  stag <- .bfr_panel(c(9, 9, 13, 17))
+  stag$x1 <- rnorm(nrow(stag)) + stag$id / 6
+  stag$x2 <- rnorm(nrow(stag)) - stag$id / 9
+  ff <- function(...) scm_fit(y ~ d | id + time, data = stag,
+                              method = "scm", ...)
+
+  plain <- ff()
+  bal   <- ff(covariates = c("x1", "x2"), cov_method = "balance")
+  expect_equal(bal$pooling$n_covariates, 2L)
+  expect_true(is.finite(bal$pooling$q_cov_sep))
+  expect_true(is.finite(bal$pooling$q_cov_pool))
+  # partial_out leaves no covariate balance behind, and is still the default
+  expect_null(ff(covariates = c("x1", "x2"))$pooling$q_cov_sep)
+
+  # xi -> 0 removes the covariate side, so the fit collapses onto the
+  # outcomes-only one at a rate linear in xi
+  errs <- vapply(c(1e-4, 1e-8, 1e-12), function(xi) {
+    abs(ff(covariates = c("x1", "x2"), cov_method = "balance",
+           xi = xi)$estimate - plain$estimate)
+  }, numeric(1L))
+  expect_true(all(diff(errs) < 0))
+  expect_lt(errs[3L], 1e-9)
+
+  # raising xi buys covariate balance at the cost of outcome balance
+  Z <- vapply(c("x1", "x2"), function(v)
+    tapply(stag[[v]][stag$time <= 8], stag$id[stag$time <= 8], mean),
+    numeric(length(unique(stag$id))))
+  cov_imbalance <- function(f) {
+    mean(vapply(f$cohort_fits, function(cf)
+      sum((colMeans(Z[cf$idx_tr, , drop = FALSE]) -
+             drop(crossprod(Z[cf$idx_co, , drop = FALSE],
+                            cf$unit_weights)))^2), numeric(1L)))
+  }
+  low  <- ff(covariates = c("x1", "x2"), cov_method = "balance", xi = 1e-8)
+  high <- ff(covariates = c("x1", "x2"), cov_method = "balance", xi = 50)
+  expect_lt(cov_imbalance(high), cov_imbalance(low))
+  expect_gt(high$pooling$q_sep, low$pooling$q_sep)
+
+  # the frontier traces the objective the fit actually used
+  fr <- scm_balance_frontier(bal, nu_grid = c(0, 0.5, 1))
+  expect_equal(nrow(fr), 3L)
+  expect_true(all(is.finite(fr$q_sep)))
+})
+
+test_that("cov_method = 'balance' is refused where its solver cannot go", {
+  set.seed(4)
+  stag <- .bfr_panel(c(9, 13, 17))
+  stag$x1 <- rnorm(nrow(stag)) + stag$id / 6
+  sharp <- .bfr_panel(c(11, 11))
+  sharp$x1 <- rnorm(nrow(sharp)) + sharp$id / 6
+
+  for (extra in list(list(nu = "separate"), list(lambda_pen = 0.1),
+                     list(v_selection = "oos"),
+                     list(donor_mspe_threshold = 5))) {
+    args <- c(list(y ~ d | id + time, data = stag, method = "scm",
+                   covariates = "x1", cov_method = "balance"), extra)
+    expect_error(do.call(scm_fit, args), "partially pooled objective",
+                 info = names(extra))
+  }
+  expect_error(scm_fit(y ~ d | id + time, data = sharp, method = "scm",
+                       covariates = "x1", cov_method = "balance"),
+               "sharp fit")
+  expect_error(scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                       cov_method = "balance"), "covariates to balance")
+  expect_error(scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                       covariates = "x1", cov_method = "balance", xi = -1),
+               "positive number")
+})
+
 test_that("the frontier is traced on the weighted objective", {
   panel_st <- .bfr_panel(c(9, 9, 13, 17))
   fit <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",

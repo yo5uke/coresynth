@@ -191,11 +191,23 @@
 #'   `lambda` plus `cv_folds`, `cv_nlambda` and `cv_seed` (`"mc"`), `r`
 #'   (`"gsc"`, `"tasc"`), `em_iter` and `fix_A` (`"tasc"`), `zeta2` and
 #'   `zeta_t` (`"sdid"`), `k` (`"si"`), `control_group` (`"scm"`, `"sdid"`,
-#'   `"gsc"`, `"si"`), and `scale_predictors` (`"scm"`). A name the chosen
+#'   `"gsc"`, `"si"`), and `scale_predictors`, `cov_method` and `xi`
+#'   (`"scm"`). A name the chosen
 #'   estimator does not take is an error rather than a silently ignored
 #'   argument. Every argument after `...` must be named in full: this is what
 #'   lets `lambda` reach `method = "mc"` instead of partially matching
 #'   `lambda_pen`.
+#'
+#'   `cov_method` chooses how `covariates` enter a **staggered** `"scm"` fit.
+#'   `"partial_out"` (default) residualises the outcome on them first, the
+#'   device of Clarke et al. (2024, S.2.2). `"balance"` is the formulation of
+#'   Ben-Michael, Feller & Rothstein (2022, S.5.2, Equation 11): each
+#'   covariate's pre-treatment average enters the partially pooled objective
+#'   as a second imbalance measure, weighted against the lagged outcomes by
+#'   `xi`. It requires the partially pooled solver, so it cannot be combined
+#'   with `nu = "separate"`, `donor_mspe_threshold`, `lambda_pen` or
+#'   `v_selection = "oos"`. `xi` defaults to the paper's rule, the sample
+#'   variance of the donor units' outcomes before the last adoption date.
 #'
 #'   The three tuning parameters that govern model complexity are selected
 #'   from the data when left at their `NULL` default, each by the rule its

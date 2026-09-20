@@ -334,6 +334,38 @@
   estimates, weights, and treatment windows. Multi-arm SI fits show the
   cohort-arm table on the same terms.
 
+- **`cov_method = "balance"` fits the auxiliary-covariate form of staggered
+  SCM** (Ben-Michael, Feller & Rothstein 2022, S.5.2, Equation 11). Every SCM
+  paper handles covariates by balancing them -- Abadie, Diamond & Hainmueller
+  put them in the V-weighted predictor distance, and BFR note in S.4 that
+  "where Abadie et al. (2010, 2015) balance auxiliary covariates, we focus
+  exclusively on lagged outcomes" before reintroducing them this way.
+  Partialling out, which is what `covariates` has always done here, is the
+  device of Clarke et al. (2024, S.2.2) that SDID needs because it has
+  nothing to balance with; staggered SCM borrowed it only because
+  `predictors` is unavailable on that path.
+
+  Each covariate's pre-treatment average now enters the partially pooled
+  objective as a second imbalance measure, pooled and per-block like the
+  lagged outcomes and carrying the same cohort masses, with `xi` weighting
+  the two sides. `xi` defaults to the paper's rule, the sample variance of
+  the donor units' outcomes before the last adoption date; both normalisation
+  constants are the combined measure at the `nu = 0` solution, as their
+  footnote 7 defines. `fit$pooling` gains `q_cov_sep`, `q_cov_pool` and
+  `n_covariates`, and `scm_balance_frontier()` traces the objective including
+  them.
+
+  It needs the partially pooled solver, so it is refused alongside
+  `nu = "separate"`, `donor_mspe_threshold`, `lambda_pen` and
+  `v_selection = "oos"` rather than falling back silently. `"partial_out"`
+  remains the default, so no existing fit changes.
+
+  As `xi` falls to zero the fit collapses onto the outcomes-only one at a
+  rate linear in `xi`, which is the check that the covariate side reduces
+  exactly to the existing path; raising it trades outcome balance for
+  covariate balance monotonically, which is the trade-off the equation
+  describes.
+
 ## Bug fixes
 
 - **A staggered fit with `covariates` reports its treated series on the scale

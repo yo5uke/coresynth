@@ -124,7 +124,12 @@
 #'   outcomes-only and cannot be combined with `donor_mspe_threshold`,
 #'   `lambda_pen`, or `v_selection = "oos"`. Balance diagnostics are stored
 #'   in `fit$pooling`. For `method = "scm"` on staggered panels only.
-#' @param fixedeff If `TRUE`, staggered SCM demeans every unit by its own
+#' @param fixedeff Unpenalised additive level terms. For `method = "mc"` it
+#'   estimates unit and time fixed effects outside the nuclear norm, as in
+#'   Athey et al. (2021, S.8.1), and defaults to `TRUE`; `FALSE` recovers the
+#'   S.4 baseline where the level is absorbed into the penalised matrix.
+#'   For `method = "scm"` it defaults to `FALSE` and means the following.
+#'   If `TRUE`, staggered SCM demeans every unit by its own
 #'   pre-treatment mean within each cohort before fitting (intercept shift;
 #'   Ben-Michael, Feller & Rothstein 2022, Section 5.1), which turns the
 #'   estimator into a weighted difference-in-differences and typically
@@ -194,7 +199,7 @@ scm_fit <- function(
   qp_solver = c("auto", "active_set", "wolfe"),
   v_window = NULL,
   nu = NULL,
-  fixedeff = FALSE
+  fixedeff = NULL
 ) {
   v_selection <- match.arg(v_selection)
   v_optim     <- match.arg(v_optim)
@@ -307,7 +312,7 @@ scm_fit <- function(
       qp_solver = qp_solver,
       v_window = v_window,
       nu = nu,
-      fixedeff = fixedeff,
+      fixedeff = isTRUE(fixedeff),
       ...
     ),
     "sdid" = fit_sdid_cpp(
@@ -329,7 +334,8 @@ scm_fit <- function(
       covariates = covariates,
       ...
     ),
-    "mc" = fit_mc_cpp(y, d, id, time, ...),
+    "mc" = fit_mc_cpp(y, d, id, time,
+                      fixedeff = fixedeff %||% TRUE, ...),
     "tasc" = fit_tasc_cpp(y, d, id, time, ...),
     "si" = fit_si_cpp(y, d, id, time, ...),
     stop(paste0("Unknown method: '", method, "'"))
@@ -353,7 +359,7 @@ scm_fit <- function(
   v_optim              = "scm",
   qp_solver            = "scm",
   nu                   = "scm",
-  fixedeff             = "scm",
+  fixedeff             = c("scm", "mc"),
   covariates           = c("scm", "sdid", "gsc")
 )
 

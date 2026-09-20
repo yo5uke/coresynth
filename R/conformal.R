@@ -70,7 +70,10 @@
   M <- cbind(Yco, y1)                       # T x (N_co + 1), treated last
   O <- matrix(1.0, nrow = TT, ncol = N_co + 1L)  # fully observed under null
   lambda <- fit$lambda %||% (0.01 * svd(M, nu = 0, nv = 0)$d[1])
-  L <- soft_impute_cpp(M, O, lambda)
+  # Refit under the same model the fit used: leaving the fixed effects out
+  # here would score the null against a differently specified counterfactual.
+  L <- soft_impute_fe_cpp(M, O, lambda,
+                          estimate_fe = isTRUE(fit$fixedeff %||% FALSE))$M
   drop(L[, N_co + 1L])
 }
 

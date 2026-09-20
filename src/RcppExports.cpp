@@ -76,6 +76,23 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// soft_impute_fe_cpp
+Rcpp::List soft_impute_fe_cpp(const arma::mat& Y, const arma::mat& O, double lambda, bool estimate_fe, int max_iter, double tol, int fe_sweeps);
+RcppExport SEXP _coresynth_soft_impute_fe_cpp(SEXP YSEXP, SEXP OSEXP, SEXP lambdaSEXP, SEXP estimate_feSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP fe_sweepsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Y(YSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type O(OSEXP);
+    Rcpp::traits::input_parameter< double >::type lambda(lambdaSEXP);
+    Rcpp::traits::input_parameter< bool >::type estimate_fe(estimate_feSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type fe_sweeps(fe_sweepsSEXP);
+    rcpp_result_gen = Rcpp::wrap(soft_impute_fe_cpp(Y, O, lambda, estimate_fe, max_iter, tol, fe_sweeps));
+    return rcpp_result_gen;
+END_RCPP
+}
 // soft_impute_cpp
 arma::mat soft_impute_cpp(const arma::mat& Y, const arma::mat& O, double lambda, int max_iter, double tol);
 RcppExport SEXP _coresynth_soft_impute_cpp(SEXP YSEXP, SEXP OSEXP, SEXP lambdaSEXP, SEXP max_iterSEXP, SEXP tolSEXP) {
@@ -244,6 +261,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_coresynth_sdid_placebo_cpp", (DL_FUNC) &_coresynth_sdid_placebo_cpp, 4},
     {"_coresynth_scm_placebo_cpp", (DL_FUNC) &_coresynth_scm_placebo_cpp, 6},
     {"_coresynth_scm_placebo_x_cpp", (DL_FUNC) &_coresynth_scm_placebo_x_cpp, 8},
+    {"_coresynth_soft_impute_fe_cpp", (DL_FUNC) &_coresynth_soft_impute_fe_cpp, 7},
     {"_coresynth_soft_impute_cpp", (DL_FUNC) &_coresynth_soft_impute_cpp, 5},
     {"_coresynth_proj_simplex", (DL_FUNC) &_coresynth_proj_simplex, 1},
     {"_coresynth_solve_simplex_qp", (DL_FUNC) &_coresynth_solve_simplex_qp, 5},

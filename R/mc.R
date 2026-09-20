@@ -13,6 +13,9 @@
 #' @param cv_nlambda Length of the candidate penalty path.
 #' @param cv_seed Seed for the fold draw, so the selected penalty is
 #'   reproducible without consuming the caller's RNG state.
+#' @param fixedeff Estimate unpenalised unit and time fixed effects alongside
+#'   the low-rank matrix (Athey et al. 2021, S.8.1). `FALSE` recovers the
+#'   S.4 baseline model `Y = L + e`.
 #' @return A list of class `coresynth`.
 #' @noRd
 # ── Internal: Athey et al. (2021) S.4 -- cross-validate the nuclear norm penalty
@@ -26,7 +29,8 @@
 #
 # The path runs from the spectral norm of the (masked) panel, which shrinks
 # everything to zero, down towards zero, which fits the observed cells exactly.
-.mc_cv_lambda <- function(Y_obs, O, n_folds = 5L, n_lambda = 20L, seed = 1L) {
+.mc_cv_lambda <- function(Y_obs, O, n_folds = 5L, n_lambda = 20L, seed = 1L,
+                          fixedeff = TRUE) {
   obs_idx <- which(O > 0)
   n_obs   <- length(obs_idx)
   n_cell  <- length(O)
@@ -61,10 +65,11 @@
     if (length(held) == 0L) next
 
     for (i in seq_along(lambdas)) {
-      L_i <- tryCatch(soft_impute_cpp(Y_obs, O_k, lambdas[i]),
-                      error = function(e) NULL)
-      if (is.null(L_i)) next
-      err[k, i] <- mean((Y_obs[held] - L_i[held])^2)
+      M_i <- tryCatch(
+        soft_impute_fe_cpp(Y_obs, O_k, lambdas[i], estimate_fe = fixedeff)$M,
+        error = function(e) NULL)
+      if (is.null(M_i)) next
+      err[k, i] <- mean((Y_obs[held] - M_i[held])^2)
     }
   }
 
@@ -74,7 +79,8 @@
 }
 
 fit_mc_cpp <- function(y, d, id, time, lambda = NULL,
-                       cv_folds = 5L, cv_nlambda = 20L, cv_seed = 1L, ...) {
+                       cv_folds = 5L, cv_nlambda = 20L, cv_seed = 1L,
+                       fixedeff = TRUE, ...) {
   pan <- panel_to_matrices(y, d, id, time)
   Y   <- pan$Y; T_pre <- pan$T_pre
   idx_tr <- pan$idx_treat; idx_co <- pan$idx_control
@@ -100,12 +106,14 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL,
   lambda_cv <- FALSE
   if (is.null(lambda)) {
     lambda <- .mc_cv_lambda(Y_obs, O, n_folds = cv_folds,
-                            n_lambda = cv_nlambda, seed = cv_seed)
+                            n_lambda = cv_nlambda, seed = cv_seed,
+                            fixedeff = fixedeff)
     lambda_cv <- !is.null(lambda)
     if (!lambda_cv) lambda <- 0.01 * svd(Y_obs, nu = 0, nv = 0)$d[1L]
   }
 
-  L_hat <- soft_impute_cpp(Y_obs, O, lambda)
+  mc  <- soft_impute_fe_cpp(Y_obs, O, lambda, estimate_fe = fixedeff)
+  L_hat <- mc$M   # completed matrix: low-rank part plus the fixed effects
 
   Y_treat <- Y[, idx_tr, drop = FALSE]
   Y_hat   <- L_hat[, idx_tr, drop = FALSE]
@@ -132,7 +140,11 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL,
     method       = "mc",
     lambda       = lambda,
     lambda_cv    = lambda_cv,
+    fixedeff     = fixedeff,
     L_hat        = L_hat,
+    L_lowrank    = mc$L,
+    fe_time      = as.numeric(mc$a),
+    fe_unit      = as.numeric(mc$b),
     Y_hat        = Y_hat,
     Y_treat      = Y_treat,
     gap          = gap,

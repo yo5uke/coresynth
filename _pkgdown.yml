@@ -103,4 +103,5 @@ reference:
   - si_pcr_cpp
   - tensor_unfold_cpp
   - soft_impute_cpp
+  - soft_impute_fe_cpp
   - kalman_smoother_cpp

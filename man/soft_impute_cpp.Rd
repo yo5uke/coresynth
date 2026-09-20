@@ -7,9 +7,9 @@
 soft_impute_cpp(Y, O, lambda, max_iter = 1000L, tol = 1e-05)
 }
 \arguments{
-\item{Y}{Observed outcome matrix (N x T). Unobserved entries should be 0.}
+\item{Y}{Observed outcome matrix (T x N). Unobserved entries should be 0.}
 
-\item{O}{Binary mask matrix (N x T): 1 = observed, 0 = missing (treated post).}
+\item{O}{Binary mask matrix (T x N): 1 = observed, 0 = missing (treated post).}
 
 \item{lambda}{Nuclear norm penalty (soft-threshold on singular values).}
 
@@ -18,12 +18,15 @@ soft_impute_cpp(Y, O, lambda, max_iter = 1000L, tol = 1e-05)
 \item{tol}{Convergence tolerance (relative Frobenius norm change).}
 }
 \value{
-A numeric matrix of the same dimension as \code{Y} (N x T): the
+A numeric matrix of the same dimension as \code{Y} (T x N): the
 completed low-rank matrix \code{L} that minimises the soft-thresholded
 nuclear-norm objective.
 }
 \description{
 Solves: min_L (1/2) ||O o (Y - L)||\emph{F^2 + lambda * ||L||}*
 via iterative SVD soft-thresholding (Mazumder, Hastie, Tibshirani 2010).
-Note: lambda is NOT normalized by |O|. Default lambda = 0.01 * sigma_max(Y).
+Note: lambda is NOT normalized by |O|.
+}
+\details{
+This is \code{\link[=soft_impute_fe_cpp]{soft_impute_fe_cpp()}} with the fixed effects switched off.
 }

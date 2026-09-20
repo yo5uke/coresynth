@@ -117,18 +117,53 @@ scm_placebo_x_cpp <- function(X0, Y_pre, Y_post, max_iter = 100L, tol = 1e-4, z_
     .Call(`_coresynth_scm_placebo_x_cpp`, X0, Y_pre, Y_post, max_iter, tol, z_rows, multistart, wolfe)
 }
 
+#' Matrix Completion with Optional Two-Way Fixed Effects
+#'
+#' Solves
+#'   `min over L, a, b of (1/2) * squaredFrobenius(O o (Y - L - a1' - 1b')) + lambda * nuclearNorm(L)`
+#' by alternating a back-fitting update of the fixed effects with one
+#' soft-thresholded SVD step for `L` (Mazumder, Hastie & Tibshirani 2010).
+#'
+#' The row and column effects are the unpenalised fixed effects of Athey et
+#' al. (2021, S.8.1): "we regularize the estimates of L*, but do not wish to
+#' regularize the estimates of the fixed effects". Leaving them inside `L`
+#' shrinks the panel's level towards zero along with its factor structure,
+#' which biases the imputed counterfactual whenever the level is far from
+#' zero. `estimate_fe = false` reproduces the S.4 baseline model `Y = L + e`.
+#'
+#' Both effects absorb an additive constant, so `a` and `b` are identified
+#' only up to a shift between them; their sum, which is what enters the
+#' completed matrix, is unaffected.
+#'
+#' @param Y       Observed outcome matrix (T x N). Unobserved entries should be 0.
+#' @param O       Binary mask matrix (T x N): 1 = observed, 0 = missing (treated post).
+#' @param lambda  Nuclear norm penalty (soft-threshold on singular values).
+#' @param estimate_fe Estimate unpenalised row and column effects.
+#' @param max_iter Maximum iterations.
+#' @param tol     Convergence tolerance (relative Frobenius norm change).
+#' @param fe_sweeps Back-fitting sweeps per iteration. The mask makes the two
+#'   effects non-orthogonal, so one closed-form pass does not solve for both.
+#' @return A list with `L` (the penalised low-rank part), `a` (row effects),
+#'   `b` (column effects), and `M`, the completed matrix `L + a 1' + 1 b'`.
+#' @export
+soft_impute_fe_cpp <- function(Y, O, lambda, estimate_fe = TRUE, max_iter = 1000L, tol = 1e-5, fe_sweeps = 5L) {
+    .Call(`_coresynth_soft_impute_fe_cpp`, Y, O, lambda, estimate_fe, max_iter, tol, fe_sweeps)
+}
+
 #' Fast Matrix Completion using Soft-Impute Algorithm
 #'
 #' Solves: min_L (1/2) ||O o (Y - L)||_F^2 + lambda * ||L||_*
 #' via iterative SVD soft-thresholding (Mazumder, Hastie, Tibshirani 2010).
-#' Note: lambda is NOT normalized by |O|. Default lambda = 0.01 * sigma_max(Y).
+#' Note: lambda is NOT normalized by |O|.
 #'
-#' @param Y       Observed outcome matrix (N x T). Unobserved entries should be 0.
-#' @param O       Binary mask matrix (N x T): 1 = observed, 0 = missing (treated post).
+#' This is [soft_impute_fe_cpp()] with the fixed effects switched off.
+#'
+#' @param Y       Observed outcome matrix (T x N). Unobserved entries should be 0.
+#' @param O       Binary mask matrix (T x N): 1 = observed, 0 = missing (treated post).
 #' @param lambda  Nuclear norm penalty (soft-threshold on singular values).
 #' @param max_iter Maximum iterations.
 #' @param tol     Convergence tolerance (relative Frobenius norm change).
-#' @return A numeric matrix of the same dimension as `Y` (N x T): the
+#' @return A numeric matrix of the same dimension as `Y` (T x N): the
 #'   completed low-rank matrix `L` that minimises the soft-thresholded
 #'   nuclear-norm objective.
 #' @export

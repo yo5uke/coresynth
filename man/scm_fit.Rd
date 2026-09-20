@@ -18,7 +18,7 @@ scm_fit(
   qp_solver = c("auto", "active_set", "wolfe"),
   v_window = NULL,
   nu = NULL,
-  fixedeff = FALSE
+  fixedeff = NULL
 )
 }
 \arguments{
@@ -169,7 +169,12 @@ outcomes-only and cannot be combined with \code{donor_mspe_threshold},
 \code{lambda_pen}, or \code{v_selection = "oos"}. Balance diagnostics are stored
 in \code{fit$pooling}. For \code{method = "scm"} on staggered panels only.}
 
-\item{fixedeff}{If \code{TRUE}, staggered SCM demeans every unit by its own
+\item{fixedeff}{Unpenalised additive level terms. For \code{method = "mc"} it
+estimates unit and time fixed effects outside the nuclear norm, as in
+Athey et al. (2021, S.8.1), and defaults to \code{TRUE}; \code{FALSE} recovers the
+S.4 baseline where the level is absorbed into the penalised matrix.
+For \code{method = "scm"} it defaults to \code{FALSE} and means the following.
+If \code{TRUE}, staggered SCM demeans every unit by its own
 pre-treatment mean within each cohort before fitting (intercept shift;
 Ben-Michael, Feller & Rothstein 2022, Section 5.1), which turns the
 estimator into a weighted difference-in-differences and typically

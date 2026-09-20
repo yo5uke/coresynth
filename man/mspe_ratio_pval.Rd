@@ -10,7 +10,9 @@ mspe_ratio_pval(
   max_iter = 100L,
   tol = 1e-04,
   use_covariates = NULL,
-  alternative = c("two.sided", "greater", "less")
+  alternative = c("two.sided", "greater", "less"),
+  mspe_prune = Inf,
+  statistic = c("ratio", "post_mspe")
 )
 }
 \arguments{
@@ -42,6 +44,24 @@ logic of the permutation test.}
 \code{"greater"} tests whether the treatment increased the outcome;
 \code{"less"} tests whether the treatment decreased the outcome.
 One-sided tests use the signed ATT as the test statistic.}
+
+\item{mspe_prune}{Discard placebo runs whose pre-treatment MSPE exceeds
+this multiple of the treated unit's, following Abadie, Diamond &
+Hainmueller (2010, Figures 5-7), who use 20, 5 and 2. A run the synthetic
+control could not fit before treatment carries no information about how
+rare a large post-treatment gap is, so leaving it in the permutation
+distribution only adds noise. \code{Inf} (default) keeps every run. This is a
+different control from \code{mspe_threshold}, which is a floor guarding the
+ratio's denominator against near-zero pre-treatment MSPE.}
+
+\item{statistic}{Which quantity to rank, for two-sided tests.
+\code{"ratio"} (default) is the post/pre MSPE ratio of Abadie, Diamond &
+Hainmueller (2010, Figure 8), whose denominator adjusts for how well each
+unit was fitted and so needs no cutoff. \code{"post_mspe"} is the alternative
+of Abadie (2021, S.3.5): rank the post-treatment MSPE itself, having
+discarded the ill-fitting runs through \code{mspe_prune}. Pair it with a
+finite \code{mspe_prune}; without one, placebo runs that were never fitted
+dominate the distribution.}
 }
 \value{
 An object of class \code{scm_placebo} (a list) with:
@@ -52,6 +72,8 @@ An object of class \code{scm_placebo} (a list) with:
 \item \code{placebo_effects}: Named N_co-vector of placebo ATT estimates
 \item \code{treated_effect}: ATT estimate for the treated unit
 \item \code{n_placebo_used}: Number of control units used
+\item \code{n_placebo_pruned}: Number discarded by \code{mspe_prune}
+\item \code{mspe_prune}, \code{statistic}: the settings the p-value was computed under
 \item \code{gaps}: T x N_co matrix of placebo gap paths (unit minus its synthetic
 control over all periods), for the Abadie et al. (2010) Figure 4-7 plot
 \item \code{treated_gap}: T-vector of the treated unit's gap path

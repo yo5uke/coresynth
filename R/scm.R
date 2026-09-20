@@ -1308,6 +1308,22 @@ scm_inference <- function(fit,
 #'   `"greater"` tests whether the treatment increased the outcome;
 #'   `"less"` tests whether the treatment decreased the outcome.
 #'   One-sided tests use the signed ATT as the test statistic.
+#' @param mspe_prune Discard placebo runs whose pre-treatment MSPE exceeds
+#'   this multiple of the treated unit's, following Abadie, Diamond &
+#'   Hainmueller (2010, Figures 5-7), who use 20, 5 and 2. A run the synthetic
+#'   control could not fit before treatment carries no information about how
+#'   rare a large post-treatment gap is, so leaving it in the permutation
+#'   distribution only adds noise. `Inf` (default) keeps every run. This is a
+#'   different control from `mspe_threshold`, which is a floor guarding the
+#'   ratio's denominator against near-zero pre-treatment MSPE.
+#' @param statistic Which quantity to rank, for two-sided tests.
+#'   `"ratio"` (default) is the post/pre MSPE ratio of Abadie, Diamond &
+#'   Hainmueller (2010, Figure 8), whose denominator adjusts for how well each
+#'   unit was fitted and so needs no cutoff. `"post_mspe"` is the alternative
+#'   of Abadie (2021, S.3.5): rank the post-treatment MSPE itself, having
+#'   discarded the ill-fitting runs through `mspe_prune`. Pair it with a
+#'   finite `mspe_prune`; without one, placebo runs that were never fitted
+#'   dominate the distribution.
 #' @return An object of class `scm_placebo` (a list) with:
 #'   * `p_value`: Permutation p-value between 0 and 1
 #'   * `mspe_ratio_treated`: MSPE_post / MSPE_pre for the treated unit (two.sided only)
@@ -1315,6 +1331,8 @@ scm_inference <- function(fit,
 #'   * `placebo_effects`: Named N_co-vector of placebo ATT estimates
 #'   * `treated_effect`: ATT estimate for the treated unit
 #'   * `n_placebo_used`: Number of control units used
+#'   * `n_placebo_pruned`: Number discarded by `mspe_prune`
+#'   * `mspe_prune`, `statistic`: the settings the p-value was computed under
 #'   * `gaps`: T x N_co matrix of placebo gap paths (unit minus its synthetic
 #'     control over all periods), for the Abadie et al. (2010) Figure 4-7 plot
 #'   * `treated_gap`: T-vector of the treated unit's gap path
@@ -1329,9 +1347,20 @@ mspe_ratio_pval <- function(
   max_iter = 100L,
   tol = 1e-4,
   use_covariates = NULL,
-  alternative = c("two.sided", "greater", "less")
+  alternative = c("two.sided", "greater", "less"),
+  mspe_prune = Inf,
+  statistic = c("ratio", "post_mspe")
 ) {
   alternative <- match.arg(alternative)
+  statistic   <- match.arg(statistic)
+  if (!is.numeric(mspe_prune) || length(mspe_prune) != 1L ||
+      is.na(mspe_prune) || mspe_prune <= 0)
+    stop("`mspe_prune` must be a single positive number (Inf keeps every ",
+         "placebo run).", call. = FALSE)
+  if (identical(statistic, "post_mspe") && !identical(alternative, "two.sided"))
+    stop("statistic = 'post_mspe' measures the size of the post-treatment ",
+         "gap, so it has no direction; use alternative = 'two.sided', or ",
+         "statistic = 'ratio' for a one-sided test.", call. = FALSE)
   if (!inherits(fit, "coresynth_scm")) {
     stop("mspe_ratio_pval() requires a coresynth object with method = 'scm'.")
   }
@@ -1420,8 +1449,9 @@ mspe_ratio_pval <- function(
     ratios_co <- ifelse(keep, plac$mspe_post / plac$mspe_pre, NA_real_)
     co_effects <- plac$effects
     # Armadillo vectors come back as N_co x 1 matrices; flatten for naming
-    mspe_pre_co <- as.numeric(plac$mspe_pre)
-    gaps_mat    <- plac$gaps
+    mspe_pre_co  <- as.numeric(plac$mspe_pre)
+    mspe_post_co <- as.numeric(plac$mspe_post)
+    gaps_mat     <- plac$gaps
   }
 
   co_names <- colnames(fit$Y_co_pre)
@@ -1434,21 +1464,47 @@ mspe_ratio_pval <- function(
 
   treated_effect <- fit$estimate
 
+  # Abadie, Diamond & Hainmueller (2010) Figures 5-7: a placebo run that could
+  # not be fitted before treatment says nothing about how rare a large
+  # post-treatment gap is, so runs whose pre-treatment MSPE exceeds
+  # `mspe_prune` times the treated unit's are dropped from the permutation
+  # distribution. Their Figures use 20, 5 and 2.
+  pruned <- is.finite(mspe_pre_co) &
+    mspe_pre_co <= mspe_prune * mspe_pre_tr
+  n_pruned <- sum(!pruned, na.rm = TRUE)
+  if (is.finite(mspe_prune) && !any(pruned))
+    stop("mspe_prune = ", mspe_prune, " discards every placebo run; the ",
+         "treated unit's pre-treatment MSPE is ",
+         formatC(mspe_pre_tr, format = "g", digits = 3),
+         " and the best placebo's is ",
+         formatC(min(mspe_pre_co, na.rm = TRUE), format = "g", digits = 3),
+         ". Raise the cutoff.", call. = FALSE)
+
   if (alternative == "two.sided") {
+    if (statistic == "post_mspe") {
+      # Abadie (2021) S.3.5: with ill-fitting runs discarded, rank the
+      # post-treatment fit itself rather than its ratio to the pre-treatment
+      # fit, which is what the ratio statistic uses the denominator for.
+      all_stats <- c(treated = mspe_post_tr, mspe_post_co)
+      keep_stat <- c(TRUE, pruned)
+    } else {
+      all_stats <- c(treated = ratio_tr, ratios_co)
+      keep_stat <- c(TRUE, keep & pruned)
+    }
+    valid   <- keep_stat & !is.na(all_stats)
+    p_value <- mean(all_stats[valid] >= all_stats[["treated"]], na.rm = TRUE)
+    n_used  <- sum(valid[-1L], na.rm = TRUE)
     all_ratios <- c(treated = ratio_tr, ratios_co)
-    valid      <- !is.na(all_ratios)
-    p_value    <- mean(all_ratios[valid] >= all_ratios["treated"], na.rm = TRUE)
-    n_used     <- sum(keep, na.rm = TRUE)
   } else {
     all_effects <- c(treated = treated_effect, co_effects)
-    valid       <- !is.na(all_effects)
+    valid       <- c(TRUE, pruned) & !is.na(all_effects)
     if (alternative == "greater") {
-      p_value <- mean(all_effects[valid] >= all_effects["treated"], na.rm = TRUE)
+      p_value <- mean(all_effects[valid] >= all_effects[["treated"]], na.rm = TRUE)
     } else {
-      p_value <- mean(all_effects[valid] <= all_effects["treated"], na.rm = TRUE)
+      p_value <- mean(all_effects[valid] <= all_effects[["treated"]], na.rm = TRUE)
     }
     all_ratios <- c(treated = ratio_tr, ratios_co)
-    n_used     <- sum(!is.na(co_effects))
+    n_used     <- sum(valid[-1L], na.rm = TRUE)
   }
 
   structure(
@@ -1463,6 +1519,11 @@ mspe_ratio_pval <- function(
       treated_gap        = as.numeric(fit$gap %||% (fit$Y_treat - fit$Y_synth)),
       mspe_pre_treated   = mspe_pre_tr,
       mspe_pre_placebo   = mspe_pre_co,
+      mspe_post_treated  = mspe_post_tr,
+      mspe_post_placebo  = mspe_post_co,
+      mspe_prune         = mspe_prune,
+      n_placebo_pruned   = n_pruned,
+      statistic          = statistic,
       times              = fit$times,
       T_pre              = T_pre,
       alternative        = alternative

@@ -46,6 +46,9 @@ reference:
   contents:
   - conformal_inference
   - mspe_ratio_pval
+  - scm_rank_pval
+  - scm_balance_frontier
+  - plot.scm_frontier
   - scm_inference
   - sdid_inference
   - gsc_boot

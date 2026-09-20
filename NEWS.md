@@ -58,6 +58,55 @@
   fit previously passed its sharp-only guard unnoticed and returned a p-value
   computed against a single global treatment date.
 
+- **`method = "scm"` now fits panels where several units adopt at the same
+  date, instead of erroring.** `scm_fit()` refused any sharp panel with more
+  than one treated unit, while the *same* units with adoption dates one period
+  apart went down the staggered path and fitted without complaint. Simultaneous
+  adoption is one cohort, and S.4.1 of Ben-Michael, Feller & Rothstein (2022)
+  shows that the across-unit variation putting unit-level fits into the ATT
+  error bound vanishes when the adoption date is shared, so the bound is
+  minimised by pooling those units: one synthetic control for their average.
+  That is the step their Appendix A.2 hierarchy already takes within each
+  cohort, and the one the staggered path here already took.
+
+  The fit reports the treated average in `Y_treat` and keeps the raw per-unit
+  series in `Y_treat_mat`, alongside `n_treated`. Donor weights stay a single
+  simplex vector, so `predictors`, `v_window`, `lambda_pen`,
+  `v_selection = "oos"`, `plot()`, `placebo_in_time()`, `loo_donors()` and
+  `augment_scm()` all work as they do for one treated unit.
+
+  `mspe_ratio_pval()` does not, and now says so. It compares the treated unit
+  against placebo runs on single donors, and an average of several treated
+  units is less noisy than any one donor, which inflates its pre/post MSPE
+  ratio. Simulated under no treatment effect, the test rejected at 28% with
+  three pooled units and 53% with six, against a nominal 10%.
+
+- **Staggered `"scm"` defaults to the pooling heuristic and the intercept
+  shift.** `nu` defaulted to separate per-cohort SCM and `fixedeff` to
+  `FALSE`. Ben-Michael, Feller & Rothstein argue against exactly that
+  combination: separate SCM is "unlikely to yield good results" (abstract),
+  S.4.2 advises against values of `nu` near 0 or 1, and S.6 reports that the
+  intercept-shifted estimator "dominates either of the alternatives". Their
+  own implementation, `augsynth`, defaults to both. So **staggered SCM
+  estimates change**; `nu = "separate"` and `fixedeff = FALSE` restore the old
+  behaviour, and `nu` gained `"separate"` as a name for the older per-cohort
+  path so that `0` can mean what it means in the paper.
+
+  Reproducing their S.6 design -- 49 units, 39 periods, selection into
+  treatment through the unit effects, about 20 treated units, a sharp null --
+  bears this out. Under the two-way fixed effects model the heuristic
+  improved on separate SCM in bias, MAD and RMSE (MAD 0.0395 against 0.0413);
+  under the factor model full pooling was much worse than the heuristic (MAD
+  0.1492 against 0.0607), as the paper reports. The gain depends on selection
+  into treatment: in a panel where treatment is assigned at random the
+  heuristic is the worse choice, which is worth knowing before reaching for
+  it.
+
+  The default falls back to `"separate"` where the pooled solver cannot go
+  (`donor_mspe_threshold`, `lambda_pen`, `v_selection = "oos"`); naming a
+  numeric `nu` there is still an error. The heuristic itself was checked
+  against `augsynth` and agrees to three or four decimal places.
+
 - **`qp_solver` now defaults to `"auto"`, which is the Wolfe solver wherever
   it is wired.** The inner SCM problem projects the treated unit onto the
   convex hull of the donor columns in predictor space, so by Caratheodory's

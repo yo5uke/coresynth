@@ -4173,7 +4173,10 @@ test_that("Phase 33: pooling diagnostics are stored and consistent", {
   fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm", nu = 0.5)
   p <- fit$pooling
   expect_equal(p$nu, 0.5)
-  expect_true(p$fixedeff == FALSE)
+  # staggered SCM now carries the intercept shift by default (BFR S.5.1)
+  expect_true(p$fixedeff)
+  expect_false(scm_fit(y ~ d | id + time, data = staggered, method = "scm",
+                       nu = 0.5, fixedeff = FALSE)$pooling$fixedeff)
   expect_true(all(is.finite(c(p$q_sep, p$q_pool,
                               p$q_sep_separate, p$q_pool_separate))))
   # pooling can only improve the pooled fit relative to separate SCM
@@ -5159,4 +5162,93 @@ test_that("conformal_inference refits MC under the fit's own model", {
     expect_gte(ci$p_value, 0)
     expect_lte(ci$p_value, 1)
   }
+})
+
+# ── SCM: adoption patterns and their defaults ────────────────────────────────
+# Four patterns, by how many adoption dates the panel has and how many treated
+# units share one. Each gets the default the literature supports, and `nu` is
+# the single knob that overrides it.
+
+.adopt_panel <- function(adopt, N = 25, TT = 20, tau = 2, seed = 3) {
+  set.seed(seed)
+  f <- matrix(rnorm(TT * 2), TT, 2); L <- matrix(rnorm(N * 2), N, 2)
+  Y <- f %*% t(L) + matrix(rnorm(N * TT, sd = 0.3), TT, N)
+  D <- matrix(0L, TT, N)
+  for (k in seq_along(adopt)) {
+    t0 <- adopt[k]; D[t0:TT, k] <- 1L; Y[t0:TT, k] <- Y[t0:TT, k] + tau
+  }
+  data.frame(id = rep(1:N, each = TT), time = rep(1:TT, times = N),
+             y = as.vector(Y), d = as.vector(D))
+}
+
+test_that("simultaneous adoption by several units fits one pooled cohort", {
+  # BFR S.4.1: with a shared adoption date the across-unit variation that puts
+  # unit-level fits into the ATT error bound is zero, so the bound is minimised
+  # by fully pooling the treated units.
+  fit <- scm_fit(y ~ d | id + time, data = .adopt_panel(c(11, 11, 11)),
+                 method = "scm")
+  expect_s3_class(fit, "coresynth_scm")
+  expect_false(inherits(fit, "coresynth_staggered"))
+  expect_equal(fit$n_treated, 3L)
+  expect_true(is.finite(fit$estimate))
+  # the fitted series is the treated average; the raw series are kept beside it
+  expect_length(fit$Y_treat, 20L)
+  expect_equal(dim(fit$Y_treat_mat), c(20L, 3L))
+  expect_equal(unname(fit$Y_treat), unname(rowMeans(fit$Y_treat_mat)))
+  # donor weights remain a single interpretable simplex vector
+  expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-6)
+})
+
+test_that("a single treated unit is unchanged by the pooling path", {
+  fit <- scm_fit(y ~ d | id + time, data = .adopt_panel(11), method = "scm")
+  expect_equal(fit$n_treated, 1L)
+  expect_equal(dim(fit$Y_treat_mat), c(20L, 1L))
+  expect_equal(unname(fit$Y_treat), as.numeric(fit$Y_treat_mat))
+  expect_error(scm_fit(y ~ d | id + time, data = .adopt_panel(11),
+                       method = "scm", nu = 0.5), "staggered")
+})
+
+test_that("mspe_ratio_pval refuses a fit that pools several treated units", {
+  # Measured under no treatment effect, the test rejected at 28% (3 pooled
+  # units) and 53% (6) against a nominal 10%: the averaged treated series is
+  # less noisy than the single donors it is compared against.
+  fit <- scm_fit(y ~ d | id + time, data = .adopt_panel(c(11, 11, 11)),
+                 method = "scm")
+  expect_error(mspe_ratio_pval(fit), "not valid")
+  # one treated unit is still fine
+  ok <- scm_fit(y ~ d | id + time, data = .adopt_panel(11), method = "scm")
+  expect_s3_class(mspe_ratio_pval(ok), "scm_placebo")
+})
+
+test_that("staggered SCM defaults to the BFR heuristic and intercept shift", {
+  stag <- .adopt_panel(c(9, 12, 15))
+  fit  <- scm_fit(y ~ d | id + time, data = stag, method = "scm")
+  expect_equal(fit$pooling$nu, fit$pooling$nu_heuristic)
+  expect_gt(fit$pooling$nu, 0)
+  expect_true(fit$pooling$fixedeff)
+
+  # nu = "separate" opts back into the per-cohort V-optimised path
+  sep <- scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                 nu = "separate")
+  expect_null(sep$pooling)
+  expect_false(isTRUE(all.equal(fit$estimate, sep$estimate)))
+  # nu = 0 is the same estimator reached through the pooled solver, so the
+  # two agree up to the solvers' own tolerances rather than exactly
+  expect_equal(scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                       nu = 0, fixedeff = FALSE)$estimate,
+               scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                       nu = "separate", fixedeff = FALSE)$estimate,
+               tolerance = 1e-3)
+})
+
+test_that("the staggered default falls back where the pooled solver cannot go", {
+  stag <- .adopt_panel(c(9, 12, 15))
+  # these knobs belong to the per-cohort path, so the default must not error
+  expect_null(scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                      lambda_pen = 0.1)$pooling)
+  expect_null(scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                      v_selection = "oos")$pooling)
+  # asking for pooling explicitly there is still an error
+  expect_error(scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                       nu = 0.5, lambda_pen = 0.1), "cannot be combined")
 })

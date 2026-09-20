@@ -14,7 +14,19 @@ $$Y_{it}^{(0)} = \delta_t + \theta_t Z_i + \lambda_t \mu_i + \varepsilon_{it}$$
 
 **Augmented SCM**（`augment_scm()`、Ben-Michael, Feller & Rothstein 2021, JASA）: sharp SCM fit（`coresynth_scm`）に対するリッジ回帰バイアス補正。ドナー横断のリッジ回帰で事後期間平均を予測するアウトカムモデル `beta_hat` を推定し、`tau_aug = tau_SCM + (m_tr_post - sum_j W_j * m_j_post)` で SCM の事前期間フィット不足を補正する。ペナルティ `lambda_ridge` は既定でコントロールユニット横断の LOO-CV により選択する。staggered SCM の partially pooled fit（2022, JRSS-B）とは別の拡張であり、両者を混同しない。
 
-**Staggered**: `predictors = NULL` 限定（`covariates` の partial-out のみ対応）。理論根拠は Ben-Michael, Feller & Rothstein (2022, JRSS-B)。原著 SCM は単一処置ユニット前提のため、staggered 拡張はこの論文に依拠する — コホート内平均（完全プーリング）は同一採用時点内で DGP 異質性項が消えることから正当化される。コホート間は `nu = NULL`（既定、per-cohort 独立 V 最適化）または `nu ∈ [0,1]` / `"auto"` の **partially pooled SCM**（コホート横断の pooled 目的と各コホート separate 目的を ν で線形結合、全コホートの重みを同時最適化）。`fixedeff = TRUE` で intercept shift（各ユニットを自身のプリ平均でデミーンした weighted DiD 形式；報告される `Y_synth` はこの shift を戻した生スケール）。
+**採用パターンと既定**（BFR 2022 = `papers/Ben-Michael_et_al._2022`。ファイル名 `_2021` は Augmented SCM の別論文なので混同しない）:
+
+| コホート数 | コホート内ユニット数 | 経路 | 既定 |
+|---|---|---|---|
+| 1 | 1 | sharp | 通常の SCM |
+| 1 | 複数 | sharp | **コホート内フルプーリング**（処置ユニットを平均して SC 1 本） |
+| 複数 | 任意 | staggered | `nu = "auto"` + `fixedeff = TRUE` |
+
+**同時採用の複数ユニットを平均する根拠は S.4.1**: 「ユニット別適合が ATT 誤差限界に効くのはユニット横断の変動を通じてのみ。同時採用では T1=…=TJ ゆえ S_ρ=S_k=0 なので、誤差限界は ν=1 で最小化される」。S.5.1 の Appendix A.2 階層（コホート内は完全プーリング、コホート間は部分プーリング）と同じ操作。`Y_treat` は平均系列、生の per-unit 系列は `Y_treat_mat`（T×n_treated、staggered の cohort_fits と同名）。`n_treated > 1` では **`mspe_ratio_pval()` を明示エラー**にする — 平均系列は単独ドナーより低ノイズなので比率が過大になり、**帰無で名目 10% に対し棄却率 28%（3 ユニット）・53%（6 ユニット）**と実測済み。
+
+**staggered の既定は `nu = "auto"` / `fixedeff = TRUE`**（v1.0.0 で変更、旧既定は separate / FALSE）。BFR は要旨で separate SCM を「良い結果を生みそうにない」と述べ、S.4.2 で ν を 0 や 1 に近づけないよう勧める。参照実装 augsynth も `nu = NULL` → ヒューリスティック計算、`fixedeff = TRUE` が既定。**ヒューリスティックは augsynth と 6 seed で 3〜4 桁一致を確認済み**。S.6 の設計（N=49・T=39・**処置への選択** π_i=logit(θ0+θ1·unit_i)・処置ユニット約 20・sharp null）を再現すると論文の主張が再現する（two-way FE: separate bias −0.0068/MAD 0.0413 → auto −0.0039/0.0395、factor: ν=1 の MAD 0.1492 が auto 0.0607 より大幅に悪い）。**選択を入れない DGP では auto が separate に劣る**ので、再現実験を書くときは selection を必ず入れること。
+
+`nu = "separate"` は旧 per-cohort 経路（V 最適化・ドナー filtering つき）。`donor_mspe_threshold`/`lambda_pen`/`v_selection="oos"` 併用時は既定が自動で `"separate"` にフォールバックする（明示の数値 ν はエラーのまま）。`predictors = NULL` 限定（`covariates` の partial-out のみ対応）。`fixedeff` は各ユニットを自身のプリ平均でデミーンした weighted DiD 形式；報告される `Y_synth` はこの shift を戻した生スケール。
 
 ## 内側 QP・外側最適化
 

@@ -121,6 +121,16 @@ scoring table in `fit$r_cv`. With covariates the full EM algorithm is used
 (E-step SVD, M-step ridge OLS), and `fit$beta` holds the covariate
 coefficients.
 
+The model fitted is `Y_it(0) = x_it'beta + lambda_i'f_t + e_it`, with no
+additive unit or time effects beside the factors -- the counterpart of
+`force = "none"` in `gsynth`, whose own default adds a unit effect. A unit or
+time effect is a factor with a constant loading, so the factor structure
+absorbs it once `r` is large enough, and the cross-validation picks `r`
+accordingly: on a panel built from two factors *plus* unit and time effects
+it selects `r = 4` and recovers the treatment effect. Estimates from this
+estimator do move with `r` on panels where the factor structure is weak,
+which is what `fit$r_cv` is there to show.
+
 ```{r gsc}
 fit_gsc <- scm_fit(y ~ d | id + time, data = dat, method = "gsc",
                    r = 2, covariates = "x")

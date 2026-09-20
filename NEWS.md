@@ -70,16 +70,21 @@
   cohort, and the one the staggered path here already took.
 
   The fit reports the treated average in `Y_treat` and keeps the raw per-unit
-  series in `Y_treat_mat`, alongside `n_treated`. Donor weights stay a single
+  series in `Y_treat_mat`, alongside `n_treated`, which `print()`, `summary()`,
+  `glance()` and `export_json()` all report. Donor weights stay a single
   simplex vector, so `predictors`, `v_window`, `lambda_pen`,
   `v_selection = "oos"`, `plot()`, `placebo_in_time()`, `loo_donors()` and
-  `augment_scm()` all work as they do for one treated unit.
+  `augment_scm()` all work as they do for one treated unit. Each `pred()` row
+  of the treated predictor vector is the average over the pooled units, under
+  the same weights the outcome rows are pooled with, so the predictor and
+  outcome sides describe one target series rather than two.
 
-  `mspe_ratio_pval()` does not, and now says so. It compares the treated unit
-  against placebo runs on single donors, and an average of several treated
-  units is less noisy than any one donor, which inflates its pre/post MSPE
-  ratio. Simulated under no treatment effect, the test rejected at 28% with
-  three pooled units and 53% with six, against a nominal 10%.
+  `mspe_ratio_pval()` does not, and now says so, pointing at `scm_rank_pval()`
+  below. It compares the treated unit against placebo runs on single donors,
+  and an average of several treated units is less noisy than any one donor,
+  which inflates its pre/post MSPE ratio. Simulated under no treatment effect,
+  the test rejected at 28% with three pooled units and 53% with six, against a
+  nominal 10%.
 
 - **Staggered `"scm"` defaults to the pooling heuristic and the intercept
   shift.** `nu` defaulted to separate per-cohort SCM and `fixedeff` to
@@ -155,6 +160,73 @@
   `fixedeff` with `"tasc"`, `control_group` with either — or simply
   misspelled, was absorbed by `...` and changed nothing about the fit that
   came back. These now error and name the methods the argument applies to.
+
+- **Sharp `method = "scm"` rejects `covariates` instead of ignoring it.** The
+  partial-out ran inside the staggered branch only, so on a single-cohort
+  panel the argument reached the fit function, was never read, and returned an
+  estimate identical to the one without it -- the same silent no-op the
+  argument check above was added to stop, one level deeper. It is not an
+  oversight that SCM has no partial-out: SCM balances covariates rather than
+  residualising them. Abadie, Diamond & Hainmueller (2010, S.2.3) put them in
+  the V-weighted predictor distance, and Ben-Michael, Feller & Rothstein
+  (2022, S.5.2) add a separate balance term with its own weight, noting in
+  S.4 that "where Abadie et al. (2010, 2015) balance auxiliary covariates, we
+  focus exclusively on lagged outcomes". Partialling out is the device of
+  Clarke et al. (2024, S.2.2), which SDID needs because it has nothing to
+  balance with.
+
+  A sharp fit does have something: `predictors = list(pred("x", <pre-treatment
+  times>, "mean"))` balances a covariate on its pre-treatment aggregate, which
+  is how BFR carry a time-varying covariate into the balance problem too. The
+  error names that route. Staggered SCM keeps the partial-out, because
+  `predictors` is unavailable there.
+
+- **`pool_cohorts` now takes effect on the per-cohort staggered path.** It was
+  read only by the partially pooled solver, so `pool_cohorts = FALSE` was
+  silently discarded whenever the fit went down the `nu = "separate"` path --
+  including the automatic fallback that `donor_mspe_threshold`, `lambda_pen`
+  and `v_selection = "oos"` trigger. The fit then carried cohort-level blocks
+  the caller had asked not to have, and `scm_rank_pval()`, which needs one
+  synthetic control per treated unit, rejected it with a message telling the
+  caller to pass the argument they had just passed. Both staggered paths now
+  build their blocks the same way, and `fit$pool_cohorts` records it.
+  Sharp fits reject the argument, as they already did `nu` and `fixedeff`.
+
+- **Partially pooled staggered SCM weights each cohort by its size.** The two
+  imbalance measures `nu` trades off, and the heuristic that sets it, treated
+  every cohort as equally important however many units it held. Appendix A.2
+  of Ben-Michael, Feller & Rothstein (2022) -- the hierarchy that pools units
+  sharing an adoption date, which is what `pool_cohorts = TRUE` implements --
+  writes the cohort problem on the *sum* over the cohort's units: its target
+  is `sum_i 1{T_i = T(g)} Y_i` and its weights satisfy `sum_i gamma_ig = n_g`.
+  A cohort's residual is therefore `n_g` times its mean gap, so a cohort of
+  `n_g` units counts `n_g` times towards the pooled imbalance and `n_g^2`
+  towards the separate one. Weighting them all equally is neither, and it is
+  also not what the fit aggregates with, since the cohort ATTs combine with
+  the `N_treated,g * T_post,g` weights of Clarke et al. (2024).
+
+  **Staggered `"scm"` estimates change where the cohorts differ in size.**
+  Panels whose cohorts are all the same size, and panels with one treated unit
+  per adoption date, are unaffected -- the weighting is a common factor there,
+  and the objective is normalised. `augsynth`, the authors' implementation,
+  already followed the appendix; on a panel with cohorts of 1 and 4 its
+  heuristic returned 0.94114 where this one returned 0.93563, and it now
+  returns 0.94113. Across three further panels with cohorts of 1, 2 and 8 the
+  two now agree to four decimal places, where they previously differed by as
+  much as 0.025.
+
+- **`weights` now reaches the objective, not just the aggregation.** A
+  staggered fit multiplied the supplied mass into each cohort's aggregation
+  weight while still fitting its weights to the *unweighted* average of that
+  cohort's treated units, so with unequal weights inside one cohort the
+  reported ATT was neither the equally weighted quantity nor the weighted one.
+  The mass now sets the block's target series, its weight in the partially
+  pooled objective, and its `T_post`-multiplied aggregation weight alike, and
+  `scm_inference()` resamples each treated unit at its own mass rather than
+  splitting the block's evenly. `scm_balance_frontier()` refits on the same
+  weighted objective, where it previously ignored `weights` entirely.
+  **Staggered `"scm"` estimates change when `weights` is supplied**; equal
+  weights reproduce the unweighted fit exactly.
 
 - **`"mc"` estimates unit and time fixed effects outside the nuclear norm.**
   The S.4 model these fits implemented, `Y = L + e`, leaves the panel's level

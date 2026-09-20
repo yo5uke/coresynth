@@ -57,7 +57,11 @@ glance.coresynth <- function(x, ...) {
   T_pre   <- x$T_pre %||% NA_integer_
   T_post  <- if (is.finite(T_all) && is.finite(T_pre)) T_all - T_pre else NA_integer_
 
-  n_treated <- if (!is.null(x$Y_treat) && is.matrix(x$Y_treat)) {
+  # A sharp SCM fit pooling several treated units reports their average in
+  # Y_treat, so the column count understates it; n_treated records the truth.
+  n_treated <- if (!is.null(x$n_treated)) {
+    as.integer(x$n_treated)
+  } else if (!is.null(x$Y_treat) && is.matrix(x$Y_treat)) {
     ncol(x$Y_treat)
   } else if (!is.null(x$Y_treat)) {
     1L

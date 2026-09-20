@@ -47,9 +47,11 @@ with independent golden-ratio two-point multipliers (mean 0, variance 1)
 while donor weights and outcomes are kept fixed.
 }
 \details{
-Works with both staggered SCM paths (\code{nu = NULL} legacy and the
-partially pooled path) and honours the cohort aggregation weights
-\verb{N_treated x T_post}. For intercept-shifted fits (\code{fixedeff = TRUE})
+Works with both staggered SCM paths (the partially pooled default and
+\code{nu = "separate"}) and honours the cohort aggregation weights
+\verb{N_treated x T_post}. Each treated unit is resampled at its own mass --
+its \code{weights} entry, or one -- so the contributions sum back to the ATT
+the fit reports. For intercept-shifted fits (\code{fixedeff = TRUE})
 the per-unit contributions are computed in difference-in-differences
 form, i.e. each treated unit is demeaned by its own pre-treatment mean.
 

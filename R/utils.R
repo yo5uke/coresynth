@@ -444,11 +444,18 @@ print.pred_spec <- function(x, ...) {
 #' @param time_var   Name of the time identifier column.
 #' @param units      All unit identifiers (length N), same order as Y columns.
 #' @param idx_co     Integer indices of control units in `units`.
-#' @param idx_tr     Integer index of the treated unit in `units`.
+#' @param idx_tr     Integer indices of the treated units in `units`. Several
+#'   units sharing one adoption date are one cohort, fitted through their
+#'   average (Ben-Michael, Feller & Rothstein 2022, S.4.1), so each predictor
+#'   row of `X1` is their average too.
+#' @param tr_weights Weights over `idx_tr` summing to one, giving the average
+#'   that `X1` targets. `NULL` weights the treated units equally. Must be the
+#'   same weights the outcome path pools with, or the predictor rows and the
+#'   outcome rows would describe different targets.
 #' @param predictors List of `pred_spec` objects created by [pred()].
 #' @return A list with:
 #'   * `X0`: k x N_co numeric matrix (predictors x control units)
-#'   * `X1`: numeric vector of length k (predictors for treated unit)
+#'   * `X1`: numeric vector of length k (predictors for the treated average)
 #'   * `pred_names`: character vector of length k with predictor labels
 #' @noRd
 build_predictor_matrices <- function(
@@ -458,9 +465,12 @@ build_predictor_matrices <- function(
   units,
   idx_co,
   idx_tr,
-  predictors
+  predictors,
+  tr_weights = NULL
 ) {
   co_units <- units[idx_co]
+  w_tr <- if (is.null(tr_weights)) rep(1 / length(idx_tr), length(idx_tr))
+          else tr_weights
 
   # One grouped aggregation per predictor row instead of one full-data scan
   # per unit: id_pos maps each data row to its unit's position in `units`.
@@ -504,7 +514,7 @@ build_predictor_matrices <- function(
       }
       vals <- agg_unit(var, rows_in_window, p$op)
       rows_X0 <- c(rows_X0, list(vals[idx_co]))
-      rows_X1 <- c(rows_X1, list(vals[idx_tr]))
+      rows_X1 <- c(rows_X1, list(sum(vals[idx_tr] * w_tr)))
       pred_names <- c(pred_names, pred_label(var, p$times))
     }
   }
@@ -631,5 +641,45 @@ panel_to_tensor <- function(y, d, id, time) {
     stop("`weights` must be non-negative.", call. = FALSE)
   if (sum(w) <= 0)
     stop("`weights` must have a positive sum.", call. = FALSE)
-  w
+  # Rescaled to average one, so a block's mass is the sum of its units' and
+  # reduces to the cohort size n_g of Ben-Michael, Feller & Rothstein (2022,
+  # Appendix A.2) when the weights are equal. Only the ratios matter --
+  # everything downstream normalises -- so the rescaling changes no estimate.
+  w / mean(w)
+}
+
+#' Mass and target series of one staggered block
+#'
+#' A block is a cohort (or a single treated unit under `pool_cohorts = FALSE`).
+#' Its mass is what it counts for, both in the pooled/separate imbalance
+#' measures of Ben-Michael, Feller & Rothstein (2022, Appendix A.2), where it
+#' is the cohort size \eqn{n_g}, and in the Clarke et al. (2024) aggregation
+#' weight \eqn{n_g T_{post,g}}. Its target is the correspondingly weighted
+#' average of the treated series, so the weights are fitted towards the same
+#' quantity the aggregation reports.
+#'
+#' `unit_weights` (Abadie 2021, S.8) replaces the unit count with the mass the
+#' caller gives each treated unit. Left `NULL` every unit counts once.
+#'
+#' @param Y            Outcome matrix (T x N).
+#' @param idx_tr_g     Column indices of the block's treated units.
+#' @param unit_labels  Unit labels for every panel column (`pan$units`).
+#' @param unit_weights Optional named numeric vector over treated unit labels.
+#' @return A list with `mass` (scalar), `masses` (one per treated unit, summing
+#'   to `mass`) and `y` (length-T target series).
+#' @noRd
+.scm_block_target <- function(Y, idx_tr_g, unit_labels, unit_weights = NULL) {
+  if (is.null(unit_weights))
+    return(list(mass   = as.numeric(length(idx_tr_g)),
+                masses = rep(1, length(idx_tr_g)),
+                y      = rowMeans(Y[, idx_tr_g, drop = FALSE])))
+  w <- unname(unit_weights[as.character(unit_labels[idx_tr_g])])
+  m <- sum(w)
+  # An all-zero block carries no mass in the ATT; the caller's skip path drops
+  # it rather than leaving the solver an objective that does not identify it.
+  if (m <= 0)
+    return(list(mass = 0, masses = w,
+                y = rowMeans(Y[, idx_tr_g, drop = FALSE])))
+  list(mass = m, masses = w,
+       y = drop(Y[, idx_tr_g, drop = FALSE] %*% (w / m)))
 }

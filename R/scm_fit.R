@@ -34,10 +34,22 @@
 #'   standard deviation across all units before optimisation, matching the
 #'   Synth reference implementation (ADH 2011, JSS); pass
 #'   `scale_predictors = FALSE` to disable.
+#'   When several units adopt at the same date they are pooled into one
+#'   cohort, and each predictor row of the treated vector is their average
+#'   under the same `weights` the outcome rows are pooled with, so both sides
+#'   of the fit describe one target series.
 #' @param covariates An optional named `list` of additional time-varying
 #'   covariates to partial out before estimation. Each element is a character
 #'   string naming a column in `data`. Supported for `method = "sdid"`,
-#'   `"scm"`, and `"gsc"`.
+#'   `"gsc"`, and **staggered** `method = "scm"`.
+#'   Partialling out is the device of Clarke et al. (2024, S.2.2), which SDID
+#'   needs because it has no way to balance a covariate. SCM does: Abadie,
+#'   Diamond & Hainmueller (2010, S.2.3) put covariates into the V-weighted
+#'   predictor distance, and Ben-Michael, Feller & Rothstein (2022, S.5.2) add
+#'   a separate balance term for them. A sharp SCM fit therefore rejects
+#'   `covariates` and asks for `predictors = list(pred(...))` instead; the
+#'   staggered path borrows the partial-out only because `predictors` is
+#'   unavailable there.
 #' @param v_selection V matrix selection method for `method = "scm"`.
 #'   `"insample"` (default) follows Abadie et al. (2010): V is chosen by
 #'   minimising in-sample pre-treatment MSPE. `"oos"` follows Abadie (2021)
@@ -135,22 +147,31 @@
 #'   variation that would justify doing otherwise is zero when the adoption
 #'   date is shared.
 #' @param pool_cohorts For **staggered** `method = "scm"`: whether treated
-#'   units sharing an adoption date are averaged into one cohort before the
-#'   pooling problem is solved. `TRUE` (default) is the Appendix A.2 hierarchy
+#'   units sharing an adoption date are averaged into one block before the
+#'   weights are fitted. `TRUE` (default) is the Appendix A.2 hierarchy
 #'   of Ben-Michael, Feller & Rothstein (2022), whose S.4.1 shows there is no
 #'   across-unit variation to exploit within a cohort. `FALSE` is their S.4
-#'   formulation, one weight vector per treated unit, which is what
-#'   `unit_estimates` and the rank-based permutation test in
-#'   [scm_rank_pval()] need. `augsynth` makes the unit-level form its default;
-#'   the paper's own appendix does not.
+#'   formulation, one weight vector per treated unit, which is what the
+#'   rank-based permutation test in [scm_rank_pval()] needs. `augsynth` makes
+#'   the unit-level form its default; the paper's own appendix does not.
+#'   It applies to both staggered paths -- the partially pooled solver and
+#'   `nu = "separate"` -- so it still takes effect where `donor_mspe_threshold`,
+#'   `lambda_pen` or `v_selection = "oos"` have sent the fit down the latter.
+#'   Sharp fits have a single cohort and reject it.
 #' @param weights Optional named numeric vector over the treated units giving
 #'   the mass each carries in the aggregate ATT, for `method = "scm"`. `NULL`
 #'   (default) weights them equally, which for a shared adoption date is the
 #'   `N_treated * T_post` weighting used throughout. Abadie (2021, S.8) notes
 #'   that with regions or countries a population- or GDP-weighted average
-#'   effect is often the quantity of interest; supply those figures here. A
-#'   staggered fit still multiplies by each cohort's `T_post`, and a sharp fit
-#'   makes the pooled target a weighted average of the treated series.
+#'   effect is often the quantity of interest; supply those figures here.
+#'   The mass is used consistently: a block's target series is the
+#'   correspondingly weighted average of its treated units, that same mass is
+#'   what the block counts for in the partially pooled objective (in place of
+#'   the cohort size of Ben-Michael, Feller & Rothstein 2022, Appendix A.2)
+#'   and in its `T_post`-multiplied aggregation weight, and
+#'   [scm_inference()] resamples each unit at its own mass. Only the ratios
+#'   matter -- the vector is rescaled internally -- so equal weights reproduce
+#'   the unweighted fit exactly.
 #' @param fixedeff Unpenalised additive level terms. For `method = "mc"` it
 #'   estimates unit and time fixed effects outside the nuclear norm, as in
 #'   Athey et al. (2021, S.8.1), and defaults to `TRUE`; `FALSE` recovers the
@@ -460,8 +481,21 @@ print.coresynth <- function(x, ...) {
   cat("=== coresynth fit ===\n")
   cat("Method :", toupper(x$method), "\n")
   cat("Estimate (ATT):", round(x$estimate, 4), "\n")
+  .cat_pooled_treated(x)
   cat("Pre-treatment periods:", x$T_pre, "\n")
   invisible(x)
+}
+
+# Several units adopting at one date are pooled into a single synthetic
+# control, so say so: otherwise nothing in the output distinguishes that fit
+# from a one-treated-unit one.
+.cat_pooled_treated <- function(x) {
+  n <- x$n_treated %||% 1L
+  if (n > 1L)
+    cat("Treated units :", n, "(pooled into one synthetic control",
+        if (is.null(x$treated_weights)) "as a simple average)"
+        else "as a weighted average)", "\n")
+  invisible(NULL)
 }
 
 #' @export
@@ -540,6 +574,7 @@ summary.coresynth_multiarm <- function(object, ...) {
 
 # Shared tail of summary.coresynth / summary.coresynth_multiarm.
 .summary_coresynth_body <- function(object) {
+  .cat_pooled_treated(object)
   cat(
     "Periods : T_pre =",
     object$T_pre,

@@ -43,7 +43,10 @@ export_json <- function(x, file = "coresynth_results.json",
   n_controls <- if (!is.null(x$unit_weights)) length(x$unit_weights)
                 else if (!is.null(x$L_co))    nrow(x$L_co)
                 else NULL
-  n_treated <- if (!is.null(x$L_tr))      nrow(x$L_tr)
+  # n_treated first: a sharp SCM fit pooling several treated units carries
+  # their average in Y_treat, whose column count would report 1.
+  n_treated <- if (!is.null(x$n_treated))  as.integer(x$n_treated)
+               else if (!is.null(x$L_tr))      nrow(x$L_tr)
                else if (is.matrix(x$Y_treat)) ncol(x$Y_treat)
                else 1L
 

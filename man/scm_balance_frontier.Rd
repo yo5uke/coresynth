@@ -23,7 +23,12 @@ Traces how the two pre-treatment imbalances of partially pooled SCM trade
 off as the pooling parameter \code{nu} varies: \code{q_pool}, the imbalance of the
 average of the treated units, which the aggregate ATT rests on, and
 \code{q_sep}, the root mean square of the per-block imbalances, which the
-block-level effects rest on.
+block-level effects rest on. Both are the cohort-level measures of
+Ben-Michael, Feller & Rothstein (2022, Appendix A.2), in which a block
+enters through the sum over its treated units, so a block of \eqn{n_g}
+units counts \eqn{n_g} times towards \code{q_pool} and \eqn{n_g^2} times towards
+\code{q_sep}. Supplying \code{weights} to \code{\link[=scm_fit]{scm_fit()}} replaces the unit count with
+the mass it gives them, and the frontier is traced on that same objective.
 }
 \details{
 Ben-Michael, Feller & Rothstein (2022) call this plot "an important tool for

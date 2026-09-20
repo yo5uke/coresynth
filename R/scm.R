@@ -69,13 +69,37 @@ fit_scm_cpp <- function(
   pan <- panel_to_matrices(y, d, id, time)
   .check_panel_complete(pan$Y, "SCM")
 
-  if (pan$is_sharp && (!is.null(nu) || isTRUE(fixedeff))) {
+  if (pan$is_sharp && (!is.null(nu) || isTRUE(fixedeff) ||
+                       !isTRUE(pool_cohorts))) {
     stop(
-      "nu and fixedeff apply to staggered SCM fits only ",
+      "nu, fixedeff and pool_cohorts apply to staggered SCM fits only ",
       "(Ben-Michael, Feller & Rothstein 2022). ",
       "Under a single adoption date there is nothing to pool across cohorts, ",
       "and several treated units are already fully pooled into one cohort; ",
       "fit without these arguments.",
+      call. = FALSE
+    )
+  }
+  # Covariates enter SCM by being balanced, not by being partialled out:
+  # Abadie et al. (2010) S.2.3 put them in the V-weighted predictor distance,
+  # and BFR (2022) S.5.2 add a separate xi-weighted balance term, noting in
+  # S.4 that "where Abadie et al. (2010, 2015) balance auxiliary covariates,
+  # we focus exclusively on lagged outcomes". Partialling out is the SDID
+  # device of Clarke et al. (2024) S.2.2, which the staggered path borrows
+  # only because pred() is unavailable there. A sharp fit has pred(), so
+  # silently ignoring `covariates` -- which is what happened before -- is the
+  # one thing not to do.
+  if (pan$is_sharp && !is.null(covariates) && length(covariates) > 0L) {
+    stop(
+      "'covariates' is the partial-out path, which applies to staggered SCM ",
+      "fits only. Sharp SCM balances covariates instead, following Abadie, ",
+      "Diamond & Hainmueller (2010) S.2.3: pass them as predictor rows, e.g. ",
+      "predictors = list(pred(\"", outcome_var %||% "<outcome>",
+      "\", <pre-treatment times>, \"mean\"), pred(\"",
+      as.character(unlist(covariates))[1L],
+      "\", <pre-treatment times>, \"mean\")). A time-varying covariate is ",
+      "aggregated over its window, which is how BFR (2022) S.5.2 carry one ",
+      "into the balance problem too.",
       call. = FALSE
     )
   }
@@ -197,6 +221,7 @@ fit_scm_cpp <- function(
         donor_mspe_threshold = donor_mspe_threshold,
         lambda_pen           = lambda_pen,
         control_group        = control_group,
+        pool_cohorts         = pool_cohorts,
         fixedeff             = fixedeff
       )
     }
@@ -206,8 +231,15 @@ fit_scm_cpp <- function(
       estimate         = stag$estimate,
       cohort_estimates = stag$cohort_estimates,
       cohort_fits      = stag$cohort_fits,
-      pooling          = stag$pooling,   # NULL for the legacy path
+      pooling          = stag$pooling,   # NULL for the per-cohort path
       fixedeff         = fixedeff,
+      # Recorded on both paths: `pooling` carries it only for the pooled one,
+      # and it decides what a cohort_fit block stands for.
+      pool_cohorts     = pool_cohorts,
+      n_treated        = length(pan$idx_treat),
+      # Rescaled aggregation masses, kept so scm_balance_frontier() can refit
+      # the same objective. NULL when the units count equally.
+      treated_weights  = agg_w,
       unit_weights     = NULL,
       v_weights        = NULL,
       Y_treat          = pan$Y[, pan$idx_treat, drop = FALSE],
@@ -359,7 +391,10 @@ fit_scm_cpp <- function(
       units    = pan$units,
       idx_co   = idx_co,
       idx_tr   = idx_tr,
-      predictors = predictors
+      predictors = predictors,
+      # The same pooling weights the outcome rows use, so X1 and Z1 describe
+      # one target series rather than two.
+      tr_weights = w_tr
     )
     X0         <- pm$X0
     X1         <- pm$X1
@@ -719,10 +754,12 @@ fit_scm_cpp <- function(
 # -- Internal: cohort-by-cohort SCM for staggered adoption -------------------
 # Cohort g ATT is averaged with weight N_treat_g * T_post_g, following the
 # same aggregation used in Arkhangelsky et al. (2021) Appendix S.8.
-# Treated units within a cohort are averaged into a single pseudo-unit;
-# within-cohort pooling is justified by Ben-Michael, Feller & Rothstein
-# (2022, S.4.1): the DGP heterogeneity terms (S_rho, S_k) vanish across
-# units sharing one adoption time.
+# A block is a cohort by default -- treated units sharing an adoption date are
+# averaged into a single pseudo-unit, which Ben-Michael, Feller & Rothstein
+# (2022, S.4.1) justify by the DGP heterogeneity terms (S_rho, S_k) vanishing
+# across units treated at the same time. pool_cohorts = FALSE makes a block a
+# treated unit instead, as in their S.4 formulation; nothing below depends on
+# which, so the two differ only in how the blocks are assembled.
 # Only predictors = NULL is supported (all pre-treatment outcomes used as X).
 # fixedeff = TRUE demeans every unit by its own pre-treatment mean within
 # each cohort (intercept shift; Ben-Michael et al. 2022 S.5.1) and restores
@@ -735,6 +772,7 @@ fit_scm_cpp <- function(
                                donor_mspe_threshold = Inf,
                                lambda_pen           = NULL,
                                control_group        = "clean",
+                               pool_cohorts         = TRUE,
                                fixedeff             = FALSE) {
   Y       <- if (!is.null(Y_matrix)) Y_matrix else pan$Y
   TT      <- nrow(Y)
@@ -744,8 +782,20 @@ fit_scm_cpp <- function(
 
   cohorts <- sort(unique(T_adopt[idx_tr]))
 
-  cohort_list <- lapply(cohorts, function(g) {
-    idx_tr_g <- idx_tr[T_adopt[idx_tr] == g]
+  # Same block granularity as .fit_scm_staggered_pooled(): a cohort, or a
+  # single treated unit when the caller asked for the S.4 formulation.
+  # unname() so cohort_fits is a plain list on both paths -- idx_tr carries
+  # the panel's column names, and the pooled path drops them.
+  block_ids <- unname(if (pool_cohorts) as.list(cohorts) else as.list(idx_tr))
+
+  cohort_list <- lapply(block_ids, function(key) {
+    if (pool_cohorts) {
+      g        <- key
+      idx_tr_g <- idx_tr[T_adopt[idx_tr] == g]
+    } else {
+      idx_tr_g <- key
+      g        <- T_adopt[key]
+    }
     T_pre_g  <- g - 1L
     T_post_g <- TT - T_pre_g
 
@@ -756,10 +806,13 @@ fit_scm_cpp <- function(
       idx_co_g  <- c(idx_co, future_tr)
     }
 
-    if (length(idx_co_g) < 2L || T_pre_g < 2L) {
+    blk <- .scm_block_target(Y, idx_tr_g, pan$units, unit_weights)
+    if (length(idx_co_g) < 2L || T_pre_g < 2L || blk$mass <= 0) {
       warning(sprintf(
-        "SCM staggered: cohort g=%d skipped (T_pre=%d, N_co=%d).",
-        g, T_pre_g, length(idx_co_g)
+        "SCM staggered: %s skipped (T_pre=%d, N_co=%d, mass=%g).",
+        if (pool_cohorts) sprintf("cohort g=%d", g) else
+          sprintf("treated unit %s", as.character(pan$units[idx_tr_g])),
+        T_pre_g, length(idx_co_g), blk$mass
       ), call. = FALSE)
       return(NULL)
     }
@@ -767,7 +820,9 @@ fit_scm_cpp <- function(
     pre_rows  <- seq_len(T_pre_g)
     post_rows <- (T_pre_g + 1L):TT
 
-    Y1_g     <- rowMeans(Y[, idx_tr_g, drop = FALSE])
+    # The block's target is the mass-weighted average of its treated units,
+    # so the series fitted here is the one the aggregation weights.
+    Y1_g     <- blk$y
     Y_co_all <- Y[, idx_co_g, drop = FALSE]
 
     # Intercept shift: fit on series demeaned by their own pre-window means
@@ -867,11 +922,17 @@ fit_scm_cpp <- function(
 
       list(
         cohort          = g,
+        # Named when the block is one treated unit, which is what
+        # scm_rank_pval() dispatches on.
+        unit            = if (length(idx_tr_g) == 1L)
+          as.character(pan$units[idx_tr_g]) else NA_character_,
         n_treated       = length(idx_tr_g),
         T_pre           = T_pre_g,
         T_post          = T_post_g,
         estimate        = ATT_g,
-        weight          = as.numeric(length(idx_tr_g)) * T_post_g,
+        weight          = blk$mass * T_post_g,
+        mass            = blk$mass,
+        unit_masses     = blk$masses,
         unit_weights    = unit_w,
         Y_synth         = Y_synth_g,
         Y_treat         = Y1_g_raw,
@@ -883,8 +944,11 @@ fit_scm_cpp <- function(
         lambda_pen      = lambda_pen_used
       )
     }, error = function(e) {
-      warning(sprintf("SCM staggered: cohort g=%d failed: %s",
-                      g, conditionMessage(e)), call. = FALSE)
+      warning(sprintf("SCM staggered: %s failed: %s",
+                      if (pool_cohorts) sprintf("cohort g=%d", g) else
+                        sprintf("treated unit %s",
+                                as.character(pan$units[idx_tr_g])),
+                      conditionMessage(e)), call. = FALSE)
       NULL
     })
     fit_g
@@ -940,7 +1004,7 @@ fit_scm_cpp <- function(
   # justified in S.4.1 by there being no across-unit variation within a
   # cohort. pool_cohorts picks between the two, and the solver below is
   # indifferent: a block is a target series, its donors, and its lag window.
-  block_ids <- if (pool_cohorts) as.list(cohorts) else as.list(idx_tr)
+  block_ids <- unname(if (pool_cohorts) as.list(cohorts) else as.list(idx_tr))
 
   # ---- assemble blocks in event-time (lag) order ---------------------------
   blocks <- lapply(block_ids, function(key) {
@@ -960,19 +1024,20 @@ fit_scm_cpp <- function(
       future_tr <- idx_tr[!is.na(T_adopt[idx_tr]) & T_adopt[idx_tr] > g]
       idx_co_g  <- c(idx_co, future_tr)
     }
-    if (length(idx_co_g) < 2L || T_pre_g < 2L) {
+    blk <- .scm_block_target(Y, idx_tr_g, pan$units, unit_weights)
+    if (length(idx_co_g) < 2L || T_pre_g < 2L || blk$mass <= 0) {
       warning(sprintf(
-        "SCM staggered: %s skipped (T_pre=%d, N_co=%d).",
+        "SCM staggered: %s skipped (T_pre=%d, N_co=%d, mass=%g).",
         if (pool_cohorts) sprintf("cohort g=%d", g) else
           sprintf("treated unit %s", as.character(pan$units[idx_tr_g])),
-        T_pre_g, length(idx_co_g)
+        T_pre_g, length(idx_co_g), blk$mass
       ), call. = FALSE)
       return(NULL)
     }
 
     pre_rows  <- seq_len(T_pre_g)
     post_rows <- (T_pre_g + 1L):TT
-    Y1_raw    <- rowMeans(Y[, idx_tr_g, drop = FALSE])
+    Y1_raw    <- blk$y
     Y_co_raw  <- Y[, idx_co_g, drop = FALSE]
 
     Y1_fit   <- Y1_raw
@@ -988,6 +1053,7 @@ fit_scm_cpp <- function(
     lag_rows <- rev(pre_rows)
     list(
       cohort = g, idx_tr = idx_tr_g, idx_co = idx_co_g,
+      mass = blk$mass, masses = blk$masses,
       T_pre = T_pre_g, T_post = T_post_g,
       pre_rows = pre_rows, post_rows = post_rows,
       Y1_raw = Y1_raw, Y_co_raw = Y_co_raw,
@@ -1004,35 +1070,53 @@ fit_scm_cpp <- function(
   J    <- length(blocks)
   L_g  <- vapply(blocks, `[[`, integer(1L), "T_pre")
   L    <- max(L_g)
+  # Block mass: the cohort size n_g of BFR Appendix A.2, or the mass the
+  # caller gave its treated units. Appendix A.2 writes the cohort problem on
+  # the SUM over the cohort's units -- its target is
+  # sum_i 1{T_i = T(g)} Y_i and its weights satisfy sum_i gamma_ig = n_g --
+  # so the block residual is n_g times the mean gap. Carrying the mean here
+  # and the mass as a multiplier is the same objective, and keeps Y_synth and
+  # ATT_g on the outcome's own scale for reporting.
+  m_g  <- vapply(blocks, `[[`, numeric(1L), "mass")
 
   # ---- separate SCM baseline (nu = 0; also the normalisation constants) ----
+  # The mass cancels out of each block's own least-squares problem, so the
+  # separate solution does not depend on it.
   Gamma <- lapply(blocks, function(bl) {
     as.numeric(solve_simplex_qp(crossprod(bl$X), crossprod(bl$X, bl$b)))
   })
 
-  # zero-padded average placebo gap across cohorts at each event-time lag
+  block_gap <- function(Gamma, j)
+    blocks[[j]]$b - as.numeric(blocks[[j]]$X %*% Gamma[[j]])
+
+  # q^{pool,cohort} of Appendix A.2: the mass-weighted average gap at each
+  # event-time lag, zero-padded past a block's own window, over max_g L_g.
   pooled_gap <- function(Gamma) {
     P <- numeric(L)
     for (j in seq_len(J)) {
       lg <- L_g[j]
-      P[seq_len(lg)] <- P[seq_len(lg)] +
-        (blocks[[j]]$b - as.numeric(blocks[[j]]$X %*% Gamma[[j]])) / J
+      P[seq_len(lg)] <- P[seq_len(lg)] + m_g[j] * block_gap(Gamma, j) / J
     }
     P
   }
-  sep_norms <- function(Gamma) {  # per-cohort L2 norms of the placebo gaps
-    vapply(seq_len(J), function(j) {
-      sqrt(sum((blocks[[j]]$b - as.numeric(blocks[[j]]$X %*% Gamma[[j]]))^2))
-    }, numeric(1L))
-  }
-  q_sep_of  <- function(Gamma) sqrt(mean(sep_norms(Gamma)^2 / L_g))
+  # L2 norms of the (unweighted) per-block gaps; the mass enters where they
+  # are used, so this stays the plain imbalance of each block's own fit.
+  sep_norms <- function(Gamma)
+    vapply(seq_len(J), function(j) sqrt(sum(block_gap(Gamma, j)^2)),
+           numeric(1L))
+  # q^{sep,cohort} squares the block SUM, hence the mass squared.
+  q_sep_of  <- function(Gamma) sqrt(mean(m_g^2 * sep_norms(Gamma)^2 / L_g))
   q_pool_of <- function(Gamma) sqrt(mean(pooled_gap(Gamma)^2))
 
   C_sep  <- q_sep_of(Gamma)
   C_pool <- q_pool_of(Gamma)
 
-  # heuristic nu (bounded above by 1 via the triangle inequality)
-  r_sep   <- sep_norms(Gamma)
+  # Heuristic nu (BFR S.4.2, p.367): the ratio of the pooled fit of separate
+  # SCM to its average block-level fit,
+  #   sqrt(L) q_pool / ( (1/J) sum_j sqrt(L_j) q_j ) =
+  #   || sum_j m_j gap_j || / sum_j m_j ||gap_j||,
+  # bounded above by 1 via the triangle inequality.
+  r_sep   <- m_g * sep_norms(Gamma)
   nu_heur <- if (mean(r_sep) < .Machine$double.eps) 0 else
     min(1, sqrt(sum(pooled_gap(Gamma)^2)) / mean(r_sep))
   nu_num <- if (identical(nu, "auto")) nu_heur else as.numeric(nu)
@@ -1051,19 +1135,21 @@ fit_scm_cpp <- function(
       for (j in seq_len(J)) {
         bl <- blocks[[j]]
         lg <- L_g[j]
+        mj <- m_g[j]
         gap_j <- bl$b - as.numeric(bl$X %*% Gamma[[j]])
-        R     <- P[seq_len(lg)] - gap_j / J     # other cohorts' contribution
-        A_sep <- (1 - nu_num) / (C_sep^2 * J * lg)
-        u     <- R + bl$b / J
-        Q     <- 2 * (A_pool / J^2 + A_sep) * XtX_l[[j]]
-        cvec  <- 2 * (A_pool / J * as.numeric(crossprod(bl$X, u)) +
+        # this block's share of the pooled gap, removed so R is the rest
+        R     <- P[seq_len(lg)] - mj * gap_j / J
+        A_sep <- (1 - nu_num) * mj^2 / (C_sep^2 * J * lg)
+        u     <- R + mj * bl$b / J
+        Q     <- 2 * (A_pool * mj^2 / J^2 + A_sep) * XtX_l[[j]]
+        cvec  <- 2 * (A_pool * mj / J * as.numeric(crossprod(bl$X, u)) +
                         A_sep * Xtb_l[[j]])
         # warm start from the previous block solution: successive sweeps
         # resolve near-identical QPs, so FISTA converges in a few iterations
         w_new <- as.numeric(solve_simplex_qp(Q, cvec, x0 = Gamma[[j]]))
         Gamma[[j]] <- w_new
         gap_new <- bl$b - as.numeric(bl$X %*% w_new)
-        P[seq_len(lg)] <- R + gap_new / J
+        P[seq_len(lg)] <- R + mj * gap_new / J
         obj_sep <- obj_sep + A_sep * sum(gap_new^2)
       }
       obj <- A_pool * sum(P^2) + obj_sep
@@ -1094,7 +1180,11 @@ fit_scm_cpp <- function(
       T_pre           = bl$T_pre,
       T_post          = bl$T_post,
       estimate        = ATT_g,
-      weight          = as.numeric(length(bl$idx_tr)) * bl$T_post,
+      # The same mass the objective weighted this block by, so the fit and
+      # the aggregation describe one estimand (Clarke et al. 2024).
+      weight          = bl$mass * bl$T_post,
+      mass            = bl$mass,
+      unit_masses     = bl$masses,
       unit_weights    = unit_w,
       Y_synth         = Y_synth_g,
       Y_treat         = bl$Y1_raw,
@@ -1132,9 +1222,11 @@ fit_scm_cpp <- function(
 #' with independent golden-ratio two-point multipliers (mean 0, variance 1)
 #' while donor weights and outcomes are kept fixed.
 #'
-#' Works with both staggered SCM paths (`nu = NULL` legacy and the
-#' partially pooled path) and honours the cohort aggregation weights
-#' `N_treated x T_post`. For intercept-shifted fits (`fixedeff = TRUE`)
+#' Works with both staggered SCM paths (the partially pooled default and
+#' `nu = "separate"`) and honours the cohort aggregation weights
+#' `N_treated x T_post`. Each treated unit is resampled at its own mass --
+#' its `weights` entry, or one -- so the contributions sum back to the ATT
+#' the fit reports. For intercept-shifted fits (`fixedeff = TRUE`)
 #' the per-unit contributions are computed in difference-in-differences
 #' form, i.e. each treated unit is demeaned by its own pre-treatment mean.
 #'
@@ -1186,8 +1278,9 @@ scm_inference <- function(fit,
   if (!inherits(fit, "coresynth_staggered"))
     stop(
       "scm_inference() supports staggered SCM fits only.\n",
-      "For a sharp fit use mspe_ratio_pval() (in-space permutation test) ",
-      "or conformal_inference().",
+      "For a sharp fit use mspe_ratio_pval() (in-space permutation test), ",
+      "or, when several units are treated at once, scm_rank_pval(); ",
+      "conformal_inference() works for either.",
       call. = FALSE
     )
   cf <- fit$cohort_fits
@@ -1216,8 +1309,15 @@ scm_inference <- function(fit,
       tau_g <- colMeans(b$Y_treat_mat[post, , drop = FALSE] -
                           b$Y_synth[post])
     }
-    tau_i   <- c(tau_i, tau_g)
-    omega_i <- c(omega_i, rep(b$weight / b$n_treated, b$n_treated))
+    tau_i <- c(tau_i, tau_g)
+    # Each unit carries its own mass (its `weights` entry, or 1) times the
+    # block's post window, so the contributions sum back to the block weight
+    # and reproduce the ATT the fit reports. Fits from before `unit_masses`
+    # split the block weight evenly, which is the same thing under the equal
+    # weighting those fits had.
+    m_i <- b$unit_masses %||% rep(b$weight / b$T_post / b$n_treated,
+                                  b$n_treated)
+    omega_i <- c(omega_i, m_i * b$T_post)
   }
   omega_i <- omega_i / sum(omega_i)
   att_hat <- fit$estimate
@@ -1382,9 +1482,12 @@ mspe_ratio_pval <- function(
       "treatment effect, the test rejected at 28% (3 treated units) and 53% ",
       "(6) against a nominal 10%.\n",
       "Alternatives:\n",
-      "  * Fit each treated unit on its own (subset data) and test it there.\n",
+      "  * Use scm_rank_pval(), the rank-based permutation test of Abadie & ",
+      "L'Hour (2021) for exactly this case: it ranks per-unit statistics, so ",
+      "the averaged treated series never enters.\n",
       "  * Use conformal_inference(), which permutes over time rather than ",
-      "across units.",
+      "across units.\n",
+      "  * Fit each treated unit on its own (subset data) and test it there.",
       call. = FALSE
     )
   }

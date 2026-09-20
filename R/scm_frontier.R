@@ -29,7 +29,12 @@
 #' off as the pooling parameter `nu` varies: `q_pool`, the imbalance of the
 #' average of the treated units, which the aggregate ATT rests on, and
 #' `q_sep`, the root mean square of the per-block imbalances, which the
-#' block-level effects rest on.
+#' block-level effects rest on. Both are the cohort-level measures of
+#' Ben-Michael, Feller & Rothstein (2022, Appendix A.2), in which a block
+#' enters through the sum over its treated units, so a block of \eqn{n_g}
+#' units counts \eqn{n_g} times towards `q_pool` and \eqn{n_g^2} times towards
+#' `q_sep`. Supplying `weights` to [scm_fit()] replaces the unit count with
+#' the mass it gives them, and the frontier is traced on that same objective.
 #'
 #' Ben-Michael, Feller & Rothstein (2022) call this plot "an important tool for
 #' using partially pooled SCM in practice" (S.4.2): the curve is strongly
@@ -80,6 +85,9 @@ scm_balance_frontier <- function(fit, nu_grid = seq(0, 1, length.out = 11L)) {
   rows <- lapply(nu_grid, function(nu) {
     f <- .fit_scm_staggered_pooled(
       pan, nu = nu,
+      # The block masses are part of the objective, so a frontier drawn
+      # without them would not be the frontier the fit sits on.
+      unit_weights  = fit$treated_weights,
       fixedeff      = isTRUE(fit$pooling$fixedeff),
       control_group = fit$control_group %||% "clean",
       pool_cohorts  = fit$pooling$pool_cohorts %||% TRUE)

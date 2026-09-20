@@ -72,12 +72,24 @@ something other than what the window reads as.
 Applies to \code{method = "scm"} only. Predictor rows are scaled by their
 standard deviation across all units before optimisation, matching the
 Synth reference implementation (ADH 2011, JSS); pass
-\code{scale_predictors = FALSE} to disable.}
+\code{scale_predictors = FALSE} to disable.
+When several units adopt at the same date they are pooled into one
+cohort, and each predictor row of the treated vector is their average
+under the same \code{weights} the outcome rows are pooled with, so both sides
+of the fit describe one target series.}
 
 \item{covariates}{An optional named \code{list} of additional time-varying
 covariates to partial out before estimation. Each element is a character
 string naming a column in \code{data}. Supported for \code{method = "sdid"},
-\code{"scm"}, and \code{"gsc"}.}
+\code{"gsc"}, and \strong{staggered} \code{method = "scm"}.
+Partialling out is the device of Clarke et al. (2024, S.2.2), which SDID
+needs because it has no way to balance a covariate. SCM does: Abadie,
+Diamond & Hainmueller (2010, S.2.3) put covariates into the V-weighted
+predictor distance, and Ben-Michael, Feller & Rothstein (2022, S.5.2) add
+a separate balance term for them. A sharp SCM fit therefore rejects
+\code{covariates} and asks for \code{predictors = list(pred(...))} instead; the
+staggered path borrows the partial-out only because \code{predictors} is
+unavailable there.}
 
 \item{v_selection}{V matrix selection method for \code{method = "scm"}.
 \code{"insample"} (default) follows Abadie et al. (2010): V is chosen by
@@ -198,23 +210,32 @@ the default and the partially pooled path. For \code{method = "scm"} on
 staggered panels only. Default \code{FALSE}.}
 
 \item{pool_cohorts}{For \strong{staggered} \code{method = "scm"}: whether treated
-units sharing an adoption date are averaged into one cohort before the
-pooling problem is solved. \code{TRUE} (default) is the Appendix A.2 hierarchy
+units sharing an adoption date are averaged into one block before the
+weights are fitted. \code{TRUE} (default) is the Appendix A.2 hierarchy
 of Ben-Michael, Feller & Rothstein (2022), whose S.4.1 shows there is no
 across-unit variation to exploit within a cohort. \code{FALSE} is their S.4
-formulation, one weight vector per treated unit, which is what
-\code{unit_estimates} and the rank-based permutation test in
-\code{\link[=scm_rank_pval]{scm_rank_pval()}} need. \code{augsynth} makes the unit-level form its default;
-the paper's own appendix does not.}
+formulation, one weight vector per treated unit, which is what the
+rank-based permutation test in \code{\link[=scm_rank_pval]{scm_rank_pval()}} needs. \code{augsynth} makes
+the unit-level form its default; the paper's own appendix does not.
+It applies to both staggered paths -- the partially pooled solver and
+\code{nu = "separate"} -- so it still takes effect where \code{donor_mspe_threshold},
+\code{lambda_pen} or \code{v_selection = "oos"} have sent the fit down the latter.
+Sharp fits have a single cohort and reject it.}
 
 \item{weights}{Optional named numeric vector over the treated units giving
 the mass each carries in the aggregate ATT, for \code{method = "scm"}. \code{NULL}
 (default) weights them equally, which for a shared adoption date is the
 \code{N_treated * T_post} weighting used throughout. Abadie (2021, S.8) notes
 that with regions or countries a population- or GDP-weighted average
-effect is often the quantity of interest; supply those figures here. A
-staggered fit still multiplies by each cohort's \code{T_post}, and a sharp fit
-makes the pooled target a weighted average of the treated series.}
+effect is often the quantity of interest; supply those figures here.
+The mass is used consistently: a block's target series is the
+correspondingly weighted average of its treated units, that same mass is
+what the block counts for in the partially pooled objective (in place of
+the cohort size of Ben-Michael, Feller & Rothstein 2022, Appendix A.2)
+and in its \code{T_post}-multiplied aggregation weight, and
+\code{\link[=scm_inference]{scm_inference()}} resamples each unit at its own mass. Only the ratios
+matter -- the vector is rescaled internally -- so equal weights reproduce
+the unweighted fit exactly.}
 }
 \value{
 An object of classes \code{c("coresynth_<method>", "coresynth")}.

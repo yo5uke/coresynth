@@ -18,15 +18,21 @@
 #' method:
 #'
 #' * `treated_outcomes()`: the treated unit's observed outcome series
-#'   (length \eqn{T}). When several units are treated, their per-period mean.
+#'   (length \eqn{T}). When several units are treated it is their per-period
+#'   average -- weighted by `weights` where a sharp fit was given them, and
+#'   unweighted across cohorts for a staggered fit, whose treated units do not
+#'   share a treatment date.
 #' * `synthetic_outcomes()`: the estimated counterfactual series
 #'   (length \eqn{T}), i.e. the synthetic control or model-fitted outcome.
 #' * `donor_outcomes()`: the \eqn{T \times N_{co}} matrix of observed donor
 #'   (control unit) outcomes over all periods.
 #'
 #' Each accessor returns `NULL` when the requested series is not stored in
-#' the fit. In particular, staggered-adoption fits keep their data per cohort
-#' (in `fit$cohort_fits`), so the sharp-fit accessors return `NULL` for them.
+#' the fit. Staggered-adoption fits keep their counterfactual per cohort (in
+#' `fit$cohort_fits`), because collapsing it to one series would average
+#' cohorts whose treatment starts at different times, so
+#' `synthetic_outcomes()` returns `NULL` for them; use [augment()] for the
+#' per-cohort series.
 #'
 #' @param x A `coresynth` object from [scm_fit()].
 #' @param na.rm Logical; passed to the per-period averaging over multiple

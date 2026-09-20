@@ -67,7 +67,10 @@ method:
 \details{
 \itemize{
 \item \code{treated_outcomes()}: the treated unit's observed outcome series
-(length \eqn{T}). When several units are treated, their per-period mean.
+(length \eqn{T}). When several units are treated it is their per-period
+average -- weighted by \code{weights} where a sharp fit was given them, and
+unweighted across cohorts for a staggered fit, whose treated units do not
+share a treatment date.
 \item \code{synthetic_outcomes()}: the estimated counterfactual series
 (length \eqn{T}), i.e. the synthetic control or model-fitted outcome.
 \item \code{donor_outcomes()}: the \eqn{T \times N_{co}} matrix of observed donor
@@ -75,8 +78,11 @@ method:
 }
 
 Each accessor returns \code{NULL} when the requested series is not stored in
-the fit. In particular, staggered-adoption fits keep their data per cohort
-(in \code{fit$cohort_fits}), so the sharp-fit accessors return \code{NULL} for them.
+the fit. Staggered-adoption fits keep their counterfactual per cohort (in
+\code{fit$cohort_fits}), because collapsing it to one series would average
+cohorts whose treatment starts at different times, so
+\code{synthetic_outcomes()} returns \code{NULL} for them; use \code{\link[generics:augment]{augment()}} for the
+per-cohort series.
 }
 \examples{
 set.seed(1)

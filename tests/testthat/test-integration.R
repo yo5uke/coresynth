@@ -5199,6 +5199,70 @@ test_that("simultaneous adoption by several units fits one pooled cohort", {
   expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-6)
 })
 
+test_that("predictors describe the treated average when several units pool", {
+  dat <- .adopt_panel(c(11, 11, 11))
+  set.seed(11)
+  dat$x <- rnorm(nrow(dat)) + dat$id / 10
+  spec <- list(pred("y", 1:10, "mean"), pred("x", 1:10, "mean"))
+
+  fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
+                 predictors = spec)
+  # one predictor row per variable, not one per (variable, treated unit)
+  expect_length(fit$X1_vec, 2L)
+  expect_length(fit$v_weights, 2L)
+  expect_equal(nrow(fit$predictor_table), 2L)
+
+  # X1 is the average over the pooled treated units, matching the outcome path
+  pre <- dat[dat$time <= 10 & dat$id %in% 1:3, ]
+  by_unit <- function(v) vapply(split(pre[[v]], pre$id), mean, numeric(1L))
+  expect_equal(fit$predictor_table$treated,
+               c(mean(by_unit("y")), mean(by_unit("x"))),
+               tolerance = 1e-10)
+
+  # `weights` moves the predictor rows onto the same weighted average the
+  # outcome rows use, so the two never describe different targets
+  wts <- c(`1` = 3, `2` = 1, `3` = 1)
+  fw  <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
+                 predictors = spec, weights = wts)
+  w   <- wts / sum(wts)
+  expect_equal(fw$predictor_table$treated,
+               c(sum(by_unit("y") * w), sum(by_unit("x") * w)),
+               tolerance = 1e-10)
+  expect_equal(unname(fw$Y_treat),
+               unname(drop(fw$Y_treat_mat %*% w)), tolerance = 1e-10)
+})
+
+test_that("glance() and export_json() report the pooled treated-unit count", {
+  fit <- scm_fit(y ~ d | id + time, data = .adopt_panel(c(11, 11, 11)),
+                 method = "scm")
+  expect_equal(glance(fit)$n_treated, 3L)
+
+  skip_if_not_installed("jsonlite")
+  tmp <- tempfile(fileext = ".json")
+  on.exit(unlink(tmp), add = TRUE)
+  export_json(fit, file = tmp)
+  expect_equal(jsonlite::read_json(tmp)$data$n_treated, 3L)
+
+  one <- scm_fit(y ~ d | id + time, data = .adopt_panel(11), method = "scm")
+  expect_equal(glance(one)$n_treated, 1L)
+})
+
+test_that("print() and summary() name the pooled treated units", {
+  fit <- scm_fit(y ~ d | id + time, data = .adopt_panel(c(11, 11, 11)),
+                 method = "scm")
+  expect_output(print(fit), "Treated units : 3")
+  expect_output(summary(fit), "simple average")
+
+  fw <- scm_fit(y ~ d | id + time, data = .adopt_panel(c(11, 11, 11)),
+                method = "scm", weights = c(`1` = 3, `2` = 1, `3` = 1))
+  expect_output(print(fw), "weighted average")
+
+  # one treated unit says nothing extra
+  one <- scm_fit(y ~ d | id + time, data = .adopt_panel(11), method = "scm")
+  expect_false(any(grepl("Treated units",
+                         capture.output(print(one)), fixed = TRUE)))
+})
+
 test_that("a single treated unit is unchanged by the pooling path", {
   fit <- scm_fit(y ~ d | id + time, data = .adopt_panel(11), method = "scm")
   expect_equal(fit$n_treated, 1L)
@@ -5251,6 +5315,82 @@ test_that("the staggered default falls back where the pooled solver cannot go", 
   # asking for pooling explicitly there is still an error
   expect_error(scm_fit(y ~ d | id + time, data = stag, method = "scm",
                        nu = 0.5, lambda_pen = 0.1), "cannot be combined")
+})
+
+test_that("pool_cohorts reaches the per-cohort path too", {
+  # The fallback above must not silently discard the block granularity: a fit
+  # asked for unit-level blocks has to deliver them whichever solver runs,
+  # because scm_rank_pval() dispatches on exactly that.
+  stag <- .adopt_panel(c(9, 9, 12, 15))
+  blocks <- function(f) vapply(f$cohort_fits, function(z) length(z$idx_tr),
+                               integer(1L))
+
+  for (extra in list(list(nu = "separate"),
+                     list(lambda_pen = 0.1),
+                     list(donor_mspe_threshold = 5),
+                     list(v_selection = "oos"))) {
+    args <- c(list(y ~ d | id + time, data = stag, method = "scm",
+                   pool_cohorts = FALSE), extra)
+    f <- suppressWarnings(do.call(scm_fit, args))
+    label <- names(extra)
+    expect_null(f$pooling, info = label)           # the per-cohort path ran
+    expect_equal(blocks(f), rep(1L, 4L), info = label)
+    expect_false(f$pool_cohorts, info = label)
+    expect_equal(vapply(f$cohort_fits, `[[`, character(1L), "unit"),
+                 as.character(1:4), info = label)
+    # and the test that needs unit-level blocks now accepts the fit
+    expect_s3_class(suppressWarnings(scm_rank_pval(f, B = 20)),
+                    "scm_rank_test")
+  }
+
+  # the default still pools cohorts on that path
+  sep <- scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                 nu = "separate")
+  expect_equal(blocks(sep), c(2L, 1L, 1L))
+  expect_true(sep$pool_cohorts)
+})
+
+test_that("sharp SCM rejects the staggered-only block arguments", {
+  sharp <- .adopt_panel(c(11, 11))
+  expect_error(scm_fit(y ~ d | id + time, data = sharp, method = "scm",
+                       pool_cohorts = FALSE), "staggered")
+  # passing the default explicitly is a no-op, not an error
+  expect_s3_class(scm_fit(y ~ d | id + time, data = sharp, method = "scm",
+                          pool_cohorts = TRUE), "coresynth_scm")
+})
+
+test_that("sharp SCM refuses covariates and asks for predictors instead", {
+  # SCM balances covariates (ADH 2010 S.2.3; BFR 2022 S.5.2) rather than
+  # partialling them out, and a sharp fit has pred() to do it with. Before
+  # this, `covariates` reached fit_scm_cpp() and changed nothing at all.
+  dat <- .adopt_panel(11)
+  set.seed(5)
+  dat$x <- rnorm(nrow(dat)) + dat$id / 10
+
+  expect_error(
+    scm_fit(y ~ d | id + time, data = dat, method = "scm", covariates = "x"),
+    "staggered SCM fits only"
+  )
+  expect_error(
+    scm_fit(y ~ d | id + time, data = dat, method = "scm", covariates = "x"),
+    "pred\\("
+  )
+  # the route the message names works
+  balanced <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
+                      predictors = list(pred("y", 1:10, "mean"),
+                                        pred("x", 1:10, "mean")))
+  expect_equal(nrow(balanced$predictor_table), 2L)
+
+  # staggered still partials out, and the covariate still moves the fit
+  stag <- .adopt_panel(c(9, 12, 15))
+  set.seed(5)
+  stag$x <- rnorm(nrow(stag)) + stag$id / 10
+  with_cov <- scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                      covariates = "x")
+  expect_length(with_cov$beta_hat, 1L)
+  expect_false(isTRUE(all.equal(
+    with_cov$estimate,
+    scm_fit(y ~ d | id + time, data = stag, method = "scm")$estimate)))
 })
 
 # ── BFR S.4 unit-level blocks, aggregation weights, rank test, frontier ──────
@@ -5311,6 +5451,105 @@ test_that("weights set the mass each treated unit carries", {
   ce <- w_st$cohort_estimates
   expect_equal(w_st$estimate, sum(ce$weight * ce$estimate) / sum(ce$weight))
   expect_gt(ce$weight[1], ce$weight[2])
+})
+
+test_that("the pooled objective weights each block by its mass (BFR A.2)", {
+  # Appendix A.2 writes the cohort problem on the SUM over the cohort's units:
+  # its target is sum_i 1{T_i = T(g)} Y_i and its weights satisfy
+  # sum_i gamma_ig = n_g, so the block residual is n_g times the mean gap. The
+  # heuristic is then
+  #   nu_hat = || sum_g n_g gap_g || / sum_g n_g ||gap_g||
+  # over the separate solution, which nu = 0 leaves in place.
+  panel_st <- .bfr_panel(c(9, 9, 9, 13, 17))   # cohort sizes 3, 1, 1
+  fit <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",
+                 nu = 0, fixedeff = FALSE)
+  cf <- fit$cohort_fits
+  expect_equal(vapply(cf, `[[`, integer(1L), "n_treated"), c(3L, 1L, 1L))
+
+  L   <- max(vapply(cf, `[[`, integer(1L), "T_pre"))
+  num <- numeric(L)
+  den <- 0
+  for (b in cf) {
+    pre <- seq_len(b$T_pre)
+    # lag order, so blocks with different windows align in event time
+    gap <- rev((b$Y_treat - drop(fit$Y_all[, b$idx_co, drop = FALSE] %*%
+                                   b$unit_weights))[pre])
+    m   <- b$n_treated
+    num[pre] <- num[pre] + m * gap
+    den <- den + m * sqrt(sum(gap^2))
+  }
+  expect_equal(fit$pooling$nu_heuristic, min(1, sqrt(sum(num^2)) / den),
+               tolerance = 1e-6)
+
+  # unit-level blocks are the same formula with every mass at one
+  units <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",
+                   nu = 0, fixedeff = FALSE, pool_cohorts = FALSE)
+  expect_equal(vapply(units$cohort_fits, `[[`, integer(1L), "n_treated"),
+               rep(1L, 5L))
+  expect_false(isTRUE(all.equal(fit$pooling$nu_heuristic,
+                                units$pooling$nu_heuristic)))
+})
+
+test_that("weights carry through the objective, the target and the bootstrap", {
+  panel_st <- .bfr_panel(c(9, 9, 13, 17))
+  w <- c("1" = 6, "2" = 1, "3" = 1, "4" = 1)
+  fit <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",
+                 weights = w)
+
+  # the block's target is the weighted average of its treated units, not the
+  # simple one, so the fit is aimed at the quantity the aggregation reports
+  b1 <- fit$cohort_fits[[1L]]
+  expect_equal(b1$n_treated, 2L)
+  wb <- c(6, 1) / 7
+  expect_equal(unname(b1$Y_treat),
+               unname(drop(b1$Y_treat_mat %*% wb)), tolerance = 1e-10)
+  # and its mass is the sum of those weights, up to the common rescaling
+  masses <- vapply(fit$cohort_fits, `[[`, numeric(1L), "mass")
+  expect_equal(masses / masses[2L], c(7, 1, 1), tolerance = 1e-10)
+
+  # the aggregation weight is that mass times T_post
+  ce <- fit$cohort_estimates
+  expect_equal(ce$weight,
+               (masses * ce$T_post) / sum(masses * ce$T_post),
+               tolerance = 1e-10)
+
+  # the wild bootstrap decomposes the same ATT: per-unit masses times T_post
+  TT <- length(fit$times)
+  tau <- numeric(0); om <- numeric(0)
+  for (b in fit$cohort_fits) {
+    pre <- seq_len(b$T_pre); post <- (b$T_pre + 1L):TT
+    tg <- (colMeans(b$Y_treat_mat[post, , drop = FALSE]) -
+             colMeans(b$Y_treat_mat[pre, , drop = FALSE])) -
+      (mean(b$Y_synth[post]) - mean(b$Y_synth[pre]))
+    tau <- c(tau, tg)
+    om  <- c(om, b$unit_masses * b$T_post)
+  }
+  expect_equal(sum(om / sum(om) * tau), fit$estimate, tolerance = 1e-10)
+  # (four treated units, so the bootstrap warns; the centring is the point)
+  expect_equal(suppressWarnings(
+    scm_inference(fit, n_boot = 50, seed = 1))$estimate, fit$estimate)
+
+  # equal weights reproduce the unweighted fit exactly
+  flat <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",
+                  weights = c("1" = 3, "2" = 3, "3" = 3, "4" = 3))
+  plain <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm")
+  expect_equal(flat$estimate, plain$estimate, tolerance = 1e-8)
+  expect_equal(flat$pooling$nu_heuristic, plain$pooling$nu_heuristic,
+               tolerance = 1e-8)
+})
+
+test_that("the frontier is traced on the weighted objective", {
+  panel_st <- .bfr_panel(c(9, 9, 13, 17))
+  fit <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",
+                 weights = c("1" = 6, "2" = 1, "3" = 1, "4" = 1))
+  fr <- scm_balance_frontier(fit, nu_grid = c(0, 0.5, 1))
+  # at nu = 0 the frontier reproduces the separate solution the fit normalised
+  # by, and the estimate column is the weighted one
+  expect_equal(fr$q_sep[1L], fit$pooling$q_sep_separate, tolerance = 1e-6)
+  expect_equal(fr$q_pool[1L], fit$pooling$q_pool_separate, tolerance = 1e-6)
+  sep <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm", nu = 0,
+                 weights = c("1" = 6, "2" = 1, "3" = 1, "4" = 1))
+  expect_equal(fr$estimate[1L], sep$estimate, tolerance = 1e-6)
 })
 
 test_that("weights are validated against the treated units", {

@@ -5272,6 +5272,17 @@ test_that("a single treated unit is unchanged by the pooling path", {
                        method = "scm", nu = 0.5), "staggered")
 })
 
+test_that("the placebo MSPE vectors are both named by donor", {
+  # mspe_pre_placebo and mspe_post_placebo are documented as a pair, so
+  # matching them up by name has to work for both.
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  p <- mspe_ratio_pval(fit)
+  donors <- colnames(fit$Y_co_pre)
+  expect_equal(names(p$mspe_pre_placebo), donors)
+  expect_equal(names(p$mspe_post_placebo), donors)
+  expect_equal(names(p$placebo_effects), donors)
+})
+
 test_that("mspe_ratio_pval refuses a fit that pools several treated units", {
   # Measured under no treatment effect, the test rejected at 28% (3 pooled
   # units) and 53% (6) against a nominal 10%: the averaged treated series is

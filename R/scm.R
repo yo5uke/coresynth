@@ -1690,10 +1690,11 @@ mspe_ratio_pval <- function(
 
   co_names <- colnames(fit$Y_co_pre)
   if (!is.null(co_names)) {
-    names(ratios_co)   <- co_names
-    names(co_effects)  <- co_names
-    names(mspe_pre_co) <- co_names
-    colnames(gaps_mat) <- co_names
+    names(ratios_co)    <- co_names
+    names(co_effects)   <- co_names
+    names(mspe_pre_co)  <- co_names
+    names(mspe_post_co) <- co_names
+    colnames(gaps_mat)  <- co_names
   }
 
   treated_effect <- fit$estimate

@@ -376,6 +376,10 @@
   returned one series while `augment()` returned another. Affects `"scm"` and
   `"sdid"`; without `covariates` the two scales coincide and nothing changes.
 
+- **`mspe_ratio_pval()` names `mspe_post_placebo` by donor.** Its companion
+  `mspe_pre_placebo` was named and it was not, so the two could not be lined
+  up by name although the documentation presents them as a pair.
+
 - **`loo_donors()` re-solves with the inner solver the fit used.** It always
   called the active-set method, so on a degenerate predictor spec -- where the
   optimal set is a face rather than a point and the two solvers pick different

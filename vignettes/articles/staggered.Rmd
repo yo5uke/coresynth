@@ -108,28 +108,43 @@ adopting at the same time are averaged into one cohort — fully pooling within
 a cohort is justified by their theory — and each cohort gets its own synthetic
 control. How the cohort fits interact is controlled by `nu`:
 
-- `nu = NULL` (default) — each cohort is fitted independently with the classic
-  V-optimised SCM (the behaviour of earlier versions).
+- `nu = "auto"` (default) — the paper's heuristic, based on how well separate
+  synthetic controls already balance the average.
 - `nu` in `[0, 1]` — **partially pooled SCM**: all cohort weight vectors are
   chosen jointly, trading off per-cohort pre-treatment fit (`nu = 0`) against
   the fit of the *average* placebo gap across cohorts (`nu = 1`), which
-  anchors the aggregate ATT.
-- `nu = "auto"` — the paper's heuristic based on how well separate synthetic
-  controls already balance the average.
+  anchors the aggregate ATT. The paper advises against both extremes.
+- `nu = "separate"` — each cohort fitted independently with the classic
+  V-optimised SCM. This is `nu = 0` reached through a path that keeps the
+  V optimisation, donor filtering and penalty options the pooled solver has no
+  room for, and it is what the default falls back to when
+  `donor_mspe_threshold`, `lambda_pen` or `v_selection = "oos"` is set.
 
-`fixedeff = TRUE` additionally demeans every unit by its own pre-treatment
-mean within each cohort (an intercept shift), which the paper recommends when
-outcome levels differ across units.
+`fixedeff = TRUE` (also the default) demeans every unit by its own
+pre-treatment mean within each cohort (an intercept shift), which the paper
+reports dominates the alternatives when outcome levels differ across units.
 
 ```{r scm-pooled}
-fit_pp <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
-                  nu = "auto", fixedeff = TRUE)
+fit_pp <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
 fit_pp$estimate
 fit_pp$pooling[c("nu", "q_sep", "q_pool", "q_sep_separate", "q_pool_separate")]
 ```
 
 `q_pool` (the pooled imbalance) improves relative to the separate solution at
 the cost of a small increase in `q_sep` (the average per-cohort imbalance).
+`scm_balance_frontier()` traces that trade-off across a grid of `nu`, which
+the paper calls "an important tool for using partially pooled SCM in
+practice".
+
+Two further arguments control what the fit is aimed at:
+
+- `pool_cohorts = FALSE` gives every treated unit its own weight vector (the
+  paper's Section 4 formulation) instead of one per cohort (its Appendix A.2
+  hierarchy, the default). `scm_rank_pval()` needs the unit-level form.
+- `weights` sets the mass each treated unit carries in the aggregate ATT —
+  a population or GDP figure, say, following Abadie (2021, S.8). It sets the
+  block's target series, its weight in the pooled objective, and its
+  aggregation weight alike.
 
 ## Inference under staggered adoption
 

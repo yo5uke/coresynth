@@ -112,6 +112,11 @@ plot(fits$scm, type = "gap")      # treatment effect over time
 plot(fits$scm, type = "weights")  # donor weights
 ```
 
+The dashed vertical line marks the **last pre-treatment period**: everything
+to its left is what the fit was asked to match. `vline_offset = 0` moves it to
+the first post-treatment period instead, and `vline`, `hline`, `colors`,
+`labels` and `linetypes` restyle the rest -- see `?plot.coresynth`.
+
 ## tidy / glance / augment
 
 coresynth integrates with `broom`, so results drop straight into tidy

@@ -75,9 +75,25 @@ pruning cutoff by construction:
 plot(mspe, type = "ratios")
 ```
 
+The `mspe_prune` cutoff applies to the p-value as well as the picture, and
+`statistic = "post_mspe"` ranks the post-treatment MSPE itself rather than its
+ratio (Abadie 2021, S.3.5), which is the variant that needs the cutoff:
+
+```{r scm-mspe-pruned}
+mspe_ratio_pval(fit_scm, mspe_prune = 5, statistic = "post_mspe")$p_value
+```
+
+When **several units are treated at once** the fit pools them into one
+synthetic control, and this test no longer applies: the averaged treated
+series is less noisy than any single donor, so its MSPE ratio is inflated and
+the test over-rejects. Use `scm_rank_pval()` instead — the rank-based
+permutation test of Abadie & L'Hour (2021, S.3.2), which ranks per-unit
+statistics so that only single-unit quantities are ever compared.
+
 For **staggered** SCM fits, use `scm_inference()` — the wild bootstrap of
 Ben-Michael, Feller & Rothstein (2022) — described in the
-[Staggered adoption](staggered.html) article.
+[Staggered adoption](staggered.html) article. `scm_rank_pval()` works there
+too, on a fit made with `pool_cohorts = FALSE`.
 
 Series colors, legend text, line types, and the reference lines are
 customizable via `colors`, `labels` (e.g. `labels = c(treated = "California")`),

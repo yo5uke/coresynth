@@ -193,6 +193,30 @@
   and six treated units), where `mspe_ratio_pval()` on the same fits reached
   28% and 53%; with an effect of 1.5 its power was 77% and 85%.
 
+- **`mspe_ratio_pval()` can discard ill-fitting placebo runs.** Abadie,
+  Diamond & Hainmueller (2010) report their permutation distribution at
+  cutoffs of 20, 5 and 2 times the treated unit's pre-treatment MSPE, on the
+  grounds that a placebo run the synthetic control could not track before
+  treatment says nothing about how rare a large post-treatment gap is. That
+  cutoff existed only in `plot.scm_placebo()`, where it changed the picture
+  but not the p-value. `mspe_prune` now applies it to the test, and
+  `n_placebo_pruned` reports how many runs it dropped. This is a different
+  control from `mspe_threshold`, which is a floor guarding the ratio's
+  denominator against a near-zero pre-treatment MSPE.
+
+  `statistic = "post_mspe"` adds the alternative of Abadie (2021, S.3.5):
+  rank the post-treatment MSPE itself, rather than its ratio to the
+  pre-treatment MSPE, once the ill-fitting runs are gone. On a panel carrying
+  five donors no synthetic control can track, that statistic gives p = 0.150
+  unpruned -- the unfittable donors sit at the top of the distribution on size
+  alone -- and p = 0.029 at `mspe_prune = 5`. The ratio statistic reaches
+  p = 0.025 without any cutoff, which is the advantage ADH claim for it in
+  their Figure 8.
+
+  `plot()` and `plot_data()` on the result now default to whichever cutoff the
+  test used, so the figure and the p-value describe the same set of placebo
+  runs. Pass `mspe_prune = Inf` to draw them all regardless.
+
 - **`pool_cohorts = FALSE` fits one synthetic control per treated unit.**
   Staggered SCM pools units sharing an adoption date into a cohort, which is
   the Appendix A.2 hierarchy of Ben-Michael, Feller & Rothstein (2022). Their

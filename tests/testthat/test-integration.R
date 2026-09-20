@@ -5390,3 +5390,93 @@ test_that("scm_balance_frontier refuses fits it cannot trace", {
   expect_error(scm_balance_frontier(fit, nu_grid = 0.5), "two or more")
   expect_error(scm_balance_frontier(fit, nu_grid = c(0, 2)), "two or more")
 })
+
+# ── ADH (2010) Figures 5-7: pruning ill-fitting placebo runs ─────────────────
+# A placebo run the synthetic control could not track before treatment says
+# nothing about how rare a large post-treatment gap is. ADH therefore report
+# the permutation distribution with such runs discarded, at cutoffs of 20, 5
+# and 2 times the treated unit's pre-treatment MSPE.
+
+.prune_panel <- function(seed = 7, N = 40, TT = 24, T0 = 14, tau = 3,
+                         n_bad = 5L) {
+  set.seed(seed)
+  f <- matrix(rnorm(TT * 2), TT, 2); L <- matrix(rnorm(N * 2), N, 2)
+  Y <- f %*% t(L) + matrix(rnorm(N * TT, sd = 0.4), TT, N)
+  bad <- (N - n_bad + 1L):N
+  Y[, bad] <- Y[, bad] + matrix(rnorm(TT * n_bad, sd = 4), TT, n_bad)
+  D <- matrix(0L, TT, N); D[(T0 + 1):TT, 1] <- 1L
+  Y[(T0 + 1):TT, 1] <- Y[(T0 + 1):TT, 1] + tau
+  data.frame(id = rep(1:N, each = TT), time = rep(1:TT, times = N),
+             y = as.vector(Y), d = as.vector(D))
+}
+
+test_that("mspe_prune discards the runs it says it does", {
+  fit <- scm_fit(y ~ d | id + time, data = .prune_panel(), method = "scm")
+  none <- mspe_ratio_pval(fit)
+  expect_equal(none$n_placebo_pruned, 0L)
+  expect_equal(none$mspe_prune, Inf)
+
+  tight <- mspe_ratio_pval(fit, mspe_prune = 5)
+  expect_gt(tight$n_placebo_pruned, 0L)
+  # exactly the runs above the cutoff, and no others
+  expect_equal(tight$n_placebo_pruned,
+               sum(tight$mspe_pre_placebo > 5 * tight$mspe_pre_treated))
+  expect_equal(tight$n_placebo_used + tight$n_placebo_pruned,
+               length(tight$mspe_pre_placebo))
+  # a lower cutoff can only discard more
+  expect_gte(mspe_ratio_pval(fit, mspe_prune = 2)$n_placebo_pruned,
+             tight$n_placebo_pruned)
+})
+
+test_that("pruning is what makes the post-MSPE statistic usable", {
+  # Abadie (2021) S.3.5 offers ranking the post-treatment fit as the
+  # alternative to the ratio, but only once ill-fitting runs are gone: left in,
+  # they sit at the top of the distribution on size alone.
+  fit <- scm_fit(y ~ d | id + time, data = .prune_panel(), method = "scm")
+  raw <- mspe_ratio_pval(fit, statistic = "post_mspe")
+  cut <- mspe_ratio_pval(fit, statistic = "post_mspe", mspe_prune = 5)
+  expect_gt(raw$p_value, cut$p_value)
+  expect_lt(cut$p_value, 0.1)
+  expect_equal(cut$statistic, "post_mspe")
+  # the ratio statistic needs no cutoff to find the same signal (ADH Fig. 8)
+  expect_lt(mspe_ratio_pval(fit)$p_value, 0.1)
+})
+
+test_that("pruning also applies to the ratio and one-sided tests", {
+  fit <- scm_fit(y ~ d | id + time, data = .prune_panel(), method = "scm")
+  r <- mspe_ratio_pval(fit, mspe_prune = 5)
+  expect_gt(r$n_placebo_pruned, 0L)
+  expect_equal(r$statistic, "ratio")
+  one <- mspe_ratio_pval(fit, mspe_prune = 5, alternative = "greater")
+  expect_equal(one$n_placebo_used + one$n_placebo_pruned,
+               length(one$mspe_pre_placebo))
+  expect_gte(one$p_value, 0); expect_lte(one$p_value, 1)
+})
+
+test_that("mspe_prune and statistic are validated", {
+  fit <- scm_fit(y ~ d | id + time, data = .prune_panel(), method = "scm")
+  expect_error(mspe_ratio_pval(fit, mspe_prune = 0), "positive number")
+  expect_error(mspe_ratio_pval(fit, mspe_prune = -1), "positive number")
+  expect_error(mspe_ratio_pval(fit, mspe_prune = c(2, 5)), "positive number")
+  expect_error(mspe_ratio_pval(fit, statistic = "post_mspe",
+                               alternative = "greater"), "no direction")
+  expect_error(mspe_ratio_pval(fit, mspe_prune = 1e-8,
+                               statistic = "post_mspe"), "discards every")
+})
+
+test_that("the gap plot reuses the cutoff the p-value was computed under", {
+  fit <- scm_fit(y ~ d | id + time, data = .prune_panel(), method = "scm")
+  cut <- mspe_ratio_pval(fit, mspe_prune = 5)
+  n_lines <- function(p) {
+    d <- ggplot2::ggplot_build(p)$data
+    length(unique(d[[1]]$group))
+  }
+  expect_equal(n_lines(plot(cut, type = "gaps")), cut$n_placebo_used)
+  # Inf overrides it, showing every run again
+  expect_equal(n_lines(plot(cut, type = "gaps", mspe_prune = Inf)),
+               length(cut$mspe_pre_placebo))
+  # an unpruned test still shows everything by default
+  none <- mspe_ratio_pval(fit)
+  expect_equal(n_lines(plot(none, type = "gaps")),
+               length(none$mspe_pre_placebo))
+})

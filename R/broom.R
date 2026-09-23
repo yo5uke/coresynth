@@ -19,7 +19,9 @@ tidy.coresynth_staggered <- function(x, ...) {
     return(data.frame())
   }
   data.frame(
-    term     = paste0("cohort_", ce$cohort),
+    # Under pool_cohorts = FALSE the blocks of one cohort share its adoption
+    # date, so the term has to name the unit to stay unique.
+    term     = .block_labels(x, ce$cohort, ce[["unit"]]),
     estimate = ce$estimate,
     weight   = ce$weight,
     n_treated = ce$n_treated,
@@ -299,7 +301,10 @@ augment.coresynth_staggered <- function(x, include_donors = FALSE, ...) {
     } else {
       cf$n_treated %||% 1L
     }
-    unit_label    <- sprintf("cohort_%s", as.character(cf$cohort))
+    # .unit is the key a caller groups or draws by, so it has to tell the
+    # blocks apart: under pool_cohorts = FALSE they share an adoption date and
+    # a cohort label would collapse several units' series into one.
+    unit_label    <- .block_labels(x, cf$cohort, cf[["unit"]])
     if (is_multi && !is.null(cf$arm))
       unit_label <- sprintf("%s_arm_%s", unit_label, as.character(cf$arm))
 

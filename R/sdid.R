@@ -26,95 +26,115 @@
 #' @param zeta2 Override zeta^2 (penalty BEFORE T_pre multiplication). Default: auto.
 #' @param zeta_t Base tiny ridge scale for time weight uniqueness (default 1e-6).
 #' @param covariates Character vector of time-varying covariate column names in
-#'   `data`. When provided, covariates are partialled out of Y via OLS on the
-#'   control-unit pre-period block before computing SDID weights and the ATT
-#'   (Arkhangelsky et al. 2021 S.4; Clarke et al. 2024). Requires `data`,
-#'   `id_var`, and `time_var` to be supplied (done automatically when called
-#'   via [scm_fit()]). For staggered adoption, a global partial-out using all
-#'   Wit=0 observations is applied before cohort-level SDID (Clarke et al. 2024
-#'   S.2.2 "projected" method, Kranz 2022).
+#'   `data`. When provided, covariates are partialled out of Y before
+#'   computing SDID weights and the ATT, by the "projected" method of Clarke
+#'   et al. (2024, S.2.2) and Kranz (2022): the coefficients come from a
+#'   regression of Y on the covariates with unit and time fixed effects over
+#'   every untreated (Wit = 0) cell, sharp and staggered alike. Requires
+#'   `data`, `id_var`, and `time_var` to be supplied (done automatically when
+#'   called via [scm_fit()]).
 #' @param data        Full long-format data frame (passed by [scm_fit()]).
 #' @param id_var      Name of the unit identifier column (passed by [scm_fit()]).
 #' @param time_var    Name of the time identifier column (passed by [scm_fit()]).
 #' @param control_group For staggered adoption: which units serve as controls
-#'   for each cohort. `"clean"` (default) uses never-treated units plus units
-#'   whose adoption date is strictly later than cohort g (Clarke et al. 2024).
-#'   `"never_treated"` uses only units that are never treated.
+#'   for each cohort. `"never_treated"` (default) uses the pure controls of
+#'   Clarke et al. (2024, Algorithm 1). `"clean"` (deprecated) adds units
+#'   whose adoption date is later than cohort g, whose post-adoption outcomes
+#'   then contaminate the cohort's counterfactual.
 #' @return A list of class `coresynth`.
 #' @noRd
 
-# ── Internal: covariate partial-out (sharp) ──────────────────────────────────
-# OLS of Y on X using control units x pre-period block.
-# Returns Y_tilde = Y - X * beta_hat (all units, all periods).
-.sdid_partial_out <- function(Y, X_arr, idx_co, T_pre) {
-  p        <- dim(X_arr)[3]
-  pre_rows <- seq_len(T_pre)
-  N_co     <- length(idx_co)
-
-  X_mat <- matrix(NA_real_, T_pre * N_co, p)
-  y_vec <- as.vector(Y[pre_rows, idx_co, drop = FALSE])
-  for (j in seq_len(p))
-    X_mat[, j] <- as.vector(X_arr[pre_rows, idx_co, j])
-
-  beta_hat <- drop(solve(crossprod(X_mat) + diag(1e-8, p),
-                         crossprod(X_mat, y_vec)))
-
-  Y_tilde <- Y
-  for (j in seq_len(p))
-    Y_tilde <- Y_tilde - X_arr[, , j] * beta_hat[j]
-
-  list(Y_tilde = Y_tilde, beta_hat = beta_hat)
-}
-
-# ── Internal: covariate partial-out (staggered) ───────────────────────────────
-# OLS of Y on X using ALL Wit=0 observations:
-#   - control units x all T periods
-#   - treated unit j x periods 1..(T_adopt[j]-1)
-# This is Clarke et al. (2024) S.2.2 "projected" approach (Kranz 2022).
-# Returns Y_tilde = Y - X * beta_hat (all units, all periods).
-.sdid_partial_out_staggered <- function(Y, X_arr, pan) {
-  p       <- dim(X_arr)[3]
-  TT      <- nrow(Y)
-  idx_co  <- pan$idx_control
-  idx_tr  <- pan$idx_treat
-  T_adopt <- pan$T_adopt
-
-  # Collect (row, col) pairs for Wit = 0
-  co_pairs <- do.call(rbind, lapply(idx_co, function(j)
-    data.frame(row = seq_len(TT), col = j, stringsAsFactors = FALSE)))
-
-  tr_pairs <- do.call(rbind, lapply(idx_tr, function(j) {
-    t0 <- T_adopt[j]
-    if (is.na(t0) || t0 <= 1L) return(NULL)
-    data.frame(row = seq_len(t0 - 1L), col = j, stringsAsFactors = FALSE)
-  }))
-
-  cells <- rbind(co_pairs, tr_pairs)
-  K     <- nrow(cells)
-
-  idx_mat <- cbind(cells$row, cells$col)
-  y_vec   <- Y[idx_mat]
-
-  X_mat <- matrix(NA_real_, K, p)
+# ── Internal: covariate partial-out ──────────────────────────────────────────
+# Kranz (2022), as adopted by Clarke et al. (2024, S.2.2, "projected"): beta
+# comes from the two-way fixed-effects regression
+#   Y_it = X_it beta + mu_i + lambda_t + e_it
+# on untreated cells only, and Y - X beta is what the estimator then sees.
+# The fixed effects are not optional: without them beta also absorbs how the
+# covariate's unit levels and time trend line up with the outcome's, and
+# subtracting X beta then writes that spurious slope back into every unit's
+# series -- including a differential trend wherever treated units' covariates
+# trend differently, which is the usual reason to adjust for them at all.
+#
+# The cells form an unbalanced set, so the within transformation is done by
+# alternating projections (sweep unit means, then time means, until both
+# vanish); on a balanced block it is exact after one pass. By Frisch-Waugh-
+# Lovell, OLS on the demeaned columns is the fixed-effects slope.
+.twfe_partial_out <- function(Y, X_arr, cells, label) {
+  p   <- dim(X_arr)[3]
+  K   <- nrow(cells)
+  y_v <- Y[cells]
+  X_m <- matrix(NA_real_, K, p)
   for (k in seq_len(p))
-    X_mat[, k] <- X_arr[cbind(cells$row, cells$col, rep(k, K))]
+    X_m[, k] <- X_arr[cbind(cells, rep(k, K))]
 
-  # Drop rows with any NA (missing covariate values)
-  ok <- complete.cases(X_mat)
+  ok <- stats::complete.cases(X_m) & is.finite(y_v)
   if (sum(ok) < p + 1L)
-    stop("Too few complete cases for covariate partial-out in staggered SDID.",
+    stop("Too few complete cases for covariate partial-out in ", label, ".",
          call. = FALSE)
-  X_mat <- X_mat[ok, , drop = FALSE]
-  y_vec <- y_vec[ok]
+  X_m  <- X_m[ok, , drop = FALSE]
+  y_v  <- y_v[ok]
+  f_t  <- factor(cells[ok, 1L])
+  f_i  <- factor(cells[ok, 2L])
 
-  beta_hat <- drop(solve(crossprod(X_mat) + diag(1e-8, p),
-                         crossprod(X_mat, y_vec)))
+  demean <- function(v) {
+    scale <- max(1, max(abs(v)))
+    for (it in seq_len(10000L)) {
+      v   <- v - (rowsum(v, f_i, reorder = TRUE) / tabulate(f_i))[f_i]
+      m_t <- (rowsum(v, f_t, reorder = TRUE) / tabulate(f_t))[f_t]
+      v   <- v - m_t
+      if (max(abs(m_t)) < 1e-12 * scale) break
+    }
+    v
+  }
+  y_w <- demean(y_v)
+  X_w <- apply(X_m, 2L, demean)
+  if (!is.matrix(X_w)) X_w <- matrix(X_w, ncol = p)
+
+  # A covariate with no variation left after the fixed effects (time-
+  # invariant, or a common time path) is absorbed by them and has no slope to
+  # estimate. The ridge below would return ~0 for it anyway; say so.
+  var_raw <- apply(X_m, 2L, function(v) sum((v - mean(v))^2))
+  var_w   <- colSums(X_w^2)
+  absorbed <- var_w <= 1e-10 * pmax(var_raw, .Machine$double.eps)
+  if (any(absorbed)) {
+    cov_names <- dimnames(X_arr)[[3L]] %||% paste0("covariate ", seq_len(p))
+    warning("Covariate(s) ", paste(cov_names[absorbed], collapse = ", "),
+            " vary only across units or only over time, so the unit and ",
+            "time fixed effects of the partial-out regression absorb them ",
+            "and they are not adjusted for.", call. = FALSE)
+  }
+
+  beta_hat <- numeric(p)
+  keep <- !absorbed
+  if (any(keep))
+    beta_hat[keep] <- drop(solve(
+      crossprod(X_w[, keep, drop = FALSE]) + diag(1e-8, sum(keep)),
+      crossprod(X_w[, keep, drop = FALSE], y_w)))
 
   Y_tilde <- Y
   for (k in seq_len(p))
     Y_tilde <- Y_tilde - X_arr[, , k] * beta_hat[k]
 
   list(Y_tilde = Y_tilde, beta_hat = beta_hat)
+}
+
+# The sample is every untreated cell, as in Kranz's reference implementation
+# (xsynthdid::adjust.outcome.for.x, whose default rows are treatment == 0):
+#   - control units x all T periods
+#   - treated unit j x periods 1..(T_adopt[j]-1)
+# The same rule serves sharp and staggered panels.
+# Returns Y_tilde = Y - X * beta_hat (all units, all periods).
+.sdid_partial_out_staggered <- function(Y, X_arr, pan) {
+  TT      <- nrow(Y)
+  T_adopt <- pan$T_adopt
+  co_cells <- as.matrix(expand.grid(row = seq_len(TT), col = pan$idx_control))
+  tr_cells <- do.call(rbind, lapply(pan$idx_treat, function(j) {
+    t0 <- T_adopt[j]
+    if (is.na(t0) || t0 <= 1L) return(NULL)
+    cbind(row = seq_len(t0 - 1L), col = j)
+  }))
+  .twfe_partial_out(Y, X_arr, rbind(co_cells, tr_cells),
+                    "staggered adoption")
 }
 
 # ── Internal: SDID from pre-built matrices ────────────────────────────────────
@@ -204,7 +224,7 @@
 # Arkhangelsky et al. (2021) Appendix S.8; Clarke et al. (2024).
 # Y: optional pre-residualised outcome matrix. If NULL, uses pan$Y.
 .fit_sdid_staggered <- function(pan, Y = NULL, zeta2 = NULL, zeta_t = 1e-6,
-                                control_group = "clean") {
+                                control_group = "never_treated") {
   Y       <- if (!is.null(Y)) Y else pan$Y
   T_adopt <- pan$T_adopt
   idx_tr  <- pan$idx_treat
@@ -277,11 +297,12 @@ fit_sdid_cpp <- function(y, d, id, time,
                          zeta2 = NULL, zeta_t = 1e-6,
                          covariates = NULL,
                          data = NULL, id_var = NULL, time_var = NULL,
-                         control_group = c("clean", "never_treated"),
+                         control_group = c("never_treated", "clean"),
                          ...) {
   control_group <- match.arg(control_group)
   pan    <- panel_to_matrices(y, d, id, time)
   .check_panel_complete(pan$Y, "SDID")
+  .check_control_group(control_group, pan, "SDID")
   Y      <- pan$Y
   T_pre  <- pan$T_pre
   idx_tr <- pan$idx_treat
@@ -343,7 +364,7 @@ fit_sdid_cpp <- function(y, d, id, time,
   if (use_cov) {
     X_arr    <- build_covariate_array(data, id_var, time_var,
                                      covariates, pan$units, pan$times)
-    po       <- .sdid_partial_out(Y, X_arr, idx_co, T_pre)
+    po       <- .sdid_partial_out_staggered(Y, X_arr, pan)
     Y_work   <- po$Y_tilde
     beta_hat <- po$beta_hat
   } else {

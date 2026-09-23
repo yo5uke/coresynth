@@ -509,14 +509,18 @@ plot.coresynth <- function(x, type = c("trend", "gap", "weights",
 #' pre-treatment MSPE exceeds a multiple of the treated unit's: 20, 5, and 2
 #' in their Figures 5-7 (`mspe_prune`).
 #'
-#' `type = "ratios"` shows the post/pre-treatment MSPE ratio of every unit
-#' (ADH 2010, Figure 8), the statistic behind the two-sided permutation
-#' p-value; it requires no pruning cutoff by construction.
+#' `type = "ratios"` shows the statistic behind the two-sided permutation
+#' p-value, one point per unit (ADH 2010, Figure 8): the post/pre-treatment
+#' MSPE ratio, or the post-treatment MSPE where the test was run with
+#' `statistic = "post_mspe"`. The ratio needs no pruning cutoff by
+#' construction, which is why `mspe_ratio_pval()` leaves `mspe_prune` at
+#' `Inf`; where the test did prune, the same runs are dropped here so that the
+#' points and the p-value in the subtitle describe one set of placebo runs.
 #'
 #' @param x A `scm_placebo` object from [mspe_ratio_pval()].
 #' @param type One of `"gaps"` (ADH 2010, Figures 4-7) or `"ratios"`
 #'   (ADH 2010, Figure 8).
-#' @param mspe_prune Only for `type = "gaps"`: exclude placebo units whose
+#' @param mspe_prune Exclude placebo units whose
 #'   pre-treatment MSPE exceeds `mspe_prune` times the treated unit's.
 #'   `NULL` (default) reuses the cutoff [mspe_ratio_pval()] computed the
 #'   p-value under, so the picture and the test describe the same set of
@@ -668,7 +672,11 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = NULL,
   }
 
   # type == "ratios" (ADH 2010, Figure 8)
-  r     <- x$mspe_ratios_all
+  # Draw the quantity the p-value actually ranked: the post/pre ratio, or the
+  # post-treatment MSPE where statistic = "post_mspe" asked for that instead.
+  post_stat <- identical(x$statistic %||% "ratio", "post_mspe")
+  r     <- if (post_stat) c(treated = x$mspe_post_treated, x$mspe_post_placebo)
+           else x$mspe_ratios_all
   units <- names(r)
   if (is.null(units)) units <- c("Treated", sprintf("Donor %d", seq_len(length(r) - 1L)))
   # keep the axis tick consistent with the (possibly relabeled) legend entry
@@ -676,27 +684,46 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = NULL,
   blank <- !nzchar(units)
   units[blank] <- sprintf("Donor %d", which(blank) - 1L)
 
-  df <- data.frame(unit = units, ratio = as.numeric(r),
+  df <- data.frame(unit = units, value = as.numeric(r),
                    series = c("Treated", rep("Placebo (donor pool)", length(r) - 1L)))
-  n_dropped <- sum(!is.finite(df$ratio))
-  df <- df[is.finite(df$ratio), ]
-  if (nrow(df) == 0L) stop("No finite MSPE ratios to plot.")
+  # The same cutoff the test used, so the points and the p-value in the
+  # subtitle describe one set of placebo runs. Only runs the cutoff removes
+  # count as pruned: one whose pre-treatment MSPE is not finite never fitted
+  # at all, and is reported by the finite-value filter below instead.
+  cut_at    <- mspe_prune * x$mspe_pre_treated
+  drop_pl   <- is.finite(x$mspe_pre_placebo) & is.finite(cut_at) &
+    x$mspe_pre_placebo > cut_at
+  n_pruned  <- sum(drop_pl)
+  df        <- df[c(TRUE, !drop_pl), , drop = FALSE]
+  n_dropped <- sum(!is.finite(df$value))
+  df        <- df[is.finite(df$value), ]
+  if (nrow(df) == 0L)
+    stop("No finite values left to plot; lower mspe_threshold or raise ",
+         "mspe_prune.", call. = FALSE)
 
   series_colors <- stats::setNames(.merge_named_colors(
     c(treated = "#2166ac", placebo = "grey60"), colors
   ), unname(key_map))
 
-  p <- ggplot(df, aes(x = ratio, y = reorder(unit, ratio), color = series)) +
+  notes <- c(
+    if (n_pruned > 0L)
+      paste0("Pruned ", n_pruned, " placebo unit(s) with pre-treatment MSPE > ",
+             mspe_prune, "x the treated unit's."),
+    if (n_dropped > 0L)
+      paste0(n_dropped, " unit(s) without a finite statistic omitted.")
+  )
+
+  p <- ggplot(df, aes(x = value, y = reorder(unit, value), color = series)) +
     geom_point(size = 2.5) +
     scale_color_manual(values = series_colors, breaks = names(series_colors),
                        labels = series_labels) +
     theme_minimal(base_size = 13) +
-    labs(title = "Post/Pre-Treatment MSPE Ratios  [SCM]",
+    labs(title = if (post_stat) "Post-Treatment MSPE by Unit  [SCM]"
+                 else "Post/Pre-Treatment MSPE Ratios  [SCM]",
          subtitle = subtitle,
-         x = "MSPE ratio (post / pre)", y = NULL, color = NULL,
-         caption = if (n_dropped > 0L) {
-           paste0(n_dropped, " unit(s) without a finite ratio (mspe_threshold filter) omitted.")
-         })
+         x = if (post_stat) "Post-treatment MSPE" else "MSPE ratio (post / pre)",
+         y = NULL, color = NULL,
+         caption = if (length(notes)) paste(notes, collapse = " "))
   p
 }
 
@@ -738,7 +765,7 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = NULL,
 #'   `show_donors` largest-weight donors as `series = "Donors"` rows, adding a
 #'   `unit` column that identifies each donor (`NA` for the treated and
 #'   synthetic series). Default `0` (treated and synthetic series only).
-#' @param mspe_prune For a `scm_placebo` object with `type = "gaps"`: drop
+#' @param mspe_prune For a `scm_placebo` object: drop
 #'   placebo units whose pre-treatment MSPE exceeds `mspe_prune` times the
 #'   treated unit's, as in [plot.scm_placebo()]. `NULL` (default) reuses the
 #'   cutoff [mspe_ratio_pval()] computed the p-value under; `Inf` keeps every
@@ -756,7 +783,9 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = NULL,
 #'     \item{`"pred_weights"`}{`predictor`, `weight` (sharp SCM only).}
 #'     \item{`"gaps"`}{`time`, `gap`, `unit` (`NA` for the treated series),
 #'       `series` (`"Treated"` / `"Placebo (donor pool)"`).}
-#'     \item{`"ratios"`}{`unit`, `ratio`, `series`.}
+#'     \item{`"ratios"`}{`unit`, `ratio`, `post_mspe`, `series` -- both
+#'       candidate statistics, so the frame answers either
+#'       [mspe_ratio_pval()] `statistic`.}
 #'   }
 #' @seealso [plot.coresynth()], [plot.scm_placebo()]
 #' @examples
@@ -953,8 +982,10 @@ plot_data.scm_placebo <- function(x, type = c("gaps", "ratios"),
     return(out)
   }
 
-  # type == "ratios": every unit (including non-finite ratios excluded from the
-  # plot by the mspe_threshold filter) is kept, so the frame is complete.
+  # type == "ratios": both candidate statistics are returned, so the frame
+  # answers either test. Units with a non-finite ratio (the mspe_threshold
+  # filter) are kept -- the plot drops them, the frame reports them -- but the
+  # `mspe_prune` runs are dropped, as they are from the p-value.
   r     <- x$mspe_ratios_all
   units <- names(r)
   if (is.null(units))
@@ -962,12 +993,20 @@ plot_data.scm_placebo <- function(x, type = c("gaps", "ratios"),
   if (!nzchar(units[1L])) units[1L] <- "Treated"
   blank <- !nzchar(units)
   units[blank] <- sprintf("Donor %d", which(blank) - 1L)
-  df <- data.frame(
-    unit   = units,
-    ratio  = as.numeric(r),
-    series = c("Treated", rep("Placebo (donor pool)", length(r) - 1L)),
-    stringsAsFactors = FALSE
+  cols <- list(
+    unit      = units,
+    ratio     = as.numeric(r),
+    # Objects from before the post_mspe statistic existed carry the ratio only.
+    post_mspe = if (!is.null(x$mspe_post_placebo))
+      as.numeric(c(x$mspe_post_treated, x$mspe_post_placebo)),
+    series    = c("Treated", rep("Placebo (donor pool)", length(r) - 1L))
   )
+  df <- do.call(data.frame,
+                c(Filter(Negate(is.null), cols), list(stringsAsFactors = FALSE)))
+  cut_at  <- mspe_prune * x$mspe_pre_treated
+  drop_pl <- is.finite(x$mspe_pre_placebo) & is.finite(cut_at) &
+    x$mspe_pre_placebo > cut_at
+  df <- df[c(TRUE, !drop_pl), , drop = FALSE]
   rownames(df) <- NULL
   df
 }

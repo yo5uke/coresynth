@@ -2,11 +2,11 @@
 % Please edit documentation in R/scm.R
 \name{scm_inference}
 \alias{scm_inference}
-\title{Wild Bootstrap Inference for Staggered SCM}
+\title{Inference for Staggered SCM}
 \usage{
 scm_inference(
   fit,
-  method = "wild_bootstrap",
+  method = c("jackknife", "wild_bootstrap"),
   n_boot = 1000L,
   level = 0.95,
   alternative = c("two.sided", "greater", "less"),
@@ -18,46 +18,76 @@ scm_inference(
 panel with multiple adoption times). Sharp fits are rejected: use
 \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} or \code{\link[=conformal_inference]{conformal_inference()}} instead.}
 
-\item{method}{Only \code{"wild_bootstrap"} is available.}
+\item{method}{\code{"jackknife"} (default) or \code{"wild_bootstrap"}.}
 
-\item{n_boot}{Number of bootstrap draws. Default 1000.}
+\item{n_boot}{Number of bootstrap draws (\code{"wild_bootstrap"} only).
+Default 1000.}
 
 \item{level}{Confidence level. Default 0.95.}
 
 \item{alternative}{Direction of the alternative hypothesis for the
 p-value: \code{"two.sided"} (default), \code{"greater"}, or \code{"less"}.}
 
-\item{seed}{Optional RNG seed.}
+\item{seed}{Optional RNG seed (\code{"wild_bootstrap"} only).}
 }
 \value{
 A \code{coresynth_inference} object with the standard fields
 (\code{estimate}, \code{se}, \code{p_value}, \code{ci_lower}, \code{ci_upper}, \code{method},
-\code{staggered}, \code{n_controls}, \code{alternative}, \code{boot_ests}), compatible
-with \code{\link[=tidy.coresynth_inference]{tidy.coresynth_inference()}} and \code{\link[=glance.coresynth_inference]{glance.coresynth_inference()}}.
-\code{n_treated} additionally records the number of treated units
-resampled by the multipliers.
+\code{staggered}, \code{n_controls}, \code{alternative}), compatible with
+\code{\link[=tidy.coresynth_inference]{tidy.coresynth_inference()}} and \code{\link[=glance.coresynth_inference]{glance.coresynth_inference()}}.
+\code{n_treated} records the number of treated units. The wild bootstrap adds
+the draws in \code{boot_ests}, centred on the estimate; the jackknife adds the leave-one-out estimates
+in \code{jack_ests} (named by the dropped unit, \code{NA} where a refit was not
+possible).
 }
 \description{
-Confidence intervals and p-values for the aggregate ATT of a staggered
-SCM fit via the weighted multiplier (wild) bootstrap of Ben-Michael,
-Feller & Rothstein (2022, Section 5.3), adapting Otsu & Rai (2017).
-The aggregate ATT is written as a weighted average of per-treated-unit
-effect contributions; each bootstrap draw perturbs those contributions
-with independent golden-ratio two-point multipliers (mean 0, variance 1)
-while donor weights and outcomes are kept fixed.
+Standard errors, confidence intervals and p-values for the aggregate ATT of
+a staggered SCM fit, by the two procedures of Ben-Michael, Feller &
+Rothstein (2022).
 }
 \details{
-Works with both staggered SCM paths (the partially pooled default and
-\code{nu = "separate"}) and honours the cohort aggregation weights
-\verb{N_treated x T_post}. Each treated unit is resampled at its own mass --
-its \code{weights} entry, or one -- so the contributions sum back to the ATT
-the fit reports. For intercept-shifted fits (\code{fixedeff = TRUE})
-the per-unit contributions are computed in difference-in-differences
-form, i.e. each treated unit is demeaned by its own pre-treatment mean.
+\code{method = "jackknife"} (default) is the leave-one-unit-out jackknife of
+their Appendix A.1: every unit in the panel -- treated units and donors
+alike -- is dropped in turn, the weights (and intercepts, for \code{fixedeff}
+fits) are refitted with the pooling parameter \code{nu} held at the fit's value,
+and the aggregate ATT is recomputed. The variance is
+\eqn{(n-1)/n \sum_i (\widehat{ATT}^{(-i)} - \overline{ATT})^2}, and the
+interval and p-value use the normal approximation. Because the donors are
+resampled too, the interval reflects the noise in the synthetic controls,
+which every treated unit of a cohort shares.
 
-With very few treated units the multiplier distribution has few atoms,
-so the bootstrap is unreliable; a warning is issued below 5 treated
-units.
+\code{method = "wild_bootstrap"} is the multiplier bootstrap of their Section
+5.3, which adapts Otsu & Rai (2017). The ATT is written as a sum over every
+unit of the panel, and each unit's term is perturbed by its own
+golden-ratio two-point multiplier while the weights stay fixed: a treated
+unit's term is its effect's deviation from the ATT plus its residual, a
+donor's is its residual times the weight the synthetic controls put on it.
+Residuals are against a two-way (unit and period) model of the untreated
+outcome. Following Otsu & Rai's Equation (9), only the treated units'
+heterogeneity term is centred at the ATT; centring every unit, as the
+paper's Equation (13) reads, would make the interval grow with the size of
+the effect. The draws cost no refitting, so this is the choice for panels
+too large for the jackknife. It is conservative where the outcome has
+structure the two-way model does not absorb (unit-specific trends): in
+simulation a nominal 95\% interval covered 96-99.5\% across donor pools of
+8 to 40 and 3 to 24 treated units, and 93\% with 2 treated units.
+
+The jackknife refits the model once per unit, which grows quickly with
+the panel: about 0.2 s at 50 units, 0.7 s at 100 and 3 s at 200, but over
+a minute at 400. Donors that carry no weight in any block are not refitted
+(dropping one leaves the solution unchanged), and each refit starts from
+the full fit's weights.
+
+Both work with both staggered SCM paths (the partially pooled default and
+\code{nu = "separate"}) and honour the aggregation weights \verb{N_treated x T_post},
+or the \code{weights} given to \code{\link[=scm_fit]{scm_fit()}}.
+
+The jackknife treats the outcome as fixed: a fit with \code{covariates}
+partialled out keeps the partialled-out outcome, and one with
+\code{cov_method = "balance"} keeps its scaled covariate matrix, rather than
+re-estimating either without the dropped unit. A dropped unit that was the
+only member of its cohort removes that cohort from the estimate, as in the
+paper's \eqn{J^{(-i)}}.
 }
 \examples{
 \donttest{
@@ -65,13 +95,17 @@ set.seed(1)
 dat <- expand.grid(time = 1:20, id = paste0("u", 1:12))
 dat$y <- rnorm(nrow(dat)) + as.numeric(factor(dat$id))
 dat$d <- as.integer(
-  (dat$id == "u1" & dat$time > 10) | (dat$id == "u2" & dat$time > 14)
+  (dat$id \%in\% c("u1", "u2") & dat$time > 10) |
+  (dat$id \%in\% c("u3", "u4") & dat$time > 14)
 )
 fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
-scm_inference(fit, n_boot = 200, seed = 1)
+scm_inference(fit)
 }
 }
 \references{
 Ben-Michael, E., Feller, A., & Rothstein, J. (2022).
 Synthetic controls with staggered adoption. \emph{JRSS-B}, 84(2), 351-381.
+
+Otsu, T., & Rai, Y. (2017). Bootstrap inference of matching estimators
+for average treatment effects. \emph{JASA}, 112(520), 1720-1732.
 }

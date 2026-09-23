@@ -44,7 +44,7 @@ largest weights (default \code{Inf}, every row).}
 \code{unit} column that identifies each donor (\code{NA} for the treated and
 synthetic series). Default \code{0} (treated and synthetic series only).}
 
-\item{mspe_prune}{For a \code{scm_placebo} object with \code{type = "gaps"}: drop
+\item{mspe_prune}{For a \code{scm_placebo} object: drop
 placebo units whose pre-treatment MSPE exceeds \code{mspe_prune} times the
 treated unit's, as in \code{\link[=plot.scm_placebo]{plot.scm_placebo()}}. \code{NULL} (default) reuses the
 cutoff \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} computed the p-value under; \code{Inf} keeps every
@@ -63,7 +63,9 @@ the pre-period label for \code{"lambda"} rows.}
 \item{\code{"pred_weights"}}{\code{predictor}, \code{weight} (sharp SCM only).}
 \item{\code{"gaps"}}{\code{time}, \code{gap}, \code{unit} (\code{NA} for the treated series),
 \code{series} (\code{"Treated"} / \code{"Placebo (donor pool)"}).}
-\item{\code{"ratios"}}{\code{unit}, \code{ratio}, \code{series}.}
+\item{\code{"ratios"}}{\code{unit}, \code{ratio}, \code{post_mspe}, \code{series} -- both
+candidate statistics, so the frame answers either
+\code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} \code{statistic}.}
 }
 }
 \description{

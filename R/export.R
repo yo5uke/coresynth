@@ -134,7 +134,9 @@ export_json <- function(x, file = "coresynth_results.json",
       A = lapply(seq_len(nrow(x$A)), function(i) rd(x$A[i, ]))
     ),
     "si"   = list(
-      k       = x$k,
+      # A staggered fit carries one k per cohort, named by adoption date; a
+      # named atomic vector would serialise as a bare array and lose them.
+      k       = if (!is.null(names(x$k))) as.list(x$k) else x$k,
       weights = rd(as.numeric(x$unit_weights))
     ),
     list()

@@ -23,7 +23,7 @@
 \item{type}{One of \code{"gaps"} (ADH 2010, Figures 4-7) or \code{"ratios"}
 (ADH 2010, Figure 8).}
 
-\item{mspe_prune}{Only for \code{type = "gaps"}: exclude placebo units whose
+\item{mspe_prune}{Exclude placebo units whose
 pre-treatment MSPE exceeds \code{mspe_prune} times the treated unit's.
 \code{NULL} (default) reuses the cutoff \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} computed the
 p-value under, so the picture and the test describe the same set of
@@ -84,9 +84,13 @@ the rarity of a large post-treatment gap, so ADH exclude units whose
 pre-treatment MSPE exceeds a multiple of the treated unit's: 20, 5, and 2
 in their Figures 5-7 (\code{mspe_prune}).
 
-\code{type = "ratios"} shows the post/pre-treatment MSPE ratio of every unit
-(ADH 2010, Figure 8), the statistic behind the two-sided permutation
-p-value; it requires no pruning cutoff by construction.
+\code{type = "ratios"} shows the statistic behind the two-sided permutation
+p-value, one point per unit (ADH 2010, Figure 8): the post/pre-treatment
+MSPE ratio, or the post-treatment MSPE where the test was run with
+\code{statistic = "post_mspe"}. The ratio needs no pruning cutoff by
+construction, which is why \code{mspe_ratio_pval()} leaves \code{mspe_prune} at
+\code{Inf}; where the test did prune, the same runs are dropped here so that the
+points and the p-value in the subtitle describe one set of placebo runs.
 }
 \examples{
 set.seed(1)

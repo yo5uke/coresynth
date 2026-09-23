@@ -16,7 +16,12 @@ scm_balance_frontier(fit, nu_grid = seq(0, 1, length.out = 11L))
 A \code{data.frame} of class \code{scm_frontier}, one row per \code{nu}, with
 \code{nu}, \code{q_sep}, \code{q_pool}, their values normalised by the separate solution
 (\code{q_sep_rel}, \code{q_pool_rel}), \code{estimate}, and \code{heuristic} marking the row
-closest to the fit's own \code{nu}. Plot it with \code{\link[=plot]{plot()}}.
+closest to the fit's own \code{nu}. A fit made with \code{cov_method = "balance"}
+trades off a covariate imbalance as well, so its frontier carries
+\code{q_cov_sep} and \code{q_cov_pool} too, and the two normalisation constants are
+then the \emph{combined} measure of the paper's footnote 7 rather than the
+outcome imbalance alone -- which is why \code{q_sep_rel} and \code{q_pool_rel} are
+not 1 at \code{nu = 0} there. Plot it with \code{\link[=plot]{plot()}}.
 }
 \description{
 Traces how the two pre-treatment imbalances of partially pooled SCM trade
@@ -37,6 +42,11 @@ convex, so a little pooling usually buys a large reduction in one imbalance
 for a small rise in the other, and where that bargain stops being worth it
 is a judgement the data can inform but not settle. Their \code{nu} heuristic,
 which \code{\link[=scm_fit]{scm_fit()}} uses by default, is one point on this curve.
+
+A fit made with \code{cov_method = "balance"} is traced on the objective that
+includes its covariate term, and the frontier reports that term's two
+measures in \code{q_cov_sep} and \code{q_cov_pool}. The plot still draws the outcome
+imbalances, which are then only part of what the fit trades off.
 }
 \examples{
 set.seed(1)

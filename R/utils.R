@@ -106,8 +106,9 @@ panel_to_matrices <- function(y, d, id, time) {
   is_sharp <- length(unique(T_adopt[ever_treated])) == 1L
 
   # Under staggered adoption a panel with no never-treated units can still be
-  # estimable (future adopters serve as clean controls), so only reject the
-  # sharp case where the donor pool is structurally empty.
+  # estimable -- MC and TASC impute from each unit's own untreated cells -- so
+  # only reject the sharp case here. The cohort-refit estimators, which need
+  # never-treated donors, check that in .check_control_group().
   if (length(ever_control) == 0L && is_sharp) {
     stop("No control units found: every unit is treated at the same time, ",
          "leaving no donor pool. Check the treatment coding and upstream ",
@@ -168,6 +169,12 @@ panel_to_matrices <- function(y, d, id, time) {
 #' average effect, which is often the quantity of interest when the units are
 #' regions or countries.
 #'
+#' A block that stands for one treated unit records it in `unit`, which is the
+#' only thing distinguishing the blocks of one cohort under
+#' `pool_cohorts = FALSE`: they all share its adoption date. The column is
+#' carried into the table when any block names a unit, and omitted when none
+#' does, so a fit whose blocks are cohorts keeps the table it had.
+#'
 #' @param r List of per-cohort fit lists (already filtered to the valid ones).
 #' @param unit_weights Optional named numeric vector over treated unit labels.
 #' @param unit_labels Optional character vector naming every panel column, so
@@ -181,29 +188,94 @@ panel_to_matrices <- function(y, d, id, time) {
     r <- lapply(r, function(z) {
       lab <- as.character(unit_labels[z$idx_tr])
       wt  <- sum(unit_weights[lab])
-      z$weight    <- wt * z$T_post
-      z$unit_mass <- wt
+      z$weight <- wt * z$T_post
+      z$mass   <- wt
       z
     })
   }
   w   <- vapply(r, `[[`, numeric(1L), "weight")
   tau <- vapply(r, `[[`, numeric(1L), "estimate")
 
-  cohort_df <- data.frame(
+  cols <- list(
     cohort    = vapply(r, `[[`, integer(1L), "cohort"),
+    # [[ ]], not $: SDID's blocks carry unit_weights, which $ would
+    # partial-match to when the exact name is absent.
+    unit      = vapply(r, function(z) z[["unit"]] %||% NA_character_,
+                       character(1L)),
     n_treated = vapply(r, `[[`, integer(1L), "n_treated"),
     T_pre     = vapply(r, `[[`, integer(1L), "T_pre"),
     T_post    = vapply(r, `[[`, integer(1L), "T_post"),
     estimate  = tau,
-    weight    = w / sum(w),
-    stringsAsFactors = FALSE
+    weight    = w / sum(w)
   )
+  if (all(is.na(cols$unit))) cols$unit <- NULL
+  cohort_df <- do.call(data.frame, c(cols, list(stringsAsFactors = FALSE)))
 
   list(
     estimate         = sum(w * tau) / sum(w),
     cohort_estimates = cohort_df,
     cohort_fits      = r
   )
+}
+
+#' Check the staggered control group
+#'
+#' The cohort-refit estimators (SCM, SDID, GSC, SI) report each cohort's
+#' effect over every period from its adoption date to the end of the panel.
+#' A unit adopting later is untreated before its own date but treated after
+#' it, so under `"clean"` its post-adoption outcomes enter the earlier
+#' cohort's counterfactual and pull the effect towards zero. Neither source
+#' does this: Clarke et al. (2024, Algorithm 1) subset to pure controls, and
+#' Ben-Michael, Feller & Rothstein (2022, S.2.2) admit a unit as a donor only
+#' if it is untreated through the last event time estimated. Over a window
+#' that runs to the end of the panel, both are the never-treated units.
+#'
+#' @param control_group The resolved `control_group` value.
+#' @param pan    The panel (`panel_to_matrices()` or `panel_to_tensor()`).
+#' @param method_label Estimator name for messages.
+#' @return `control_group`, invisibly; called for its checks.
+#' @noRd
+.check_control_group <- function(control_group, pan, method_label) {
+  if (isTRUE(pan$is_sharp)) return(invisible(control_group))
+  if (identical(control_group, "clean")) {
+    warning(
+      "control_group = \"clean\" is deprecated and will be removed in the ",
+      "next major release. It lets units that adopt later serve as donors ",
+      "for earlier cohorts through the end of the panel, after they are ",
+      "treated themselves, which biases the cohort effects towards zero. ",
+      "Use the default control_group = \"never_treated\".",
+      call. = FALSE)
+  } else if (length(pan$idx_control) < 2L) {
+    stop(
+      method_label, " staggered adoption needs at least two never-treated ",
+      "units to serve as donors (this panel has ",
+      length(pan$idx_control), "). A unit that adopts later is itself ",
+      "treated during the earlier cohorts' post-treatment windows, so it ",
+      "cannot stand in for their untreated outcomes. method = \"mc\" and ",
+      "\"tasc\" impute from each unit's untreated cells instead and do not ",
+      "need never-treated units.",
+      call. = FALSE)
+  }
+  invisible(control_group)
+}
+
+#' Label the blocks of a staggered fit
+#'
+#' A block is a cohort, and its adoption date names it. Under
+#' `pool_cohorts = FALSE` a block is one treated unit and the adoption date is
+#' shared, so several blocks would carry the same label -- which silently
+#' merges their series wherever the label is used as a key, as it is in
+#' [augment()]. Those fits are labelled by unit instead.
+#'
+#' @param fit    The staggered `coresynth` fit the blocks belong to.
+#' @param cohort Adoption date(s) of the block(s).
+#' @param unit   Treated unit label(s), `NA` where a block pools several.
+#' @return A character vector of labels, one per block.
+#' @noRd
+.block_labels <- function(fit, cohort, unit = NULL) {
+  cohort_lab <- paste0("cohort_", as.character(cohort))
+  if (!isFALSE(fit[["pool_cohorts"]]) || is.null(unit)) return(cohort_lab)
+  ifelse(is.na(unit), cohort_lab, paste0("unit_", as.character(unit)))
 }
 
 #' Cohort table for the imputation estimators (MC, TASC)
@@ -628,7 +700,8 @@ build_covariate_array <- function(
   T_all <- length(times)
   N <- length(units)
   p <- length(covariate_names)
-  arr <- array(NA_real_, dim = c(T_all, N, p))
+  arr <- array(NA_real_, dim = c(T_all, N, p),
+               dimnames = list(NULL, NULL, covariate_names))
   # Vectorised fill: one matrix-index assignment per covariate instead of a
   # full-data scan per unit. Rows whose id is not in `units` are skipped,
   # matching the per-unit subsetting behaviour.

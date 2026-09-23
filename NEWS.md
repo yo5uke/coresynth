@@ -2,6 +2,79 @@
 
 ## Breaking changes
 
+- **Staggered fits of `"scm"`, `"sdid"`, `"gsc"` and `"si"` now take their
+  donors from the never-treated units only (`control_group =
+  "never_treated"`).** The old default, `"clean"`, also admitted units that
+  adopt after the cohort. Each cohort's effect is averaged from its adoption
+  date to the end of the panel, so those units were treated themselves during
+  part of that window, and their post-adoption outcomes entered the cohort's
+  counterfactual. With a constant effect of 3 in a three-cohort simulation
+  the aggregate ATT came out 0.24 to 0.59 too low depending on the method,
+  against a bias of at most 0.04 with never-treated donors. Neither source
+  design does this: Clarke et al. (2024, Algorithm 1) subset to pure
+  controls, and Ben-Michael, Feller & Rothstein (2022, S.2.2) admit a donor
+  only if it is untreated through the last event time estimated. **Staggered
+  estimates from these four methods change.** `"clean"` still runs but warns
+  and will be removed in the next major release. A staggered panel with fewer
+  than two never-treated units is now an error that points to `"mc"` and
+  `"tasc"`, which impute from untreated cells and need no donor pool.
+
+- **Covariate partial-out now includes unit and time fixed effects.** The
+  `covariates` argument of `"sdid"` (sharp and staggered) and of staggered
+  `"scm"` with `cov_method = "partial_out"` implements the projection of
+  Kranz (2022) that Clarke et al. (2024, S.2.2) adopt: regress the outcome
+  on the covariates *and two-way fixed effects* over the untreated cells,
+  then subtract `X * beta`. The fixed effects were missing, so `beta` also
+  absorbed how the covariates' unit levels and trends line up with the
+  outcome's, and subtracting it wrote a spurious differential trend back into
+  the series. In a simulation with a true coefficient of 1, `beta_hat` was
+  3.75 and the staggered SCM and SDID estimates of an effect of 2 were 1.65
+  and 1.18; they are now 1.00, 2.01 and 2.01. Sharp SDID also regressed on
+  the control units' pre-treatment cells only; it now uses every untreated
+  cell, the default of Kranz's own implementation, as staggered fits did. **Estimates with `covariates`
+  change.** A covariate that varies only across units or only over time is
+  absorbed by the fixed effects; it now gets a zero coefficient and a warning
+  (for staggered SCM, `cov_method = "balance"` balances such covariates
+  instead).
+
+- **`scm_inference()` defaults to the leave-one-unit-out jackknife** of
+  Ben-Michael, Feller & Rothstein (2022, Appendix A.1), which drops each unit
+  of the panel, donors included, refits with `nu` held fixed, and uses the
+  spread of the estimates. It refits once per unit -- about 0.7 s at 100
+  units and 3 s at 200 -- skipping donors that carry no weight in any block,
+  whose removal leaves the solution unchanged, and warm-starting the rest
+  from the full fit. It warns below 3 treated units, where it over-rejected
+  mildly (8.5% at a nominal 5%). The result carries the leave-one-out
+  estimates in `jack_ests`.
+
+- **`method = "wild_bootstrap"` now perturbs every unit, as Otsu & Rai
+  (2017) prescribe.** The bootstrap BFR (2022, S.5.3) use adapts Otsu &
+  Rai's wild bootstrap for matching estimators, whose key step is to
+  resample "not only the regression residuals of treated and untreated
+  observations but also the ones to estimate the average treatment effects"
+  (their Eq. 9). The previous implementation perturbed only the treated
+  units' deviations from the ATT, so it missed the error of the synthetic
+  control that every treated unit of a cohort shares, and under-covered: a
+  nominal 95% interval covered 80% with 8 donors and 8 treated units per
+  cohort, and 45%, 63%, 82% and 91% with 2, 3, 4 and 8 treated units. Each
+  donor now carries its own multiplier on its residual, weighted by how much
+  the synthetic controls use it, and only the treated units' heterogeneity
+  is centred at the ATT -- as in Otsu & Rai, and unlike BFR's Eq. (13) as
+  printed and `augsynth`, which centre every unit and so widen the interval
+  in proportion to the effect. Residuals are against the two-way model of
+  the untreated outcome, so a common period shock does not widen it either.
+  On the same designs it covers 93% to 99.5% (93% with 2 treated units); it
+  is conservative where outcomes carry unit-specific trends the two-way
+  model does not absorb. It needs no refitting, which makes it the option
+  for panels too large for the jackknife, and now warns below 3 treated
+  units rather than 5. **Its intervals change.**
+
+- Staggered SCM fits store every unit's adoption date (`T_adopt`), and
+  `scm_balance_frontier()` and the new jackknife rebuild the panel from it.
+  Rebuilding it from `cohort_fits`, as before, turned the treated units of a
+  cohort the fit had skipped (for too short a pre-treatment window) into
+  never-treated donors for the refits.
+
 - **`"gsc"`, `"mc"` and `"si"` now choose their tuning parameter the way their
   source papers say to.** All three picked it by a fixed rule that appears
   nowhere in the literature: `r = 2` factors for GSC, a penalty of 1% of the
@@ -25,12 +98,14 @@
     own RNG stream, so the penalty is reproducible and the caller's random
     state is left untouched; `cv_folds`, `cv_nlambda` and `cv_seed` control
     it, and `fit$lambda_cv` reports whether the search ran.
-  - `"si"`: `k = NULL` applies the optimal hard threshold of Donoho & Gavish
+  - `"si"`: `k = NULL` applies the optimal hard threshold of Gavish & Donoho
     (2014) to the pre-treatment donor block, one of the three data-driven
     rules Agarwal et al. name. It costs a single SVD, where cross-validating
     `k` would cost a PCR fit per candidate. On the same known-rank panels it
     recovered the rank exactly for 1 through 4; the old heuristic returned 4
-    in every case.
+    in every case. A staggered fit applies the threshold to each cohort's own
+    donor block, and clips a supplied `k` to that cohort's dimensions, so
+    `fit$k` is one value per cohort, named by adoption date.
 
 - **Staggered `"mc"` and `"tasc"` fits now report the same estimand as every
   other method.** Both estimators recover the counterfactual by imputation:
@@ -109,12 +184,15 @@
 
   The default falls back to `"separate"` where the pooled solver cannot go
   (`donor_mspe_threshold`, `lambda_pen`, `v_selection = "oos"`); naming a
-  numeric `nu` there is still an error. The heuristic itself was checked
-  against `augsynth` and agrees to four or five decimal places, across
-  cohorts of equal and unequal size alike.
+  numeric `nu` there is still an error. The fallback reports itself in a
+  message naming the argument that caused it, rather than changing the
+  estimator in silence, and `fit$nu` records which of the two ran: the number
+  the pooled solver settled on, or `"separate"`. The heuristic itself was
+  checked against `augsynth` and agrees to four or five decimal places,
+  across cohorts of equal and unequal size alike.
 
 - **`qp_solver` now defaults to `"auto"`, which is the Wolfe solver wherever
-  it is wired.** The inner SCM problem projects the treated unit onto the
+  the inner QP can be degenerate.** The inner SCM problem projects the treated unit onto the
   convex hull of the donor columns in predictor space, so by Caratheodory's
   theorem an optimum supported on at most `k + 1` donors always exists, and
   Wolfe (1976) returns such a solution. `"active_set"` returns an exact
@@ -129,10 +207,16 @@
   Wolfe reached a *lower* pre-treatment loss than the active-set path (2.75
   against 3.25, and 2.79 against 3.31) on 3 and 2 non-zero donors rather than
   13 and 17 — the sparser, more stable inner solutions give the non-convex
-  outer V search a cleaner objective to descend. Outcomes-only fits, where
-  the QP is not degenerate, are unchanged to machine precision.
+  outer V search a cleaner objective to descend.
 
-  `"auto"` falls back to `"active_set"` on the paths that run their own QP
+  Degeneracy needs few rows next to the donor pool, so `"auto"` is Wolfe for
+  every predictor fit and for outcomes-only fits with fewer than half as many
+  pre-treatment periods as donors. The other outcomes-only fits have a unique
+  optimum in practice, which both solvers return, and there `"auto"` keeps
+  the active set: Wolfe cold-starts each of the coordinate sweep's inner
+  problems and was three times slower for identical weights.
+
+  `"auto"` also falls back to `"active_set"` on the paths that run their own QP
   outside the sharp inner solver (`v_selection = "oos"`, `lambda_pen`,
   `v_optim = "bfgs"`, and staggered adoption). Naming `"wolfe"` explicitly on
   one of those is still an error rather than a silent downgrade, and
@@ -288,7 +372,15 @@
 
   `plot()` and `plot_data()` on the result now default to whichever cutoff the
   test used, so the figure and the p-value describe the same set of placebo
-  runs. Pass `mspe_prune = Inf` to draw them all regardless.
+  runs. This holds for `type = "ratios"` as well as `type = "gaps"`: the
+  subtitle reports the number of runs the p-value rests on, so a figure
+  drawing the discarded ones contradicts its own caption. Pass
+  `mspe_prune = Inf` to draw them all regardless.
+
+  `plot(type = "ratios")` also draws whichever statistic the test ranked, so
+  a `statistic = "post_mspe"` result gives the post-treatment MSPE rather than
+  its ratio, with the axis and title to match. `plot_data(type = "ratios")`
+  returns both statistics, in `ratio` and `post_mspe`.
 
 - **`pool_cohorts = FALSE` fits one synthetic control per treated unit.**
   Staggered SCM pools units sharing an adoption date into a cohort, which is
@@ -298,6 +390,15 @@
   behind each block, which is what `scm_rank_pval()` needs. The default stays
   with the appendix, where S.4.1 shows there is no across-unit variation to
   exploit inside a cohort. (`augsynth` defaults the other way.)
+
+  Those blocks are labelled by unit rather than by adoption date, because
+  several of them share one: `cohort_estimates` carries a `unit` column,
+  `tidy()` returns `unit_<id>` terms, and `augment()` keys `.unit` on it.
+  Labelling them by cohort would have given two treated units the same key,
+  which merges their series wherever it is grouped or drawn on. A fit whose
+  blocks are cohorts keeps the labels it had, and the `unit` column names the
+  unit of a one-unit cohort and is `NA` for a pooled one. Estimators without
+  the notion carry no such column.
 
 - **`weights` sets how much each treated unit counts towards the ATT.**
   Abadie (2021, S.8) notes that with regions or countries a population- or
@@ -353,12 +454,17 @@
   constants are the combined measure at the `nu = 0` solution, as their
   footnote 7 defines. `fit$pooling` gains `q_cov_sep`, `q_cov_pool` and
   `n_covariates`, and `scm_balance_frontier()` traces the objective including
-  them.
+  them and returns them as columns of its own. Read its relative columns
+  accordingly: they divide by the combined constant, so they are not 1 at
+  `nu = 0`, and the two outcome imbalances can both fall as `nu` rises
+  because the covariate side is the third quantity being traded off.
 
   It needs the partially pooled solver, so it is refused alongside
   `nu = "separate"`, `donor_mspe_threshold`, `lambda_pen` and
-  `v_selection = "oos"` rather than falling back silently. `"partial_out"`
-  remains the default, so no existing fit changes.
+  `v_selection = "oos"` rather than falling back silently. `xi` is refused on
+  the same grounds wherever the balance term is not in the objective -- a
+  sharp fit, or `cov_method = "partial_out"` -- instead of being accepted and
+  ignored. `"partial_out"` remains the default, so no existing fit changes.
 
   As `xi` falls to zero the fit collapses onto the outcomes-only one at a
   rate linear in `xi`, which is the check that the covariate side reduces
@@ -367,6 +473,27 @@
   describes.
 
 ## Bug fixes
+
+- **Outcomes-only SCM is fast again.** Since 0.4.1 the default fit and its
+  in-space placebo test had run about 3 times slower on panels with many
+  pre-treatment periods, and 1.0.0's Wolfe default had made it 10 to 14
+  times slower. Two causes, both fixed without changing any result (weights,
+  estimates and placebo statistics agree with the previous build to 1e-13):
+  the exact inner solve that seeds the coordinate sweep started the active
+  set from all donors at once, paying a face solve per donor it dropped, and
+  now reaches the same optimum from the support a gradient presolve finds;
+  and the sweep over a panel with at least half as many periods as donors
+  now carries the donor Gram matrix with rank-1 updates, where the
+  predictor-oriented factor form rebuilt each face's Gram from scratch. On a
+  100-donor, 96-period panel a fit takes 0.013 s and its placebo test
+  0.4 s, against 0.19 s and 5.6 s before.
+
+- **The partially pooled staggered SCM solver no longer decomposes an
+  N-by-N matrix per block update.** Each block's QP matrix is the Gram of a
+  factor with one row per lag, whose small Gram gives the same Lipschitz
+  constant; `solve_simplex_qp()` now accepts it. Estimates are unchanged (to
+  1e-14); a 200-unit fit takes 0.08 s instead of 0.13 s, and its jackknife 3 s
+  instead of 27 s.
 
 - **A staggered fit with `covariates` reports its treated series on the scale
   it was fitted on.** The covariates are partialled out first, and every other

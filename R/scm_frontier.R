@@ -9,9 +9,14 @@
          "scm_fit() with the current version.", call. = FALSE)
   N  <- ncol(Y)
   TT <- nrow(Y)
-  idx_tr  <- sort(unique(unlist(lapply(fit$cohort_fits, `[[`, "idx_tr"))))
-  T_adopt <- rep(NA_integer_, N)
-  for (z in fit$cohort_fits) T_adopt[z$idx_tr] <- as.integer(z$T_pre + 1L)
+  T_adopt <- fit[["T_adopt"]]
+  if (is.null(T_adopt)) {
+    # Fits from before T_adopt was stored: rebuild it from the blocks, which
+    # is exact unless the fit skipped a cohort.
+    T_adopt <- rep(NA_integer_, N)
+    for (z in fit$cohort_fits) T_adopt[z$idx_tr] <- as.integer(z$T_pre + 1L)
+  }
+  idx_tr <- which(!is.na(T_adopt))
   D <- matrix(0L, TT, N)
   for (j in idx_tr) D[T_adopt[j]:TT, j] <- 1L
   list(Y = Y, D = D,
@@ -43,13 +48,23 @@
 #' is a judgement the data can inform but not settle. Their `nu` heuristic,
 #' which [scm_fit()] uses by default, is one point on this curve.
 #'
+#' A fit made with `cov_method = "balance"` is traced on the objective that
+#' includes its covariate term, and the frontier reports that term's two
+#' measures in `q_cov_sep` and `q_cov_pool`. The plot still draws the outcome
+#' imbalances, which are then only part of what the fit trades off.
+#'
 #' @param fit A staggered `coresynth` object from [scm_fit()] with
 #'   `method = "scm"`.
 #' @param nu_grid Values of `nu` to trace.
 #' @return A `data.frame` of class `scm_frontier`, one row per `nu`, with
 #'   `nu`, `q_sep`, `q_pool`, their values normalised by the separate solution
 #'   (`q_sep_rel`, `q_pool_rel`), `estimate`, and `heuristic` marking the row
-#'   closest to the fit's own `nu`. Plot it with [plot()].
+#'   closest to the fit's own `nu`. A fit made with `cov_method = "balance"`
+#'   trades off a covariate imbalance as well, so its frontier carries
+#'   `q_cov_sep` and `q_cov_pool` too, and the two normalisation constants are
+#'   then the *combined* measure of the paper's footnote 7 rather than the
+#'   outcome imbalance alone -- which is why `q_sep_rel` and `q_pool_rel` are
+#'   not 1 at `nu = 0` there. Plot it with [plot()].
 #' @references Ben-Michael, E., Feller, A., & Rothstein, J. (2022). Synthetic
 #'   controls with staggered adoption. *JRSS-B*, 84(2), 351-381.
 #' @examples
@@ -94,12 +109,22 @@ scm_balance_frontier <- function(fit, nu_grid = seq(0, 1, length.out = 11L)) {
       fixedeff      = isTRUE(fit$pooling$fixedeff),
       control_group = fit$control_group %||% "clean",
       pool_cohorts  = fit$pooling$pool_cohorts %||% TRUE)
-    data.frame(nu = nu, q_sep = f$pooling$q_sep, q_pool = f$pooling$q_pool,
-               estimate = f$estimate)
+    # A fit that balances covariates trades off a third quantity, so report
+    # it rather than showing half the objective. Absent without covariates.
+    cols <- list(nu         = nu,
+                 q_sep      = f$pooling$q_sep,
+                 q_pool     = f$pooling$q_pool,
+                 q_cov_sep  = f$pooling$q_cov_sep,
+                 q_cov_pool = f$pooling$q_cov_pool,
+                 estimate   = f$estimate)
+    do.call(data.frame, Filter(Negate(is.null), cols))
   })
   out <- do.call(rbind, rows)
   # Normalise by the separate solution, as the paper does, so the two
-  # imbalances sit on comparable scales whatever the outcome's units
+  # imbalances sit on comparable scales whatever the outcome's units. With
+  # covariates those constants are the combined measure of the paper's
+  # footnote 7, not the outcome imbalance alone, so neither ratio is 1 at
+  # nu = 0.
   out$q_sep_rel  <- out$q_sep  / fit$pooling$q_sep_separate
   out$q_pool_rel <- out$q_pool / fit$pooling$q_pool_separate
   out$heuristic  <- seq_len(nrow(out)) ==
@@ -114,10 +139,16 @@ print.scm_frontier <- function(x, ...) {
   cat("=== SCM balance possibility frontier ===\n")
   cat("nu used by the fit:", round(attr(x, "nu_fit"), 4), "\n")
   cat("q_pool: imbalance of the treated average (drives the ATT)\n")
-  cat("q_sep : RMS of the per-block imbalances (drives block-level effects)\n\n")
+  cat("q_sep : RMS of the per-block imbalances (drives block-level effects)\n")
+  if ("q_cov_sep" %in% names(x))
+    cat("q_cov_*: the same two measures on the balanced covariates. The rel\n",
+        "        columns divide by the combined separate solution (BFR\n",
+        "        footnote 7), so they are not 1 at nu = 0\n", sep = "")
+  cat("\n")
   df <- as.data.frame(x)
   df$nu <- round(df$nu, 3)
-  for (nm in c("q_sep", "q_pool", "q_sep_rel", "q_pool_rel", "estimate"))
+  for (nm in intersect(c("q_sep", "q_pool", "q_cov_sep", "q_cov_pool",
+                         "q_sep_rel", "q_pool_rel", "estimate"), names(df)))
     df[[nm]] <- round(df[[nm]], 4)
   df$heuristic <- ifelse(df$heuristic, "<- nu_hat", "")
   print(df, row.names = FALSE)
@@ -172,6 +203,9 @@ plot.scm_frontier <- function(x, relative = TRUE, label_nu = TRUE,
   df$xv <- if (relative) df$q_sep_rel  else df$q_sep
   df$yv <- if (relative) df$q_pool_rel else df$q_pool
   hit <- df[df$heuristic, , drop = FALSE]
+  # A balance fit trades off a covariate imbalance too, and normalises both
+  # axes by the combined measure, so say what the picture leaves out.
+  has_cov <- "q_cov_sep" %in% names(df)
 
   # ASCII only in the labels: a non-UTF-8 locale cannot measure the text
   axis_x <- if (relative) "Per-block imbalance (relative to separate SCM)"
@@ -191,7 +225,12 @@ plot.scm_frontier <- function(x, relative = TRUE, label_nu = TRUE,
          subtitle = paste0("nu runs from ", round(min(df$nu), 2), " to ",
                            round(max(df$nu), 2),
                            "; lower-left is better on both"),
-         x = axis_x, y = axis_y, color = NULL) +
+         x = axis_x, y = axis_y, color = NULL,
+         caption = if (has_cov)
+           paste0("Axes show the outcome imbalance only; the covariate ",
+                  "imbalance this fit also trades off is in q_cov_sep and ",
+                  "q_cov_pool. Both axes are divided by the combined ",
+                  "separate solution, so neither is 1 at nu = 0.")) +
     theme(legend.position = "bottom")
 
   if (isTRUE(label_nu))

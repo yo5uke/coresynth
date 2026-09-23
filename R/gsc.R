@@ -5,7 +5,7 @@
 # noise, same rationale as SDID staggered). Covariates handled via per-cohort
 # EM (subset of global T×N×p array).
 .fit_gsc_staggered <- function(pan, Y, r, covariate_array = NULL,
-                                control_group = "clean") {
+                                control_group = "never_treated") {
   TT      <- nrow(Y)
   T_adopt <- pan$T_adopt
   idx_tr  <- pan$idx_treat
@@ -190,12 +190,13 @@ fit_gsc_cpp <- function(
   id_var = NULL,
   time_var = NULL,
   covariates = NULL,
-  control_group = c("clean", "never_treated"),
+  control_group = c("never_treated", "clean"),
   ...
 ) {
   control_group <- match.arg(control_group)
   pan <- panel_to_matrices(y, d, id, time)
   .check_panel_complete(pan$Y, "GSC")
+  .check_control_group(control_group, pan, "GSC")
 
   if (!is.null(r) && (!is.numeric(r) || length(r) != 1L || r < 1 ||
                       r != as.integer(r)))

@@ -41,6 +41,15 @@ argument. Every argument after \code{...} must be named in full: this is what
 lets \code{lambda} reach \code{method = "mc"} instead of partially matching
 \code{lambda_pen}.
 
+\code{control_group} chooses each cohort's donors in a \strong{staggered} fit of
+\code{"scm"}, \code{"sdid"}, \code{"gsc"} or \code{"si"}. \code{"never_treated"} (default) uses
+the units never treated in the panel, the pure controls of Clarke et al.
+(2024, Algorithm 1); at least two are required. \code{"clean"} is deprecated:
+it adds the units adopting after the cohort, but each cohort's effect runs
+to the end of the panel, so those units' post-adoption outcomes enter its
+counterfactual and bias the effect towards zero. \code{"mc"} and \code{"tasc"}
+impute from every untreated cell and need no never-treated units.
+
 \code{cov_method} chooses how \code{covariates} enter a \strong{staggered} \code{"scm"} fit.
 \code{"partial_out"} (default) residualises the outcome on them first, the
 device of Clarke et al. (2024, S.2.2). \code{"balance"} is the formulation of
@@ -52,12 +61,15 @@ with \code{nu = "separate"}, \code{donor_mspe_threshold}, \code{lambda_pen} or
 \code{v_selection = "oos"}. \code{xi} defaults to the paper's rule, the sample
 variance of the donor units' outcomes before the last adoption date.
 
-The three tuning parameters that govern model complexity are selected
-from the data when left at their \code{NULL} default, each by the rule its
-source paper specifies: \code{r} by the leave-one-period-out cross-validation
-of Xu (2017, Algorithm 1), \code{lambda} by the K-fold cross-validation of
-Athey et al. (2021), and \code{k} by the optimal hard threshold of Donoho &
-Gavish (2014). Supplying a value skips the search.}
+Three tuning parameters that govern model complexity are selected from
+the data when left at their \code{NULL} default, each by the rule its source
+paper specifies: \code{r} for \code{"gsc"} by the leave-one-period-out
+cross-validation of Xu (2017, Algorithm 1), \code{lambda} for \code{"mc"} by the
+K-fold cross-validation of Athey et al. (2021), and \code{k} for \code{"si"} by the
+optimal hard threshold of Gavish & Donoho (2014). Supplying a value skips
+the search. The \code{r} of \code{"tasc"} is a different quantity -- the dimension
+of the state vector its Kalman smoother carries, not a factor count
+estimated from a donor block -- and keeps its fixed default of \code{2}.}
 
 \item{predictors}{A \code{list()} of \code{\link[=pred]{pred()}} specifications that define the
 predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each \code{\link[=pred]{pred()}}
@@ -162,12 +174,16 @@ the optimal set is a face rather than a point. \code{"wolfe"} is preferred
 there because its solution is sparse and reproducible, while
 \code{"active_set"} breaks those ties on round-off and can return different
 weights for the same fit under a different build.
-\code{"auto"} (default) is \code{"wolfe"} wherever it is wired, which is the sharp
-inner QP, and \code{"active_set"} on the paths that run their own solver:
-\code{v_selection = "oos"}, \code{lambda_pen}, \code{v_optim = "bfgs"}, and staggered
-adoption. Naming \code{"wolfe"} explicitly on one of those paths is an error
-rather than a silent downgrade. The resolved value is recorded in
-\code{fit$qp_solver}.}
+\code{"auto"} (default) is \code{"wolfe"} where that degeneracy can arise -- sharp
+fits with \code{predictors}, and outcomes-only fits with fewer than half as
+many pre-treatment periods as donors -- and \code{"active_set"} for the other
+outcomes-only fits, whose QP has a unique optimum in practice, so both
+solvers return the same weights and the active set gets there several
+times faster. It is also \code{"active_set"} on the paths that run their own
+solver: \code{v_selection = "oos"}, \code{lambda_pen}, \code{v_optim = "bfgs"}, and
+staggered adoption. Naming \code{"wolfe"} explicitly
+on one of those paths is an error rather than a silent downgrade. The
+resolved value is recorded in \code{fit$qp_solver}.}
 
 \item{v_window}{Optional vector of pre-treatment time values (matching the
 time index in \code{data}) over which the outer V optimisation evaluates the
@@ -219,7 +235,7 @@ estimator into a weighted difference-in-differences and typically
 improves fit when outcome levels differ across units. The reported
 \code{Y_synth} is shifted back to the raw outcome scale. Works with both
 the default and the partially pooled path. For \code{method = "scm"} on
-staggered panels only. Default \code{FALSE}.}
+staggered panels only.}
 
 \item{pool_cohorts}{For \strong{staggered} \code{method = "scm"}: whether treated
 units sharing an adoption date are averaged into one block before the
@@ -264,6 +280,11 @@ All methods return at minimum:
 \item \code{Y_treat}: treated unit outcome series
 \item \code{gap}: treatment effect series (Y_treat - counterfactual)
 }
+
+Staggered \code{method = "scm"} fits add \code{cohort_estimates}, \code{cohort_fits},
+and the settings the fit resolved: \code{nu} (the number the partially pooled
+solver used, or \code{"separate"} for the per-cohort path), \code{fixedeff},
+\code{pool_cohorts} and \code{qp_solver}.
 }
 \description{
 Unified formula interface for Synthetic Control and related causal

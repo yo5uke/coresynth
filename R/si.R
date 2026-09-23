@@ -91,14 +91,17 @@
 # -- Internal: data-driven PCR rank via the optimal hard threshold -----------
 # Agarwal et al. name cross-validation, universal singular value thresholding
 # and the elbow rule as the data-driven ways to choose k. This is the second:
-# Donoho & Gavish (2014) give the threshold that minimises asymptotic MSE when
+# Gavish & Donoho (2014) give the threshold that minimises asymptotic MSE when
 # recovering a low-rank matrix from noise of unknown level, tau = omega(beta) *
 # median(singular values) with beta = min(dim)/max(dim). Keeping the singular
 # values above it is parameter-free and costs one SVD, where cross-validating k
 # would cost a PCR fit per candidate.
 #
-# omega(beta) uses the closed-form approximation of Donoho & Gavish (2014,
-# Eq. 5), which they report as accurate to within 0.0001 across beta in (0, 1].
+# omega(beta) uses the cubic approximation of Gavish & Donoho (2014, Eq. 5),
+# which they report as within 0.02 of the exact coefficient for beta in
+# (0.001, 1]. The exact value has no closed form; at a coefficient near 2 the
+# gap moves the threshold by about 1%, which can only change k when a
+# singular value sits that close to it.
 .si_svht_k <- function(Y_pre_co) {
   d <- svd(Y_pre_co, nu = 0, nv = 0)$d
   d <- d[is.finite(d)]
@@ -110,12 +113,26 @@
   max(1L, min(as.integer(k), length(d)))
 }
 
+# The rank a staggered fit used, one entry per cohort. Unlike the GSC factor
+# count and the MC penalty, which one global search fixes for the whole panel,
+# the threshold is applied to each cohort's own donor block -- and even an
+# explicitly supplied k is clipped to that cohort's dimensions -- so there is
+# no single value to report. `cells` are the cohort fits, or the (cohort, arm)
+# cells of a multi-arm fit, where a cohort's arms share the SVD basis and
+# therefore its k.
+.si_k_by_cohort <- function(cells) {
+  g    <- vapply(cells, function(z) as.integer(z$cohort), integer(1L))
+  kk   <- vapply(cells, function(z) as.integer(z$k), integer(1L))
+  keep <- !duplicated(g)
+  stats::setNames(kk[keep], as.character(g[keep]))
+}
+
 # -- Internal: cohort-by-cohort SI for staggered adoption --------------------
 # Clarke et al. (2024); Arkhangelsky et al. (2021) Appendix S.8.
-# SVD uses only Y_pre_co_g (T_pre_g x N_co_g): future-treated units in the
-# "clean" control group are all pre-treatment during periods 1..T_pre_g, so
-# there is no contamination from treatment in this window.
-.fit_si_staggered <- function(pan, Y, k = NULL, control_group = "clean") {
+# The SVD sees only the pre-treatment window, but the counterfactual is
+# projected over every post period, so a donor must stay untreated through
+# the end of the panel; see .check_control_group() for the deprecated "clean".
+.fit_si_staggered <- function(pan, Y, k = NULL, control_group = "never_treated") {
   TT      <- nrow(Y)
   T_adopt <- pan$T_adopt
   idx_tr  <- pan$idx_treat
@@ -196,7 +213,8 @@
     stop("All cohort-level SI fits failed; see the preceding warnings for ",
          "per-cohort reasons.", call. = FALSE)
   }
-  c(.aggregate_cohorts(cohort_list[valid]), list(k = k))
+  cl <- cohort_list[valid]
+  c(.aggregate_cohorts(cl), list(k = .si_k_by_cohort(cl)))
 }
 
 # -- Internal: staggered + multi-arm SI (K>1 arms, staggered adoption) -------
@@ -205,7 +223,7 @@
 # arms because unit factors v_il are arm-invariant (Agarwal et al. 2025 S.2).
 # cohort_fits is a flat list of (cohort, arm) cells -- each compatible with
 # .refit_si_cohort() since they carry T_pre, idx_co, idx_tr, k.
-.fit_si_staggered_multi <- function(tensor, k = NULL, control_group = "clean") {
+.fit_si_staggered_multi <- function(tensor, k = NULL, control_group = "never_treated") {
   Y          <- tensor$Y
   TT         <- nrow(Y)
   T_adopt    <- tensor$T_adopt
@@ -325,7 +343,7 @@
     staggered            = TRUE,
     multi_arm            = TRUE,
     arm_levels           = treat_arms,
-    k                    = k,
+    k                    = .si_k_by_cohort(cf_list),
     estimate             = att,
     arm_estimates        = arm_estimates,
     cohort_arm_estimates = cohort_arm_df,
@@ -361,12 +379,16 @@
 #' @param id   Unit identifier (long format)
 #' @param time Time identifier (long format)
 #' @param k    Number of SVD components for PCR. `NULL` (default) applies the
-#'             optimal hard threshold of Donoho & Gavish (2014) to the
-#'             pre-treatment donor block.
+#'             optimal hard threshold of Gavish & Donoho (2014) to the
+#'             pre-treatment donor block. On a staggered panel the threshold
+#'             is applied to each cohort's own donor block, and a supplied `k`
+#'             is clipped to that cohort's dimensions, so the fit reports one
+#'             value per cohort.
 #' @return A list of class `coresynth` with:
 #'   * `method`: `"si"`
 #'   * `estimate`: ATT (average treatment effect on the treated)
-#'   * `k`: number of SVD components used
+#'   * `k`: number of SVD components used; on a staggered panel a named
+#'     integer vector, one entry per cohort
 #'   * `weights`: Donor weight matrix (N_co x N_tr)
 #'   * `unit_weights`: Average donor weights across treated units (named N_co vector)
 #'   * `Y_cf`: Counterfactual post-treatment outcomes (T_post x N_tr)
@@ -377,7 +399,7 @@
 #'   * `T_pre`: Number of pre-treatment periods
 #' @noRd
 fit_si_cpp <- function(y, d, id, time, k = NULL,
-                       control_group = c("clean", "never_treated"), ...) {
+                       control_group = c("never_treated", "clean"), ...) {
   control_group <- match.arg(control_group)
 
   # -- Multi-arm detection: max(d) > 1 means K>=2 treatment arms -------------
@@ -385,6 +407,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
   if (any(d_int > 1L, na.rm = TRUE)) {
     tensor <- panel_to_tensor(y, d_int, id, time)
     .check_panel_complete(tensor$Y, "SI")
+    .check_control_group(control_group, tensor, "SI")
     k_use  <- if (is.null(k)) NULL else as.integer(k)
     if (!tensor$is_sharp) {
       return(.fit_si_staggered_multi(tensor, k_use, control_group))
@@ -395,6 +418,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
 
   pan    <- panel_to_matrices(y, d_int, id, time)
   .check_panel_complete(pan$Y, "SI")
+  .check_control_group(control_group, pan, "SI")
 
   # -- Staggered adoption path -------------------------------------------------
   if (!pan$is_sharp) {

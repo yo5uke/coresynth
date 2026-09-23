@@ -49,7 +49,7 @@ fit_scm_cpp <- function(
   v_optim = c("auto", "coord_descent", "bfgs", "multistart"),
   qp_solver = c("auto", "active_set", "wolfe"),
   v_window = NULL,
-  control_group = c("clean", "never_treated"),
+  control_group = c("never_treated", "clean"),
   scale_predictors = TRUE,
   nu = NULL,
   fixedeff = NULL,
@@ -67,6 +67,16 @@ fit_scm_cpp <- function(
   if (!is.null(xi) && (!is.numeric(xi) || length(xi) != 1L ||
                        !is.finite(xi) || xi <= 0))
     stop("xi must be NULL or a single positive number.", call. = FALSE)
+  # xi weights the covariate balance term of BFR (2022, S.5.2, Eq. 11) against
+  # the lagged outcomes, so it means nothing wherever that term is not in the
+  # objective. Accepting it there is the silent no-op .check_method_args()
+  # exists to stop, one level deeper.
+  if (!is.null(xi) && !identical(cov_method, "balance"))
+    stop("'xi' weights the covariate balance term of Ben-Michael, Feller & ",
+         "Rothstein (2022, S.5.2) against the lagged outcomes, and only ",
+         "cov_method = \"balance\" puts that term in the objective. This fit ",
+         "uses cov_method = \"", cov_method, "\", where xi has no effect.",
+         call. = FALSE)
   if (!is.null(nu) && !identical(nu, "auto") && !identical(nu, "separate") &&
       (!is.numeric(nu) || length(nu) != 1L || nu < 0 || nu > 1)) {
     stop("nu must be NULL, \"auto\", \"separate\", or a single number in ",
@@ -74,6 +84,7 @@ fit_scm_cpp <- function(
   }
   pan <- panel_to_matrices(y, d, id, time)
   .check_panel_complete(pan$Y, "SCM")
+  .check_control_group(control_group, pan, "SCM")
 
   if (pan$is_sharp && (!is.null(nu) || isTRUE(fixedeff) ||
                        !isTRUE(pool_cohorts))) {
@@ -137,9 +148,11 @@ fit_scm_cpp <- function(
   # excluded here either run their own solver (the penalised QP and the
   # partially pooled block descent are solved in R via solve_simplex_qp()) or
   # would report weights from a solver the flag never reached, which is worse
-  # than refusing. "auto" therefore resolves to Wolfe wherever it is wired and
-  # falls back quietly elsewhere; an explicit "wolfe" still errors, because a
-  # caller who named the solver should be told it cannot be honoured.
+  # than refusing. "auto" therefore falls back quietly to the active set on
+  # those paths; an explicit "wolfe" still errors, because a caller who named
+  # the solver should be told it cannot be honoured. Where Wolfe is wired,
+  # "auto" is settled once the sharp path knows whether the fit is
+  # outcomes-only (see below).
   bad <- c(
     if (!pan$is_sharp) "staggered adoption",
     if (v_selection == "oos") "v_selection = 'oos'",
@@ -156,8 +169,8 @@ fit_scm_cpp <- function(
       call. = FALSE
     )
   }
-  if (identical(qp_solver, "auto"))
-    qp_solver <- if (length(bad)) "active_set" else "wolfe"
+  if (identical(qp_solver, "auto") && length(bad))
+    qp_solver <- "active_set"
   use_wolfe <- identical(qp_solver, "wolfe")
 
   # -- Staggered path (cohort-by-cohort SCM) -----------------------------------
@@ -250,7 +263,27 @@ fit_scm_cpp <- function(
     # unset. Separate SCM (nu = 0) is the practice they argue against, so it
     # is opt-in rather than the default -- except where the knobs above have
     # already ruled the pooled solver out.
-    if (is.null(nu)) nu <- if (pooled_blocked) "separate" else "auto"
+    if (is.null(nu)) {
+      if (pooled_blocked) {
+        # The default is the partially pooled solver, so name the argument
+        # that moved the fit off it rather than changing the estimator in
+        # silence -- the same reason predictors = NULL announces itself.
+        blocked_by <- c(
+          if (!identical(donor_mspe_threshold, Inf)) "donor_mspe_threshold",
+          if (!is.null(lambda_pen))                  "lambda_pen",
+          if (v_selection == "oos")                  "v_selection = 'oos'"
+        )
+        message(
+          paste(blocked_by, collapse = " and "),
+          " cannot be combined with the partially pooled solver, so this fit ",
+          "uses nu = \"separate\": one synthetic control per block, with the ",
+          "V optimisation. Drop ",
+          if (length(blocked_by) > 1L) "them" else "it",
+          " for the partially pooled default."
+        )
+      }
+      nu <- if (pooled_blocked) "separate" else "auto"
+    }
 
     if (!identical(nu, "separate")) {
       stag <- .fit_scm_staggered_pooled(
@@ -284,6 +317,15 @@ fit_scm_cpp <- function(
       cohort_estimates = stag$cohort_estimates,
       cohort_fits      = stag$cohort_fits,
       pooling          = stag$pooling,   # NULL for the per-cohort path
+      # The pooling parameter this fit actually used: the number the pooled
+      # solver settled on, or "separate" for the per-cohort path, which is
+      # nu = 0 reached another way. Nothing else on the object says which of
+      # the two staggered estimators produced it.
+      nu               = if (identical(nu, "separate")) "separate"
+                         else stag$pooling$nu,
+      # Resolved from "auto", as on the sharp path: the per-cohort and pooled
+      # solvers both run their own QP, so this is always "active_set" here.
+      qp_solver        = qp_solver,
       fixedeff         = fixedeff,
       # Recorded on both paths: `pooling` carries it only for the pooled one,
       # and it decides what a cohort_fit block stands for.
@@ -310,6 +352,18 @@ fit_scm_cpp <- function(
       beta_hat         = beta_hat,
       covariates       = covariates,
       control_group    = control_group,
+      # Adoption row of every unit (NA = never treated). A refit cannot
+      # recover it from cohort_fits, which omit any cohort the fit skipped --
+      # and whose treated units would then be rebuilt as never-treated donors.
+      T_adopt          = pan$T_adopt,
+      # The per-block path's settings, so the jackknife of scm_inference()
+      # refits the same estimator. NULL on the pooled path, whose settings
+      # live in `pooling`.
+      separate_args    = if (identical(nu, "separate")) list(
+        v_selection          = v_selection,
+        v_optim              = v_optim,
+        donor_mspe_threshold = donor_mspe_threshold,
+        lambda_pen           = lambda_pen),
       Y_all            = Y_work   # T x N -- scm_rank_pval() / frontier refits
     )
     return(res)  # class tags are attached by new_coresynth() in scm_fit()
@@ -433,6 +487,19 @@ fit_scm_cpp <- function(
       }
     }
   }
+
+  # "auto" picks Wolfe where the inner QP can be degenerate: few rows next to
+  # the donor pool, where the optimum can be a face and Wolfe returns its
+  # Caratheodory-sparse point and lets the outer V search reach a lower loss.
+  # That is every predictor fit, and an outcomes-only fit with few
+  # pre-treatment periods. With at least half as many periods as donors the
+  # outcomes-only QP has a unique optimum in practice, both solvers return it,
+  # and the active set -- warm-started along the coordinate sweep and carried
+  # in Gram form there -- gets to it several times faster.
+  if (identical(qp_solver, "auto"))
+    qp_solver <- if (!use_cov && 2L * T_pre >= length(pan$idx_control))
+      "active_set" else "wolfe"
+  use_wolfe <- identical(qp_solver, "wolfe")
 
   if (use_cov) {
     if (is.null(data) || is.null(id_var) || is.null(time_var)) {
@@ -829,7 +896,7 @@ fit_scm_cpp <- function(
                                v_optim              = "coord_descent",
                                donor_mspe_threshold = Inf,
                                lambda_pen           = NULL,
-                               control_group        = "clean",
+                               control_group        = "never_treated",
                                pool_cohorts         = TRUE,
                                fixedeff             = FALSE) {
   Y       <- if (!is.null(Y_matrix)) Y_matrix else pan$Y
@@ -1041,9 +1108,10 @@ fit_scm_cpp <- function(
                                       unit_weights  = NULL,
                                       nu            = "auto",
                                       fixedeff      = FALSE,
-                                      control_group = "clean",
+                                      control_group = "never_treated",
                                       pool_cohorts  = TRUE,
                                       Z             = NULL,
+                                      warm          = NULL,
                                       max_sweeps    = 200L,
                                       tol           = 1e-7) {
   # tol is the relative objective-improvement threshold for the BCD loop.
@@ -1122,6 +1190,8 @@ fit_scm_cpp <- function(
 
     list(
       cohort = g, idx_tr = idx_tr_g, idx_co = idx_co_g,
+      key = if (pool_cohorts) as.character(g) else
+        as.character(pan$units[idx_tr_g]),
       mass = blk$mass, masses = blk$masses,
       T_pre = T_pre_g, T_post = T_post_g,
       pre_rows = pre_rows, post_rows = post_rows,
@@ -1201,6 +1271,33 @@ fit_scm_cpp <- function(
   # problem. With them the nu = 0 objective is the combined sep measure of
   # footnote 7, whose block terms carry m_j^2 / L_j and m_j^2 / dz, so the
   # relative weight of the two parts depends on the block after all.
+  # `warm` (the jackknife of scm_inference()) carries a previous fit's
+  # nu = 0 and final weights, keyed by block and named by donor. Each problem
+  # is convex, so a start near the optimum changes how fast the solvers get
+  # there, not where; a leave-one-out refit is a near copy of the full fit.
+  warm_start <- function(which, j) {
+    w <- warm[[which]][[blocks[[j]]$key]]
+    if (is.null(w)) return(NULL)
+    w <- w[colnames(blocks[[j]]$X)]
+    w[is.na(w)] <- 0
+    w <- pmax(unname(w), 0)
+    if (sum(w) <= 0) NULL else w / sum(w)
+  }
+  # Every block QP has Q = s X'X + s_z Xz'Xz = F'F for the stacked factor
+  # F = [sqrt(s) X; sqrt(s_z) Xz], whose few rows (the block's lags and
+  # covariates) make lambda_max(FF') -- the same number as lambda_max(Q) --
+  # cheap, where solve_simplex_qp() would otherwise decompose the N x N Q on
+  # every call. That decomposition was most of a large panel's fit time.
+  XXt <- lapply(blocks, function(bl) tcrossprod(bl$X))
+  XZt <- if (use_z) lapply(blocks, function(bl) tcrossprod(bl$X, bl$Xz))
+  ZZt <- if (use_z) lapply(blocks, function(bl) tcrossprod(bl$Xz))
+  lam_max <- function(j, s, s_z = 0) {
+    M <- s * XXt[[j]]
+    if (use_z)
+      M <- rbind(cbind(M, sqrt(s * s_z) * XZt[[j]]),
+                 cbind(sqrt(s * s_z) * t(XZt[[j]]), s_z * ZZt[[j]]))
+    max(eigen(M, symmetric = TRUE, only.values = TRUE)$values)
+  }
   Gamma <- lapply(seq_len(J), function(j) {
     bl <- blocks[[j]]
     Q  <- crossprod(bl$X) / L_g[j]
@@ -1209,9 +1306,15 @@ fit_scm_cpp <- function(
       Q  <- Q  + crossprod(bl$Xz) / dz
       cv <- cv + as.numeric(crossprod(bl$Xz, bl$bz)) / dz
     }
-    as.numeric(solve_simplex_qp(Q, cv))
+    lip <- lam_max(j, 1 / L_g[j], if (use_z) 1 / dz else 0)
+    x0  <- warm_start("separate", j)
+    as.numeric(if (is.null(x0)) solve_simplex_qp(Q, cv, lipschitz = lip) else
+      solve_simplex_qp(Q, cv, x0 = x0, lipschitz = lip))
   })
 
+  # Kept for the jackknife of scm_inference(): a donor with no weight here or
+  # in the final solution can be dropped without refitting.
+  Gamma_sep <- Gamma
   C_sep  <- sqrt(comb_sep(Gamma))
   C_pool <- sqrt(comb_pool(Gamma))
 
@@ -1229,6 +1332,12 @@ fit_scm_cpp <- function(
   sweeps_used <- 0L
   if (nu_num > 0 && C_pool > .Machine$double.eps &&
       C_sep > .Machine$double.eps) {
+    if (!is.null(warm$final)) {
+      for (j in seq_len(J)) {
+        x0 <- warm_start("final", j)
+        if (!is.null(x0)) Gamma[[j]] <- x0
+      }
+    }
     A_pool   <- nu_num / (C_pool^2 * L)
     A_pool_z <- if (use_z) nu_num / (C_pool^2 * dz) else 0
     P        <- pooled_gap(Gamma)
@@ -1250,7 +1359,9 @@ fit_scm_cpp <- function(
         R     <- P[seq_len(lg)] - mj * gap_j / J
         A_sep <- (1 - nu_num) * mj^2 / (C_sep^2 * J * lg)
         u     <- R + mj * bl$b / J
-        Q     <- 2 * (A_pool * mj^2 / J^2 + A_sep) * XtX_l[[j]]
+        s_x   <- 2 * (A_pool * mj^2 / J^2 + A_sep)
+        s_zz  <- 0
+        Q     <- s_x * XtX_l[[j]]
         cvec  <- 2 * (A_pool * mj / J * as.numeric(crossprod(bl$X, u)) +
                         A_sep * Xtb_l[[j]])
         if (use_z) {
@@ -1259,14 +1370,16 @@ fit_scm_cpp <- function(
           R_z     <- P_z - mj * gz / J
           A_sep_z <- (1 - nu_num) * mj^2 / (C_sep^2 * J * dz)
           u_z     <- R_z + mj * bl$bz / J
-          Q       <- Q + 2 * (A_pool_z * mj^2 / J^2 + A_sep_z) * ZtZ_l[[j]]
+          s_zz    <- 2 * (A_pool_z * mj^2 / J^2 + A_sep_z)
+          Q       <- Q + s_zz * ZtZ_l[[j]]
           cvec    <- cvec +
             2 * (A_pool_z * mj / J * as.numeric(crossprod(bl$Xz, u_z)) +
                    A_sep_z * Ztb_l[[j]])
         }
         # warm start from the previous block solution: successive sweeps
         # resolve near-identical QPs, so FISTA converges in a few iterations
-        w_new <- as.numeric(solve_simplex_qp(Q, cvec, x0 = Gamma[[j]]))
+        w_new <- as.numeric(solve_simplex_qp(Q, cvec, x0 = Gamma[[j]],
+                                             lipschitz = lam_max(j, s_x, s_zz)))
         Gamma[[j]] <- w_new
         gap_new <- bl$b - as.numeric(bl$X %*% w_new)
         P[seq_len(lg)] <- R + mj * gap_new / J
@@ -1338,64 +1451,101 @@ fit_scm_cpp <- function(
       q_cov_sep       = if (use_z) q_sep_z_of(Gamma)  else NULL,
       q_cov_pool      = if (use_z) q_pool_z_of(Gamma) else NULL,
       n_covariates    = dz,
-      sweeps          = sweeps_used
+      sweeps          = sweeps_used,
+      separate_weights = Map(function(g, bl) stats::setNames(g,
+                                                colnames(bl$Y_co_raw)),
+                             Gamma_sep, blocks)
     )
   ))
 }
 
-#' Wild Bootstrap Inference for Staggered SCM
+#' Inference for Staggered SCM
 #'
-#' Confidence intervals and p-values for the aggregate ATT of a staggered
-#' SCM fit via the weighted multiplier (wild) bootstrap of Ben-Michael,
-#' Feller & Rothstein (2022, Section 5.3), adapting Otsu & Rai (2017).
-#' The aggregate ATT is written as a weighted average of per-treated-unit
-#' effect contributions; each bootstrap draw perturbs those contributions
-#' with independent golden-ratio two-point multipliers (mean 0, variance 1)
-#' while donor weights and outcomes are kept fixed.
+#' Standard errors, confidence intervals and p-values for the aggregate ATT of
+#' a staggered SCM fit, by the two procedures of Ben-Michael, Feller &
+#' Rothstein (2022).
 #'
-#' Works with both staggered SCM paths (the partially pooled default and
-#' `nu = "separate"`) and honours the cohort aggregation weights
-#' `N_treated x T_post`. Each treated unit is resampled at its own mass --
-#' its `weights` entry, or one -- so the contributions sum back to the ATT
-#' the fit reports. For intercept-shifted fits (`fixedeff = TRUE`)
-#' the per-unit contributions are computed in difference-in-differences
-#' form, i.e. each treated unit is demeaned by its own pre-treatment mean.
+#' `method = "jackknife"` (default) is the leave-one-unit-out jackknife of
+#' their Appendix A.1: every unit in the panel -- treated units and donors
+#' alike -- is dropped in turn, the weights (and intercepts, for `fixedeff`
+#' fits) are refitted with the pooling parameter `nu` held at the fit's value,
+#' and the aggregate ATT is recomputed. The variance is
+#' \eqn{(n-1)/n \sum_i (\widehat{ATT}^{(-i)} - \overline{ATT})^2}, and the
+#' interval and p-value use the normal approximation. Because the donors are
+#' resampled too, the interval reflects the noise in the synthetic controls,
+#' which every treated unit of a cohort shares.
 #'
-#' With very few treated units the multiplier distribution has few atoms,
-#' so the bootstrap is unreliable; a warning is issued below 5 treated
-#' units.
+#' `method = "wild_bootstrap"` is the multiplier bootstrap of their Section
+#' 5.3, which adapts Otsu & Rai (2017). The ATT is written as a sum over every
+#' unit of the panel, and each unit's term is perturbed by its own
+#' golden-ratio two-point multiplier while the weights stay fixed: a treated
+#' unit's term is its effect's deviation from the ATT plus its residual, a
+#' donor's is its residual times the weight the synthetic controls put on it.
+#' Residuals are against a two-way (unit and period) model of the untreated
+#' outcome. Following Otsu & Rai's Equation (9), only the treated units'
+#' heterogeneity term is centred at the ATT; centring every unit, as the
+#' paper's Equation (13) reads, would make the interval grow with the size of
+#' the effect. The draws cost no refitting, so this is the choice for panels
+#' too large for the jackknife. It is conservative where the outcome has
+#' structure the two-way model does not absorb (unit-specific trends): in
+#' simulation a nominal 95% interval covered 96-99.5% across donor pools of
+#' 8 to 40 and 3 to 24 treated units, and 93% with 2 treated units.
+#'
+#' The jackknife refits the model once per unit, which grows quickly with
+#' the panel: about 0.2 s at 50 units, 0.7 s at 100 and 3 s at 200, but over
+#' a minute at 400. Donors that carry no weight in any block are not refitted
+#' (dropping one leaves the solution unchanged), and each refit starts from
+#' the full fit's weights.
+#'
+#' Both work with both staggered SCM paths (the partially pooled default and
+#' `nu = "separate"`) and honour the aggregation weights `N_treated x T_post`,
+#' or the `weights` given to [scm_fit()].
+#'
+#' The jackknife treats the outcome as fixed: a fit with `covariates`
+#' partialled out keeps the partialled-out outcome, and one with
+#' `cov_method = "balance"` keeps its scaled covariate matrix, rather than
+#' re-estimating either without the dropped unit. A dropped unit that was the
+#' only member of its cohort removes that cohort from the estimate, as in the
+#' paper's \eqn{J^{(-i)}}.
 #'
 #' @param fit A staggered SCM fit from [scm_fit()] (`method = "scm"` on a
 #'   panel with multiple adoption times). Sharp fits are rejected: use
 #'   [mspe_ratio_pval()] or [conformal_inference()] instead.
-#' @param method Only `"wild_bootstrap"` is available.
-#' @param n_boot Number of bootstrap draws. Default 1000.
+#' @param method `"jackknife"` (default) or `"wild_bootstrap"`.
+#' @param n_boot Number of bootstrap draws (`"wild_bootstrap"` only).
+#'   Default 1000.
 #' @param level Confidence level. Default 0.95.
 #' @param alternative Direction of the alternative hypothesis for the
 #'   p-value: `"two.sided"` (default), `"greater"`, or `"less"`.
-#' @param seed Optional RNG seed.
+#' @param seed Optional RNG seed (`"wild_bootstrap"` only).
 #' @return A `coresynth_inference` object with the standard fields
 #'   (`estimate`, `se`, `p_value`, `ci_lower`, `ci_upper`, `method`,
-#'   `staggered`, `n_controls`, `alternative`, `boot_ests`), compatible
-#'   with [tidy.coresynth_inference()] and [glance.coresynth_inference()].
-#'   `n_treated` additionally records the number of treated units
-#'   resampled by the multipliers.
+#'   `staggered`, `n_controls`, `alternative`), compatible with
+#'   [tidy.coresynth_inference()] and [glance.coresynth_inference()].
+#'   `n_treated` records the number of treated units. The wild bootstrap adds
+#'   the draws in `boot_ests`, centred on the estimate; the jackknife adds the leave-one-out estimates
+#'   in `jack_ests` (named by the dropped unit, `NA` where a refit was not
+#'   possible).
 #' @references Ben-Michael, E., Feller, A., & Rothstein, J. (2022).
 #'   Synthetic controls with staggered adoption. *JRSS-B*, 84(2), 351-381.
+#'
+#'   Otsu, T., & Rai, Y. (2017). Bootstrap inference of matching estimators
+#'   for average treatment effects. *JASA*, 112(520), 1720-1732.
 #' @examples
 #' \donttest{
 #' set.seed(1)
 #' dat <- expand.grid(time = 1:20, id = paste0("u", 1:12))
 #' dat$y <- rnorm(nrow(dat)) + as.numeric(factor(dat$id))
 #' dat$d <- as.integer(
-#'   (dat$id == "u1" & dat$time > 10) | (dat$id == "u2" & dat$time > 14)
+#'   (dat$id %in% c("u1", "u2") & dat$time > 10) |
+#'   (dat$id %in% c("u3", "u4") & dat$time > 14)
 #' )
 #' fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
-#' scm_inference(fit, n_boot = 200, seed = 1)
+#' scm_inference(fit)
 #' }
 #' @export
 scm_inference <- function(fit,
-                          method      = "wild_bootstrap",
+                          method      = c("jackknife", "wild_bootstrap"),
                           n_boot      = 1000L,
                           level       = 0.95,
                           alternative = c("two.sided", "greater", "less"),
@@ -1419,59 +1569,74 @@ scm_inference <- function(fit,
     stop("cohort_fits lack per-unit treated outcomes (Y_treat_mat). ",
          "Re-run scm_fit() with the current version.", call. = FALSE)
 
+  att_hat    <- fit$estimate
+  n_controls <- length(unique(unlist(lapply(cf, `[[`, "idx_co"))))
+  alpha_lv   <- 1 - level
+
+  if (method == "jackknife") {
+    n_tr <- sum(vapply(cf, function(b) length(b$idx_tr), integer(1L)))
+    if (n_tr < 3L)
+      warning("The jackknife with fewer than 3 treated units is somewhat ",
+              "anti-conservative (in simulation a nominal 5% test rejected ",
+              "8.5% of the time with 2); interpret the interval with ",
+              "caution.", call. = FALSE)
+    jack <- .scm_jackknife_estimates(fit)
+    ok   <- is.finite(jack)
+    n    <- sum(ok)
+    if (n < 3L)
+      stop("scm_inference(): fewer than three leave-one-unit-out refits ",
+           "succeeded, so the jackknife variance is not defined.",
+           call. = FALSE)
+    if (n < length(jack))
+      warning(sprintf(paste0(
+        "scm_inference(): %d of %d leave-one-unit-out refits failed (e.g. ",
+        "dropping a donor left a cohort fewer than two); the jackknife uses ",
+        "the remaining %d."), length(jack) - n, length(jack), n),
+        call. = FALSE)
+    jb  <- jack[ok]
+    se  <- sqrt((n - 1) / n * sum((jb - mean(jb))^2))
+    z   <- stats::qnorm(1 - alpha_lv / 2)
+    zst <- if (se > 0) att_hat / se else sign(att_hat) * Inf
+    p_value <- switch(alternative,
+      two.sided = 2 * stats::pnorm(-abs(zst)),
+      greater   = stats::pnorm(zst, lower.tail = FALSE),
+      less      = stats::pnorm(zst))
+    return(structure(list(
+      estimate    = att_hat,
+      se          = se,
+      p_value     = p_value,
+      ci_lower    = att_hat - z * se,
+      ci_upper    = att_hat + z * se,
+      method      = method,
+      staggered   = TRUE,
+      n_controls  = n_controls,
+      n_treated   = n_tr,
+      alternative = alternative,
+      jack_ests   = jack
+    ), class = "coresynth_inference"))
+  }
+
   if (!is.null(seed)) set.seed(seed)
 
-  TT       <- length(fit$times)
-  fixedeff <- isTRUE(fit$fixedeff)
-
-  # per-treated-unit average post-treatment effects tau_i (BFR Eq. 12) and
-  # aggregation weights omega_i reproducing sum_g N_g * T_post_g weighting
-  tau_i   <- numeric(0)
-  omega_i <- numeric(0)
-  for (b in cf) {
-    pre  <- seq_len(b$T_pre)
-    post <- (b$T_pre + 1L):TT
-    if (fixedeff) {
-      # DiD form: each treated unit demeaned by its own pre-treatment mean
-      tau_g <- (colMeans(b$Y_treat_mat[post, , drop = FALSE]) -
-                  colMeans(b$Y_treat_mat[pre, , drop = FALSE])) -
-        (mean(b$Y_synth[post]) - mean(b$Y_synth[pre]))
-    } else {
-      tau_g <- colMeans(b$Y_treat_mat[post, , drop = FALSE] -
-                          b$Y_synth[post])
-    }
-    tau_i <- c(tau_i, tau_g)
-    # Each unit carries its own mass (its `weights` entry, or 1) times the
-    # block's post window, so the contributions sum back to the block weight
-    # and reproduce the ATT the fit reports. Fits from before `unit_masses`
-    # split the block weight evenly, which is the same thing under the equal
-    # weighting those fits had.
-    m_i <- b$unit_masses %||% rep(b$weight / b$T_post / b$n_treated,
-                                  b$n_treated)
-    omega_i <- c(omega_i, m_i * b$T_post)
-  }
-  omega_i <- omega_i / sum(omega_i)
-  att_hat <- fit$estimate
-
-  N_tr <- length(tau_i)
-  if (N_tr < 5L)
-    warning("Wild bootstrap with fewer than 5 treated units is unreliable; ",
+  c_u  <- .scm_wild_coefs(fit)
+  N_tr <- sum(vapply(cf, function(b) length(b$idx_tr), integer(1L)))
+  if (N_tr < 3L)
+    warning("Wild bootstrap with fewer than 3 treated units is unreliable; ",
             "interpret the interval with caution.", call. = FALSE)
 
-  # golden-ratio two-point multipliers: E[W] = 0, E[W^2] = 1
+  # golden-ratio two-point multipliers of Otsu & Rai (2017, Eq. 8):
+  # E[W] = 0, E[W^2] = 1
   s5    <- sqrt(5)
   w_neg <- -(s5 - 1) / 2
   w_pos <- (s5 + 1) / 2
   p_neg <- (s5 + 1) / (2 * s5)
 
-  dev <- tau_i - att_hat
-  S   <- replicate(n_boot, {
-    W <- sample(c(w_neg, w_pos), N_tr, replace = TRUE,
+  S <- replicate(n_boot, {
+    W <- sample(c(w_neg, w_pos), length(c_u), replace = TRUE,
                 prob = c(p_neg, 1 - p_neg))
-    sum(omega_i * W * dev)
+    sum(W * c_u)
   })
 
-  alpha_lv <- 1 - level
   se       <- stats::sd(S)
   ci_lower <- att_hat - unname(stats::quantile(S, 1 - alpha_lv / 2))
   ci_upper <- att_hat - unname(stats::quantile(S, alpha_lv / 2))
@@ -1480,8 +1645,6 @@ scm_inference <- function(fit,
     greater   = (1 + sum(S >= att_hat)) / (n_boot + 1),
     less      = (1 + sum(S <= att_hat)) / (n_boot + 1)
   )
-
-  n_controls <- length(unique(unlist(lapply(cf, `[[`, "idx_co"))))
 
   structure(list(
     estimate    = att_hat,
@@ -1496,6 +1659,157 @@ scm_inference <- function(fit,
     alternative = alternative,
     boot_ests   = att_hat + S
   ), class = "coresynth_inference")
+}
+
+# Per-unit coefficients of the wild bootstrap of scm_inference(): the draw
+# is S = sum_u W_u c_u with independent multipliers W_u, one per unit of the
+# panel. This is Otsu & Rai (2017, Eq. 9) as BFR (2022, Eq. 12) carry it to
+# synthetic controls, where the ATT is a sum over every unit, treated or not:
+#   treated i : omega_i * (tau_i - ATT + sum_d gamma_d e_d)
+#   donor d   : - sum_b omega_b gamma_db e_db
+# The treated term is Otsu & Rai's residual plus heterogeneity nu_i, the
+# donor term the residual of each unit used as a match, carrying its own
+# multiplier -- "resample not only the regression residuals of treated and
+# untreated observations but also the ones to estimate the average treatment
+# effects". Leaving the donor terms out, as this function's predecessor did,
+# drops the error of the synthetic control, which every treated unit of a
+# block shares, and the interval under-covers. Only nu_i is centred at the
+# ATT: centring the donor terms as well, as BFR's Eq. (13) reads and
+# augsynth implements, adds the squared ATT to every donor's variance.
+# Residuals are against the two-way model of the untreated outcome -- the
+# intercept shift of BFR S.5.1 plus period effects, which the multipliers
+# would otherwise scatter: in the block's difference-in-differences form, a
+# unit's change from its pre- to post-treatment mean less the mean change of
+# the block's donors. With every multiplier at one the coefficients sum to
+# zero, i.e. the draws are centred on the estimate.
+.scm_wild_coefs <- function(fit) {
+  Y <- fit$Y_all
+  if (is.null(Y))
+    stop("this staggered SCM fit predates the current wild bootstrap; re-run ",
+         "scm_fit() with the current version.", call. = FALSE)
+  TT       <- nrow(Y)
+  fixedeff <- isTRUE(fit$fixedeff)
+  cf       <- fit$cohort_fits
+
+  blk <- lapply(cf, function(b) {
+    pre  <- seq_len(b$T_pre)
+    post <- (b$T_pre + 1L):TT
+    tau_g <- if (fixedeff) {
+      (colMeans(b$Y_treat_mat[post, , drop = FALSE]) -
+         colMeans(b$Y_treat_mat[pre, , drop = FALSE])) -
+        (mean(b$Y_synth[post]) - mean(b$Y_synth[pre]))
+    } else {
+      colMeans(b$Y_treat_mat[post, , drop = FALSE] - b$Y_synth[post])
+    }
+    # unit_weights runs over idx_co in the same order on both paths
+    chg <- colMeans(Y[post, b$idx_co, drop = FALSE]) -
+      colMeans(Y[pre, b$idx_co, drop = FALSE])
+    # Each unit carries its own mass (its `weights` entry, or 1) times the
+    # block's post window, which is how the fit aggregates.
+    m_i <- b$unit_masses %||% rep(b$weight / b$T_post / b$n_treated,
+                                  b$n_treated)
+    list(tau = tau_g, omega = m_i * b$T_post, idx_tr = b$idx_tr,
+         idx_co = b$idx_co,
+         ge = as.numeric(b$unit_weights) * (chg - mean(chg)))
+  })
+  tot <- sum(unlist(lapply(blk, `[[`, "omega")))
+  att <- fit$estimate
+  c_u <- stats::setNames(numeric(ncol(Y)), colnames(Y))
+  for (bb in blk) {
+    om <- bb$omega / tot
+    c_u[bb$idx_tr] <- c_u[bb$idx_tr] + om * (bb$tau - att + sum(bb$ge))
+    c_u[bb$idx_co] <- c_u[bb$idx_co] - sum(om) * bb$ge
+  }
+  c_u
+}
+
+# Leave-one-unit-out estimates for the jackknife of scm_inference(), following
+# BFR (2022) Appendix A.1: drop each unit of the panel, refit the weights with
+# the fit's own hyperparameters (nu held at its value), and recompute the
+# aggregate ATT. Returns a length-N vector named by the dropped unit.
+.scm_jackknife_estimates <- function(fit) {
+  pan <- .pan_from_staggered_fit(fit)
+  N   <- ncol(pan$Y)
+  tw  <- fit$treated_weights
+  Z   <- fit$Z_balance
+  sep <- identical(fit$nu, "separate")
+  if (sep && is.null(fit$separate_args))
+    stop("this staggered SCM fit predates the jackknife; re-run scm_fit() ",
+         "with the current version, or use method = 'wild_bootstrap'.",
+         call. = FALSE)
+  fixedeff      <- isTRUE(fit$fixedeff)
+  control_group <- fit$control_group %||% "clean"
+  pool_cohorts  <- fit$pool_cohorts %||% TRUE
+
+  # BFR's jackknife refits after every drop, but a donor that carries no
+  # weight in any block -- in the final solution or in the nu = 0 solution
+  # that sets the normalising constants -- leaves the full-fit weights
+  # optimal for the reduced problem: the objective and its constants do not
+  # involve it. Its leave-one-out estimate is then the fit's own, exactly,
+  # and refitting would only rediscover it. SCM weights are sparse, so this
+  # is most of the donor pool. Only the pooled path qualifies; the per-block
+  # path re-optimises V, which can move with any donor.
+  inert <- character(0L)
+  if (!sep) {
+    w_all <- c(unlist(lapply(fit$cohort_fits, `[[`, "unit_weights"),
+                      use.names = FALSE),
+               unlist(fit$pooling$separate_weights %||% list(),
+                      use.names = FALSE))
+    n_all <- c(unlist(lapply(fit$cohort_fits,
+                             function(z) names(z$unit_weights))),
+               unlist(lapply(fit$pooling$separate_weights %||% list(), names)))
+    if (!is.null(fit$pooling$separate_weights)) {
+      active <- unique(n_all[w_all > 1e-12])
+      inert  <- setdiff(as.character(pan$units[pan$idx_control]), active)
+    }
+  }
+
+  # Each refit starts from the full fit's solution, keyed the way the pooled
+  # solver keys its blocks.
+  warm <- NULL
+  if (!sep && !is.null(fit$pooling$separate_weights)) {
+    keys <- vapply(fit$cohort_fits, function(z)
+      if (isTRUE(pool_cohorts)) as.character(z$cohort) else
+        as.character(z[["unit"]]), character(1L))
+    warm <- list(
+      separate = stats::setNames(fit$pooling$separate_weights, keys),
+      final    = stats::setNames(lapply(fit$cohort_fits, `[[`,
+                                        "unit_weights"), keys))
+  }
+
+  est <- vapply(seq_len(N), function(i) {
+    if (as.character(pan$units[i]) %in% inert) return(fit$estimate)
+    keep <- seq_len(N)[-i]
+    p <- pan
+    p$Y       <- pan$Y[, keep, drop = FALSE]
+    p$D       <- pan$D[, keep, drop = FALSE]
+    p$units   <- pan$units[keep]
+    p$T_adopt <- pan$T_adopt[keep]
+    p$idx_treat   <- which(!is.na(p$T_adopt))
+    p$idx_control <- which(is.na(p$T_adopt))
+    if (length(p$idx_treat) == 0L) return(NA_real_)
+    tw_i <- if (is.null(tw)) NULL else
+      tw[names(tw) != as.character(pan$units[i])]
+    f <- tryCatch(suppressWarnings(suppressMessages(
+      if (sep) {
+        a <- fit$separate_args
+        .fit_scm_staggered(
+          p, unit_weights = tw_i, Y_matrix = p$Y,
+          v_selection = a$v_selection, v_optim = a$v_optim,
+          donor_mspe_threshold = a$donor_mspe_threshold,
+          lambda_pen = a$lambda_pen, control_group = control_group,
+          pool_cohorts = pool_cohorts, fixedeff = fixedeff)
+      } else {
+        .fit_scm_staggered_pooled(
+          p, Y_matrix = p$Y, unit_weights = tw_i, nu = fit$pooling$nu,
+          fixedeff = fixedeff, control_group = control_group,
+          pool_cohorts = pool_cohorts,
+          Z = if (is.null(Z)) NULL else Z[keep, , drop = FALSE],
+          warm = warm)
+      })), error = function(e) NULL)
+    if (is.null(f) || !is.finite(f$estimate)) NA_real_ else f$estimate
+  }, numeric(1L))
+  stats::setNames(est, as.character(pan$units))
 }
 
 #' Permutation Inference via MSPE Ratio for SCM

@@ -1755,24 +1755,27 @@ test_that("Phase 12a: v_optim='bfgs' with lambda_pen works", {
 
 # ── Phase 13a: SDID 共変量対応 ────────────────────────────────────────────────
 
-# Time-varying covariate panel: panel_cov already has cov1/cov2 (time-invariant here;
-# sufficient to test the partial-out API)
+# panel_cov's cov1/cov2 are time-invariant, so the unit fixed effects of the
+# partial-out regression absorb them (and say so); enough to test the API.
 test_that("Phase 13a: SDID with one covariate returns valid fit", {
-  fit <- scm_fit(y ~ d | id + time, data = panel_cov, method = "sdid",
-                 covariates = "cov1")
+  expect_warning(
+    fit <- scm_fit(y ~ d | id + time, data = panel_cov, method = "sdid",
+                   covariates = "cov1"), "absorb")
   expect_s3_class(fit, "coresynth")
   expect_true(is.finite(fit$estimate))
 })
 
 test_that("Phase 13a: beta_hat length equals number of covariates", {
-  fit <- scm_fit(y ~ d | id + time, data = panel_cov, method = "sdid",
-                 covariates = c("cov1", "cov2"))
+  expect_warning(
+    fit <- scm_fit(y ~ d | id + time, data = panel_cov, method = "sdid",
+                   covariates = c("cov1", "cov2")), "absorb")
   expect_length(fit$beta_hat, 2L)
 })
 
 test_that("Phase 13a: SDID covariates — unit weights stay on simplex", {
-  fit <- scm_fit(y ~ d | id + time, data = panel_cov, method = "sdid",
-                 covariates = "cov1")
+  fit <- suppressWarnings(
+    scm_fit(y ~ d | id + time, data = panel_cov, method = "sdid",
+            covariates = "cov1"))
   expect_equal(sum(fit$unit_weights), 1, tolerance = 1e-4)
   expect_true(all(fit$unit_weights >= -1e-8))
 })
@@ -1843,14 +1846,17 @@ test_that("Phase 13b: SDID staggered control_group='never_treated' works", {
   expect_true(is.finite(fit$estimate))
 })
 
-test_that("Phase 13b: SDID staggered control_group='clean' is default", {
-  fit_clean  <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid",
-                        control_group = "clean")
-  fit_never  <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid",
-                        control_group = "never_treated")
-  # Different control groups should (in general) give different estimates
-  expect_true(is.finite(fit_clean$estimate))
-  expect_true(is.finite(fit_never$estimate))
+test_that("staggered control_group defaults to never_treated; 'clean' is deprecated", {
+  fit_def   <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid")
+  fit_never <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid",
+                       control_group = "never_treated")
+  expect_equal(fit_def$estimate, fit_never$estimate)
+  expect_equal(fit_def$control_group, "never_treated")
+  for (m in c("scm", "sdid", "gsc", "si"))
+    expect_warning(
+      scm_fit(y ~ d | id + time, data = staggered, method = m,
+              control_group = "clean"),
+      "deprecated")
 })
 
 test_that("Phase 13b: SDID staggered — Y_treat dimensions match panel", {
@@ -3553,16 +3559,18 @@ test_that("sharp data with no control units errors clearly", {
   )
 })
 
-test_that("staggered panel with no never-treated units still fits via clean controls", {
+test_that("staggered panel with no never-treated units: donor-pool methods stop, MC fits", {
   stag_all <- make_panel()
   stag_all$d <- as.integer(
     (stag_all$id %in% paste0("u", 1:3) & stag_all$time > 10) |
     (!stag_all$id %in% paste0("u", 1:3) & stag_all$time > 16)
   )
-  expect_warning(
-    fit <- scm_fit(y ~ d | id + time, data = stag_all, method = "scm"),
-    "skipped"
-  )
+  # A later adopter is treated during the earlier cohort's post window, so it
+  # cannot stand in for that cohort's untreated outcomes.
+  for (m in c("scm", "sdid", "gsc", "si"))
+    expect_error(scm_fit(y ~ d | id + time, data = stag_all, method = m),
+                 "never-treated")
+  fit <- scm_fit(y ~ d | id + time, data = stag_all, method = "mc")
   expect_true(isTRUE(fit$staggered))
   expect_true(is.finite(fit$estimate))
 })
@@ -4101,8 +4109,10 @@ test_that("plot_data.scm_placebo returns tidy gaps and ratios frames", {
   expect_equal(g$gap[g$series == "Treated"], as.numeric(inf$treated_gap))
 
   r <- plot_data(inf, type = "ratios")
-  expect_identical(names(r), c("unit", "ratio", "series"))
+  expect_identical(names(r), c("unit", "ratio", "post_mspe", "series"))
   expect_equal(r$ratio, as.numeric(inf$mspe_ratios_all))
+  expect_equal(r$post_mspe,
+               as.numeric(c(inf$mspe_post_treated, inf$mspe_post_placebo)))
   expect_equal(r$series[1], "Treated")
 })
 
@@ -4271,7 +4281,8 @@ test_that("Phase 33: scm_inference errors on sharp and non-SCM fits", {
 
 test_that("Phase 33: scm_inference returns a valid coresynth_inference", {
   fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
-  inf <- suppressWarnings(scm_inference(fit, n_boot = 200, seed = 1))
+  inf <- suppressWarnings(scm_inference(fit, method = "wild_bootstrap",
+                                       n_boot = 200, seed = 1))
   expect_s3_class(inf, "coresynth_inference")
   expect_equal(inf$estimate, fit$estimate)
   expect_true(is.finite(inf$se) && inf$se > 0)
@@ -4283,17 +4294,20 @@ test_that("Phase 33: scm_inference returns a valid coresynth_inference", {
   expect_equal(inf$n_treated, 2L)
 })
 
-test_that("Phase 33: scm_inference warns with fewer than 5 treated units", {
+test_that("Phase 33: scm_inference warns with fewer than 3 treated units", {
   fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
-  expect_warning(scm_inference(fit, n_boot = 50, seed = 1),
-                 regexp = "fewer than 5 treated units")
+  expect_warning(scm_inference(fit, method = "wild_bootstrap", n_boot = 50,
+                               seed = 1),
+                 regexp = "fewer than 3 treated units")
 })
 
 test_that("Phase 33: scm_inference is reproducible with seed and works with tidy/glance", {
   fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm",
                  nu = 0.5, fixedeff = TRUE)
-  inf1 <- suppressWarnings(scm_inference(fit, n_boot = 100, seed = 42))
-  inf2 <- suppressWarnings(scm_inference(fit, n_boot = 100, seed = 42))
+  inf1 <- suppressWarnings(scm_inference(fit, method = "wild_bootstrap",
+                                        n_boot = 100, seed = 42))
+  inf2 <- suppressWarnings(scm_inference(fit, method = "wild_bootstrap",
+                                        n_boot = 100, seed = 42))
   expect_equal(inf1$boot_ests, inf2$boot_ests)
 
   td <- broom::tidy(inf1)
@@ -4307,11 +4321,15 @@ test_that("Phase 33: scm_inference is reproducible with seed and works with tidy
 test_that("Phase 33: scm_inference alternative directions behave sensibly", {
   fit <- scm_fit(y ~ d | id + time, data = staggered, method = "scm")
   # true ATT = 1.5 > 0: 'greater' should not have a larger p than 'less'
-  p_g <- suppressWarnings(scm_inference(fit, n_boot = 200, seed = 3,
-                                        alternative = "greater"))$p_value
-  p_l <- suppressWarnings(scm_inference(fit, n_boot = 200, seed = 3,
-                                        alternative = "less"))$p_value
-  expect_lte(p_g, p_l)
+  for (m in c("jackknife", "wild_bootstrap")) {
+    p_g <- suppressWarnings(scm_inference(fit, method = m, n_boot = 200,
+                                          seed = 3,
+                                          alternative = "greater"))$p_value
+    p_l <- suppressWarnings(scm_inference(fit, method = m, n_boot = 200,
+                                          seed = 3,
+                                          alternative = "less"))$p_value
+    expect_lte(p_g, p_l)
+  }
 })
 
 test_that("Phase 33: partially pooled SCM works with covariates partial-out", {
@@ -4893,8 +4911,20 @@ test_that("qp_solver = 'wolfe' leaves a non-degenerate outcomes-only fit alone",
   expect_equal(fit_w$estimate, fit_d$estimate, tolerance = 1e-6)
   expect_equal(fit_w$qp_solver, "wolfe")
   expect_equal(fit_d$qp_solver, "active_set")
-  # "auto" is the default and resolves to Wolfe on the sharp inner QP
-  expect_equal(fit_a$qp_solver, "wolfe")
+  # "auto" resolves to the active set on an outcomes-only fit with at least
+  # half as many pre-treatment periods as donors (here 10 and 9) ...
+  expect_equal(fit_a$qp_solver, "active_set")
+  expect_equal(fit_a$unit_weights, fit_w$unit_weights, tolerance = 1e-6)
+  # ... and to Wolfe where the QP can be degenerate: few periods next to the
+  # donor pool, or any predictor fit
+  short <- panel[panel$time > 6, ]
+  expect_equal(suppressMessages(
+    scm_fit(y ~ d | id + time, data = short, method = "scm"))$qp_solver,
+    "wolfe")
+  expect_equal(suppressMessages(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            predictors = list(pred("y", 1:10, "mean"))))$qp_solver,
+    "wolfe")
 })
 
 test_that("qp_solver = 'auto' falls back where Wolfe is not wired", {
@@ -5055,6 +5085,22 @@ test_that("SI picks the PCR rank by the optimal hard threshold", {
   fit_k <- scm_fit(y ~ d | id + time, data = .factor_panel(2), method = "si",
                    k = 5)
   expect_equal(fit_k$k, 5L)
+})
+
+test_that("a staggered SI fit reports the rank each cohort used", {
+  # The threshold is applied to each cohort's own donor block, so unlike the
+  # GSC factor count and the MC penalty there is no single value; the fit used
+  # to store the NULL argument instead of what it chose.
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "si")
+  expect_type(fit$k, "integer")
+  expect_named(fit$k, c("9", "15"))
+  expect_equal(unname(fit$k),
+               vapply(fit$cohort_fits, `[[`, integer(1), "k"))
+  expect_true(all(fit$k >= 1L))
+
+  # a sharp fit keeps the scalar
+  expect_length(scm_fit(y ~ d | id + time, data = .factor_panel(2),
+                        method = "si")$k, 1L)
 })
 
 test_that("MC cross-validates the nuclear norm penalty", {
@@ -5441,6 +5487,49 @@ test_that("pool_cohorts = FALSE gives one block per treated unit", {
   expect_true(is.finite(units$estimate))
 })
 
+test_that("unit-level blocks are labelled by unit, not by adoption date", {
+  # Two units adopt at 9, so the cohort label names both of them: anything
+  # keyed on it merges their series (augment()) or duplicates a row (tidy()).
+  panel_st <- .bfr_panel(c(9, 9, 13, 17))
+  units  <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",
+                    pool_cohorts = FALSE)
+  pooled <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm")
+
+  expect_true("unit" %in% names(units$cohort_estimates))
+  expect_equal(units$cohort_estimates$unit, as.character(1:4))
+  expect_equal(units$cohort_estimates$cohort, c(9L, 9L, 13L, 17L))
+
+  terms_u <- broom::tidy(units)$term
+  expect_equal(terms_u, paste0("unit_", 1:4))
+  expect_false(anyDuplicated(terms_u) > 0L)
+
+  au <- broom::augment(units)
+  tr <- au[au$.type == "treated", ]
+  expect_equal(sort(unique(tr$.unit)), paste0("unit_", 1:4))
+  expect_equal(nrow(tr), 4L * length(units$times))
+
+  # Cohort blocks keep the labels they had; the unit column reports the unit
+  # of a one-unit cohort and NA for the pooled one.
+  expect_equal(broom::tidy(pooled)$term, paste0("cohort_", c(9, 13, 17)))
+  expect_equal(pooled$cohort_estimates$unit, c(NA, "3", "4"))
+  au_p <- broom::augment(pooled)
+  expect_equal(sort(unique(au_p$.unit[au_p$.type == "treated"])),
+               paste0("cohort_", c(13, 17, 9)))
+})
+
+test_that("cohort tables of the other estimators are unaffected", {
+  # .aggregate_cohorts() drops the unit column when no block names a unit, so
+  # a fit whose blocks are cohorts keeps the table it had.
+  panel_st <- .bfr_panel(c(9, 9, 13, 17))
+  for (m in c("sdid", "gsc", "mc", "tasc", "si")) {
+    ce <- scm_fit(y ~ d | id + time, data = panel_st, method = m)$cohort_estimates
+    expect_identical(
+      names(ce),
+      c("cohort", "n_treated", "T_pre", "T_post", "estimate", "weight"),
+      info = m)
+  }
+})
+
 test_that("weights set the mass each treated unit carries", {
   panel_sh <- .bfr_panel(c(11, 11, 11))
   equal <- scm_fit(y ~ d | id + time, data = panel_sh, method = "scm")
@@ -5538,7 +5627,8 @@ test_that("weights carry through the objective, the target and the bootstrap", {
   expect_equal(sum(om / sum(om) * tau), fit$estimate, tolerance = 1e-10)
   # (four treated units, so the bootstrap warns; the centring is the point)
   expect_equal(suppressWarnings(
-    scm_inference(fit, n_boot = 50, seed = 1))$estimate, fit$estimate)
+    scm_inference(fit, method = "wild_bootstrap", n_boot = 50,
+                  seed = 1))$estimate, fit$estimate)
 
   # equal weights reproduce the unweighted fit exactly
   flat <- scm_fit(y ~ d | id + time, data = panel_st, method = "scm",
@@ -5681,6 +5771,76 @@ test_that("cov_method = 'balance' is refused where its solver cannot go", {
   expect_error(scm_fit(y ~ d | id + time, data = stag, method = "scm",
                        covariates = "x1", cov_method = "balance", xi = -1),
                "positive number")
+})
+
+test_that("xi is refused where no covariate term uses it", {
+  # xi only weights the balance term; everywhere else it changed nothing,
+  # which is the silent no-op the argument checks exist to stop.
+  set.seed(4)
+  stag <- .bfr_panel(c(9, 13, 17))
+  stag$x1 <- rnorm(nrow(stag)) + stag$id / 6
+  sharp <- .bfr_panel(c(11, 11))
+
+  expect_error(scm_fit(y ~ d | id + time, data = sharp, method = "scm",
+                       xi = 99), "no effect")
+  expect_error(scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                       covariates = "x1", xi = 99), "no effect")
+  expect_s3_class(
+    scm_fit(y ~ d | id + time, data = stag, method = "scm",
+            covariates = "x1", cov_method = "balance", xi = 99),
+    "coresynth_scm")
+})
+
+test_that("the fallback off the pooled solver announces itself", {
+  panel_st <- .bfr_panel(c(9, 13, 17))
+  ff <- function(...) scm_fit(y ~ d | id + time, data = panel_st,
+                              method = "scm", ...)
+  expect_message(f <- ff(lambda_pen = 0.1), "lambda_pen")
+  expect_message(ff(donor_mspe_threshold = 5), "donor_mspe_threshold")
+  expect_message(ff(v_selection = "oos"), "v_selection")
+  expect_message(ff(lambda_pen = 0.1, donor_mspe_threshold = 5),
+                 "donor_mspe_threshold and lambda_pen")
+  # an explicit choice, and the default, say nothing
+  expect_silent(ff(nu = "separate"))
+  expect_silent(ff())
+  # and the fit records which estimator it ended up being
+  expect_identical(f$nu, "separate")
+  expect_identical(ff(nu = "separate")$nu, "separate")
+  expect_true(is.numeric(ff()$nu))
+})
+
+test_that("staggered SCM records the solver it resolved to", {
+  panel_st <- .bfr_panel(c(9, 13, 17))
+  sharp    <- .bfr_panel(c(11, 11))
+  # the staggered paths run their own QP, so "auto" lands on active_set
+  expect_identical(scm_fit(y ~ d | id + time, data = panel_st,
+                           method = "scm")$qp_solver, "active_set")
+  expect_identical(scm_fit(y ~ d | id + time, data = sharp,
+                           method = "scm")$qp_solver, "wolfe")
+})
+
+test_that("the frontier reports the covariate side of a balance fit", {
+  set.seed(4)
+  stag <- .bfr_panel(c(9, 13, 17))
+  stag$x1 <- rnorm(nrow(stag)) + stag$id / 6
+  bal <- scm_fit(y ~ d | id + time, data = stag, method = "scm",
+                 covariates = "x1", cov_method = "balance")
+  fr <- scm_balance_frontier(bal, nu_grid = c(0, 0.5, 1))
+  expect_true(all(c("q_cov_sep", "q_cov_pool") %in% names(fr)))
+  expect_true(all(is.finite(fr$q_cov_sep)))
+  # footnote 7 normalises by the combined measure, so the outcome ratios are
+  # below 1 at nu = 0 rather than equal to it
+  expect_lt(fr$q_sep_rel[1L], 1)
+  expect_lt(fr$q_pool_rel[1L], 1)
+  expect_match(plot(fr)$labels$caption, "q_cov_sep")
+
+  # an outcomes-only fit keeps the two-column frontier and its normalisation
+  plain <- scm_fit(y ~ d | id + time, data = stag, method = "scm")
+  fr2 <- scm_balance_frontier(plain, nu_grid = c(0, 0.5, 1))
+  expect_false(any(c("q_cov_sep", "q_cov_pool") %in% names(fr2)))
+  expect_equal(fr2$q_sep_rel[1L], 1, tolerance = 1e-6)
+  expect_equal(fr2$q_pool_rel[1L], 1, tolerance = 1e-6)
+  expect_null(plot(fr2)$labels$caption)
 })
 
 test_that("the frontier is traced on the weighted objective", {
@@ -5863,4 +6023,243 @@ test_that("the gap plot reuses the cutoff the p-value was computed under", {
   none <- mspe_ratio_pval(fit)
   expect_equal(n_lines(plot(none, type = "gaps")),
                length(none$mspe_pre_placebo))
+})
+
+test_that("the ratio plot reuses the cutoff the p-value was computed under", {
+  # The subtitle reports n_placebo_used, so the points have to be that many:
+  # a figure drawing runs the p-value discarded contradicts its own caption.
+  fit <- scm_fit(y ~ d | id + time, data = .prune_panel(), method = "scm")
+  cut <- mspe_ratio_pval(fit, mspe_prune = 5)
+  expect_gt(cut$n_placebo_pruned, 0L)
+
+  n_pts <- function(p) nrow(ggplot2::ggplot_build(p)$data[[1]])
+  expect_equal(n_pts(plot(cut, type = "ratios")), cut$n_placebo_used + 1L)
+  expect_equal(nrow(plot_data(cut, type = "ratios")), cut$n_placebo_used + 1L)
+  # Inf overrides it, as it does for the gaps
+  expect_equal(n_pts(plot(cut, type = "ratios", mspe_prune = Inf)),
+               length(cut$mspe_pre_placebo) + 1L)
+
+  none <- mspe_ratio_pval(fit)
+  expect_equal(n_pts(plot(none, type = "ratios")),
+               length(none$mspe_pre_placebo) + 1L)
+})
+
+test_that("the ratio plot draws the statistic the test ranked", {
+  fit  <- scm_fit(y ~ d | id + time, data = .prune_panel(), method = "scm")
+  post <- mspe_ratio_pval(fit, mspe_prune = 5, statistic = "post_mspe")
+  p    <- plot(post, type = "ratios")
+  drawn <- p$data$value[p$data$series == "Treated"]
+  expect_equal(drawn, unname(post$mspe_post_treated))
+  expect_false(isTRUE(all.equal(drawn, unname(post$mspe_ratio_treated))))
+  expect_match(p$labels$x, "Post-treatment MSPE")
+
+  # the ratio statistic keeps the ADH Figure 8 axis
+  ratio <- mspe_ratio_pval(fit, mspe_prune = 5)
+  pr <- plot(ratio, type = "ratios")
+  expect_equal(pr$data$value[pr$data$series == "Treated"],
+               unname(ratio$mspe_ratio_treated))
+  expect_match(pr$labels$x, "MSPE ratio")
+})
+
+# ── staggered donor pool, covariate partial-out and SCM jackknife ─────────────
+
+# Three cohorts plus never-treated units, a constant effect, and treated
+# units whose loadings sit apart from the controls', so the synthetic
+# controls lean on the later adopters whenever they are allowed to.
+.contam_panel <- function(seed = 1, tau = 3) {
+  set.seed(seed)
+  adopt <- c(rep(Inf, 12), rep(c(9, 13, 17), each = 3))
+  N <- length(adopt); TT <- 24
+  lam <- rnorm(N); lam[adopt < Inf] <- lam[adopt < Inf] + 0.5
+  f <- cumsum(rnorm(TT, 0, 0.3))
+  d <- expand.grid(time = seq_len(TT), id = seq_len(N))
+  d$y <- rnorm(N)[d$id] + lam[d$id] * f[d$time] + rnorm(nrow(d), 0, 0.2)
+  d$d <- as.integer(d$time >= adopt[d$id])
+  d$y <- d$y + tau * d$d
+  d$id <- sprintf("u%02d", d$id)
+  d
+}
+
+test_that("the default donor pool keeps later adopters out of earlier cohorts", {
+  dat <- .contam_panel()
+  for (m in c("scm", "sdid")) {
+    fit <- scm_fit(y ~ d | id + time, data = dat, method = m)
+    expect_equal(fit$estimate, 3, tolerance = 0.1)
+    cf <- fit$cohort_fits
+    tr <- unlist(lapply(cf, `[[`, "idx_tr"))
+    for (z in cf) expect_length(intersect(z$idx_co, tr), 0L)
+    # "clean" lets the later adopters in, and their effect leaks into the
+    # earlier cohorts' counterfactuals
+    cl <- suppressWarnings(scm_fit(y ~ d | id + time, data = dat, method = m,
+                                   control_group = "clean"))
+    expect_lt(cl$estimate, fit$estimate)
+  }
+})
+
+# x carries a unit level and a unit-specific trend that is steeper for the
+# treated units; y loads on x with beta = 1 on top of unit and time effects
+# correlated with x's.
+.partial_out_panel <- function(seed = 1, tau = 2, staggered = TRUE) {
+  set.seed(seed)
+  adopt <- c(rep(Inf, 20),
+             if (staggered) rep(c(12, 18), each = 4) else rep(15, 8))
+  N <- length(adopt); TT <- 26; tr <- adopt < Inf
+  c_i <- rnorm(N, 5, 2); s_i <- rnorm(N, 0, 0.05) + 0.05 * tr
+  d <- expand.grid(time = seq_len(TT), id = seq_len(N))
+  d$x <- c_i[d$id] + (s_i[d$id] + 0.2) * d$time + rnorm(nrow(d), 0, 0.3)
+  d$y <- 3 * c_i[d$id] + 0.5 * d$time + d$x + rnorm(nrow(d), 0, 0.3)
+  d$d <- as.integer(d$time >= adopt[d$id])
+  d$y <- d$y + tau * d$d
+  d$id <- sprintf("u%02d", d$id)
+  d
+}
+
+test_that("covariate partial-out absorbs unit and time effects (Kranz 2022)", {
+  dat <- .partial_out_panel()
+  for (m in c("scm", "sdid")) {
+    fit <- scm_fit(y ~ d | id + time, data = dat, method = m,
+                   covariates = "x")
+    # without the fixed effects beta picks up the level correlation (~3.7)
+    expect_equal(unname(fit$beta_hat), 1, tolerance = 0.1)
+    expect_equal(fit$estimate, 2, tolerance = 0.2)
+  }
+  sh_dat <- .partial_out_panel(staggered = FALSE)
+  sharp <- scm_fit(y ~ d | id + time, data = sh_dat, method = "sdid",
+                   covariates = "x")
+  expect_equal(unname(sharp$beta_hat), 1, tolerance = 0.1)
+  # sharp and staggered share Kranz's sample: every untreated cell
+  sh0 <- sh_dat[sh_dat$d == 0, ]
+  expect_equal(unname(sharp$beta_hat),
+               unname(coef(lm(y ~ x + factor(id) + factor(time), sh0))["x"]),
+               tolerance = 1e-6)
+
+  # on the untreated cells it is exactly the two-way fixed-effects slope
+  un0  <- dat[dat$d == 0, ]
+  b_fe <- unname(coef(lm(y ~ x + factor(id) + factor(time), un0))["x"])
+  fit  <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
+                  covariates = "x")
+  expect_equal(unname(fit$beta_hat), b_fe, tolerance = 1e-6)
+})
+
+test_that("a covariate the fixed effects absorb is flagged, not adjusted for", {
+  dat <- .partial_out_panel()
+  dat$z <- as.numeric(factor(dat$id))          # time-invariant
+  expect_warning(
+    fit <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
+                   covariates = c("x", "z")),
+    "absorb")
+  expect_equal(fit$beta_hat[2], 0)
+})
+
+test_that("scm_inference() jackknife follows BFR Appendix A.1", {
+  dat <- .contam_panel()
+  fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
+  inf <- scm_inference(fit)
+  expect_equal(inf$method, "jackknife")
+  expect_equal(inf$estimate, fit$estimate)
+  N <- length(unique(dat$id))
+  expect_length(inf$jack_ests, N)
+  expect_true(all(is.finite(inf$jack_ests)))
+  jb <- inf$jack_ests
+  expect_equal(inf$se, sqrt((N - 1) / N * sum((jb - mean(jb))^2)))
+  expect_equal(inf$ci_upper - inf$ci_lower, 2 * qnorm(0.975) * inf$se)
+  expect_true(inf$ci_lower < 3 && inf$ci_upper > 3)
+
+  # dropping a donor refits with nu held at the fit's value
+  pan <- coresynth:::.pan_from_staggered_fit(fit)
+  keep <- setdiff(seq_len(N), 1L)
+  p <- pan
+  p$Y <- pan$Y[, keep]; p$D <- pan$D[, keep]; p$units <- pan$units[keep]
+  p$T_adopt <- pan$T_adopt[keep]
+  p$idx_treat <- which(!is.na(p$T_adopt)); p$idx_control <- which(is.na(p$T_adopt))
+  ref <- coresynth:::.fit_scm_staggered_pooled(
+    p, Y_matrix = p$Y, nu = fit$pooling$nu, fixedeff = TRUE,
+    control_group = "never_treated")
+  # the jackknife warm-starts from the full fit; a cold refit meets it at
+  # the block solver's tolerance
+  expect_equal(unname(inf$jack_ests[1]), ref$estimate, tolerance = 1e-5)
+
+  # the per-block path refits with its own settings
+  sep <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
+                 nu = "separate")
+  js <- scm_inference(sep)
+  expect_true(is.finite(js$se) && js$se > 0)
+  expect_equal(js$estimate, sep$estimate)
+
+  gl <- broom::glance(inf)
+  expect_equal(gl$method, "jackknife")
+})
+
+test_that("staggered SCM refits keep a skipped cohort's units out of the donor pool", {
+  dat <- .contam_panel()
+  # a cohort adopting in period 2 has one pre-period and is skipped
+  dat$d[dat$id == "u13" & dat$time >= 2] <- 1L
+  expect_warning(fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm"),
+                 "skipped")
+  pan <- coresynth:::.pan_from_staggered_fit(fit)
+  expect_false(13L %in% pan$idx_control)
+  expect_true(13L %in% pan$idx_treat)
+})
+
+test_that("solve_simplex_qp() takes a known Lipschitz constant", {
+  set.seed(3)
+  X <- matrix(rnorm(8 * 40), 8, 40); b <- rnorm(8)
+  Q <- crossprod(X); cv <- drop(crossprod(X, b))
+  lip <- max(eigen(tcrossprod(X), symmetric = TRUE, only.values = TRUE)$values)
+  expect_equal(drop(coresynth:::solve_simplex_qp(Q, cv, lipschitz = lip)),
+               drop(coresynth:::solve_simplex_qp(Q, cv)), tolerance = 1e-10)
+})
+
+test_that("the jackknife skips donors with no weight, whose refit changes nothing", {
+  dat <- .contam_panel()
+  fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
+  w <- c(unlist(lapply(fit$cohort_fits, `[[`, "unit_weights")),
+         unlist(fit$pooling$separate_weights))
+  active <- unique(names(w)[w > 1e-12])
+  never  <- unique(dat$id[!dat$id %in% dat$id[dat$d == 1]])
+  inert  <- setdiff(never, active)
+  skip_if(length(inert) == 0L, "every donor carries weight in this panel")
+  inf <- scm_inference(fit)
+  expect_true(all(inf$jack_ests[inert] == fit$estimate))
+  # refitting one of them from scratch lands on the same estimate
+  pan  <- coresynth:::.pan_from_staggered_fit(fit)
+  i    <- match(inert[1], pan$units)
+  keep <- setdiff(seq_len(ncol(pan$Y)), i)
+  p <- pan
+  p$Y <- pan$Y[, keep]; p$D <- pan$D[, keep]; p$units <- pan$units[keep]
+  p$T_adopt <- pan$T_adopt[keep]
+  p$idx_treat <- which(!is.na(p$T_adopt)); p$idx_control <- which(is.na(p$T_adopt))
+  ref <- coresynth:::.fit_scm_staggered_pooled(
+    p, Y_matrix = p$Y, nu = fit$pooling$nu, fixedeff = TRUE,
+    control_group = "never_treated")
+  expect_equal(ref$estimate, fit$estimate, tolerance = 1e-5)
+})
+
+test_that("the wild bootstrap follows Otsu & Rai (2017, Eq. 9)", {
+  dat <- .contam_panel()
+  fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
+  c_u <- coresynth:::.scm_wild_coefs(fit)
+  # every unit carries a term; with all multipliers at one they cancel
+  expect_equal(sum(c_u), 0, tolerance = 1e-12)
+  used <- unique(unlist(lapply(fit$cohort_fits, function(b)
+    names(b$unit_weights)[b$unit_weights > 1e-8])))
+  expect_true(all(abs(c_u[used]) > 0))
+
+  inf <- scm_inference(fit, method = "wild_bootstrap", n_boot = 400, seed = 1)
+  # only the treated heterogeneity is centred at the ATT, so a larger effect
+  # moves the estimate but not the interval's width ...
+  big <- dat; big$y[big$d == 1] <- big$y[big$d == 1] + 10
+  fit_b <- scm_fit(y ~ d | id + time, data = big, method = "scm")
+  inf_b <- scm_inference(fit_b, method = "wild_bootstrap", n_boot = 400,
+                         seed = 1)
+  expect_equal(fit_b$estimate, fit$estimate + 10, tolerance = 1e-6)
+  expect_equal(inf_b$se, inf$se, tolerance = 1e-6)
+  # ... and the residuals net out period effects, so a common shock does not
+  # widen it either
+  shock <- dat; shock$y <- shock$y + 5 * (shock$time > 15)
+  fit_s <- scm_fit(y ~ d | id + time, data = shock, method = "scm")
+  inf_s <- scm_inference(fit_s, method = "wild_bootstrap", n_boot = 400,
+                         seed = 1)
+  # (the shifted panel is refitted, so equal up to the block solver's tolerance)
+  expect_equal(inf_s$se, inf$se, tolerance = 1e-4)
 })

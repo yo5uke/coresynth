@@ -105,12 +105,16 @@
 #'   there because its solution is sparse and reproducible, while
 #'   `"active_set"` breaks those ties on round-off and can return different
 #'   weights for the same fit under a different build.
-#'   `"auto"` (default) is `"wolfe"` wherever it is wired, which is the sharp
-#'   inner QP, and `"active_set"` on the paths that run their own solver:
-#'   `v_selection = "oos"`, `lambda_pen`, `v_optim = "bfgs"`, and staggered
-#'   adoption. Naming `"wolfe"` explicitly on one of those paths is an error
-#'   rather than a silent downgrade. The resolved value is recorded in
-#'   `fit$qp_solver`.
+#'   `"auto"` (default) is `"wolfe"` where that degeneracy can arise -- sharp
+#'   fits with `predictors`, and outcomes-only fits with fewer than half as
+#'   many pre-treatment periods as donors -- and `"active_set"` for the other
+#'   outcomes-only fits, whose QP has a unique optimum in practice, so both
+#'   solvers return the same weights and the active set gets there several
+#'   times faster. It is also `"active_set"` on the paths that run their own
+#'   solver: `v_selection = "oos"`, `lambda_pen`, `v_optim = "bfgs"`, and
+#'   staggered adoption. Naming `"wolfe"` explicitly
+#'   on one of those paths is an error rather than a silent downgrade. The
+#'   resolved value is recorded in `fit$qp_solver`.
 #' @param v_window Optional vector of pre-treatment time values (matching the
 #'   time index in `data`) over which the outer V optimisation evaluates the
 #'   pre-treatment fit, for `method = "scm"` (sharp fits only). `NULL`
@@ -186,7 +190,7 @@
 #'   improves fit when outcome levels differ across units. The reported
 #'   `Y_synth` is shifted back to the raw outcome scale. Works with both
 #'   the default and the partially pooled path. For `method = "scm"` on
-#'   staggered panels only. Default `FALSE`.
+#'   staggered panels only.
 #' @param ...     Estimator-specific arguments forwarded to the chosen method:
 #'   `lambda` plus `cv_folds`, `cv_nlambda` and `cv_seed` (`"mc"`), `r`
 #'   (`"gsc"`, `"tasc"`), `em_iter` and `fix_A` (`"tasc"`), `zeta2` and
@@ -197,6 +201,15 @@
 #'   argument. Every argument after `...` must be named in full: this is what
 #'   lets `lambda` reach `method = "mc"` instead of partially matching
 #'   `lambda_pen`.
+#'
+#'   `control_group` chooses each cohort's donors in a **staggered** fit of
+#'   `"scm"`, `"sdid"`, `"gsc"` or `"si"`. `"never_treated"` (default) uses
+#'   the units never treated in the panel, the pure controls of Clarke et al.
+#'   (2024, Algorithm 1); at least two are required. `"clean"` is deprecated:
+#'   it adds the units adopting after the cohort, but each cohort's effect runs
+#'   to the end of the panel, so those units' post-adoption outcomes enter its
+#'   counterfactual and bias the effect towards zero. `"mc"` and `"tasc"`
+#'   impute from every untreated cell and need no never-treated units.
 #'
 #'   `cov_method` chooses how `covariates` enter a **staggered** `"scm"` fit.
 #'   `"partial_out"` (default) residualises the outcome on them first, the
@@ -209,12 +222,15 @@
 #'   `v_selection = "oos"`. `xi` defaults to the paper's rule, the sample
 #'   variance of the donor units' outcomes before the last adoption date.
 #'
-#'   The three tuning parameters that govern model complexity are selected
-#'   from the data when left at their `NULL` default, each by the rule its
-#'   source paper specifies: `r` by the leave-one-period-out cross-validation
-#'   of Xu (2017, Algorithm 1), `lambda` by the K-fold cross-validation of
-#'   Athey et al. (2021), and `k` by the optimal hard threshold of Donoho &
-#'   Gavish (2014). Supplying a value skips the search.
+#'   Three tuning parameters that govern model complexity are selected from
+#'   the data when left at their `NULL` default, each by the rule its source
+#'   paper specifies: `r` for `"gsc"` by the leave-one-period-out
+#'   cross-validation of Xu (2017, Algorithm 1), `lambda` for `"mc"` by the
+#'   K-fold cross-validation of Athey et al. (2021), and `k` for `"si"` by the
+#'   optimal hard threshold of Gavish & Donoho (2014). Supplying a value skips
+#'   the search. The `r` of `"tasc"` is a different quantity -- the dimension
+#'   of the state vector its Kalman smoother carries, not a factor count
+#'   estimated from a donor block -- and keeps its fixed default of `2`.
 #'
 #' @return An object of classes `c("coresynth_<method>", "coresynth")`.
 #'   Fits with staggered adoption additionally inherit from
@@ -228,6 +244,11 @@
 #'   * `T_pre`: number of pre-treatment periods
 #'   * `Y_treat`: treated unit outcome series
 #'   * `gap`: treatment effect series (Y_treat - counterfactual)
+#'
+#'   Staggered `method = "scm"` fits add `cohort_estimates`, `cohort_fits`,
+#'   and the settings the fit resolved: `nu` (the number the partially pooled
+#'   solver used, or `"separate"` for the per-cohort path), `fixedeff`,
+#'   `pool_cohorts` and `qp_solver`.
 #'
 #' @export
 #'
@@ -559,7 +580,13 @@ summary.coresynth_staggered <- function(object, ...) {
 .summary_cohort_table <- function(object) {
   ce <- object$cohort_estimates %||% object$cohort_arm_estimates
   if (is.null(ce) || nrow(ce) == 0L) return(invisible(NULL))
-  cat("Cohorts :", nrow(ce), "\n")
+  # Under pool_cohorts = FALSE a row is a treated unit, not a cohort, and
+  # several rows share an adoption date.
+  if (isFALSE(object$pool_cohorts))
+    cat("Blocks  :", nrow(ce), "(one per treated unit) across",
+        length(unique(ce$cohort)), "cohorts\n")
+  else
+    cat("Cohorts :", nrow(ce), "\n")
   ce$estimate <- round(ce$estimate, 6)
   ce$weight   <- round(ce$weight, 4)
   print(ce, row.names = FALSE)

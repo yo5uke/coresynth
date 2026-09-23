@@ -3,7 +3,7 @@
 // [[Rcpp::depends(RcppArmadillo)]]
 
 // Declaration of the solver from optim.cpp
-arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter = 10000, double tol = 1e-6, Rcpp::Nullable<Rcpp::NumericVector> x0 = R_NilValue);
+arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter = 10000, double tol = 1e-6, Rcpp::Nullable<Rcpp::NumericVector> x0 = R_NilValue, double lipschitz = -1.0);
 
 //' Calculate SDID Unit Weights (omega)
 //'

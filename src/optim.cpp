@@ -33,9 +33,14 @@ arma::vec proj_simplex(arma::vec y) {
 // descent callers (partially pooled staggered SCM) resolve near-identical
 // QPs every sweep; restarting FISTA from the previous block solution cuts
 // the iteration count by orders of magnitude on ill-conditioned Q.
+// lipschitz: the largest eigenvalue of Q when the caller already knows it,
+// typically from a factor Q = F'F with few rows, where lambda_max(FF') is the
+// same number at a fraction of the O(n^3) eig_sym below. Non-positive (the
+// default) computes it here.
 // [[Rcpp::export]]
 arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter = 10000, double tol = 1e-6,
-                           Rcpp::Nullable<Rcpp::NumericVector> x0 = R_NilValue) {
+                           Rcpp::Nullable<Rcpp::NumericVector> x0 = R_NilValue,
+                           double lipschitz = -1.0) {
   int n = c.n_elem;
   arma::vec x;
   if (x0.isNotNull()) {
@@ -51,9 +56,12 @@ arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter 
   // Symmetrise before eig_sym: when X0 has fewer rows than columns (k < N_co),
   // Q = X0'VX0 is rank-deficient; floating-point errors in the near-zero
   // eigenspace can make Q appear slightly asymmetric to Armadillo's strict check.
-  arma::mat Q_sym = (Q + Q.t()) / 2.0;
-  arma::vec eigval = arma::eig_sym(Q_sym);
-  double L = arma::max(eigval);
+  double L = lipschitz;
+  if (L <= 0.0) {
+    arma::mat Q_sym = (Q + Q.t()) / 2.0;
+    arma::vec eigval = arma::eig_sym(Q_sym);
+    L = arma::max(eigval);
+  }
   if(L < 1e-14) L = 1.0;  // guard against degenerate Q
   double t = 1.0 / L;
   

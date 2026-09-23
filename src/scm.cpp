@@ -73,6 +73,29 @@ static inline void scm_make_factor(const arma::mat& X0, const arma::vec& X1,
 // the null-space routes (equivalently sqrt(1e-9) of the leading singular
 // value of the factor): curvature below that carries no statistical
 // information. The caller's dual-feasibility check gates every result.
+// Bordered-KKT direct solve of the face problem from its Gram G = B_A'B_A and
+// c_A = B_A'b. Fails when the saddle system is singular.
+static bool face_solve_bordered(const arma::mat& G, const arma::vec& cA,
+                                arma::vec& wA, double& mu) {
+  const arma::uword m = G.n_rows;
+  arma::mat K(m + 1, m + 1, arma::fill::zeros);
+  K.submat(0, 0, m - 1, m - 1) = G;
+  K.col(m).head(m).ones();
+  K.row(m).head(m).ones();
+  arma::vec rhs(m + 1);
+  rhs.head(m) = cA;
+  rhs(m)      = 1.0;
+  arma::vec sol;
+  if (!arma::solve(sol, K, rhs, arma::solve_opts::no_approx)) return false;
+  wA = sol.head(m);
+  mu = sol(m);
+  return true;
+}
+
+// Explicit Helmert null-space route on the m x m face Gram (see face_solve).
+static bool face_solve_helmert(const arma::mat& G, const arma::vec& cA,
+                               arma::vec& wA, double& mu);
+
 static bool face_solve(const arma::mat& BA, const arma::vec& b,
                        bool cheap_face, arma::vec& wA, double& mu) {
   const arma::uword m = BA.n_cols;
@@ -95,21 +118,7 @@ static bool face_solve(const arma::mat& BA, const arma::vec& b,
     // to the exact null-space routes below rather than giving up -- the
     // caller would otherwise fall back to FISTA, which stops at its 1e-6
     // tolerance and leaves the outer V search reading an inexact objective.
-    arma::mat Gc  = BA.t() * BA;
-    arma::vec cAc = BA.t() * b;
-    arma::mat K(m + 1, m + 1, arma::fill::zeros);
-    K.submat(0, 0, m - 1, m - 1) = Gc;
-    K.col(m).head(m).ones();
-    K.row(m).head(m).ones();
-    arma::vec rhs(m + 1);
-    rhs.head(m) = cAc;
-    rhs(m)      = 1.0;
-    arma::vec sol;
-    if (arma::solve(sol, K, rhs, arma::solve_opts::no_approx)) {
-      wA = sol.head(m);
-      mu = sol(m);
-      return true;
-    }
+    if (face_solve_bordered(BA.t() * BA, BA.t() * b, wA, mu)) return true;
   }
 
   if (m > k) {
@@ -139,9 +148,12 @@ static bool face_solve(const arma::mat& BA, const arma::vec& b,
     return true;
   }
 
-  arma::mat G  = BA.t() * BA;
-  arma::vec cA = BA.t() * b;
+  return face_solve_helmert(BA.t() * BA, BA.t() * b, wA, mu);
+}
 
+static bool face_solve_helmert(const arma::mat& G, const arma::vec& cA,
+                               arma::vec& wA, double& mu) {
+  const arma::uword m = G.n_rows;
   arma::mat Z_ns = sum_null_basis(m);
   arma::vec w0(m);
   w0.fill(1.0 / m);
@@ -368,22 +380,33 @@ static bool nnls_rescue(const arma::mat& B, const arma::vec& b,
 static bool wolfe_simplex(const arma::mat& B, const arma::vec& b,
                           arma::vec& w_out);
 
+// `cold` marks a start that carries no information about the support (the
+// uniform vector). The active set sheds one coordinate per pivot, so started
+// there it pays a face solve on every donor it has to drop -- on an
+// outcomes-only fit with a hundred donors, that alone was 15 times the cost of
+// the gradient solve it replaced. A cold start therefore runs the gradient
+// method first and hands its support to the exact solver at the end: the
+// result is the same KKT-verified optimum, reached from a support of the
+// right size. Wolfe grows its corral from one donor, so it needs no presolve.
 static arma::vec fista_simplex(const arma::mat& B, const arma::vec& b,
                                double L, arma::vec x,
                                int max_iter = 10000, double tol = 1e-6,
                                bool use_nnls = false,
                                bool cheap_face = false,
-                               bool wolfe = false) {
+                               bool wolfe = false,
+                               bool cold = false) {
   x = proj_simplex(x);
+  const bool presolve = cold && !wolfe;
 
   arma::vec x_as;
   if (wolfe) {
     if (wolfe_simplex(B, b, x_as)) return x_as;
-  } else if (active_set_simplex(B, b, arma::find(x > 1e-10), x_as, 100,
+  } else if (!presolve &&
+             active_set_simplex(B, b, arma::find(x > 1e-10), x_as, 100,
                                 cheap_face)) {
     return x_as;
   }
-  if (use_nnls && nnls_rescue(B, b, x_as)) {
+  if (!presolve && use_nnls && nnls_rescue(B, b, x_as)) {
     return x_as;
   }
 
@@ -410,6 +433,16 @@ static arma::vec fista_simplex(const arma::mat& B, const arma::vec& b,
                              cheap_face)) {
         return x_as;
       }
+    }
+  }
+  // A cold start finishes exactly from wherever the gradient method stopped.
+  if (presolve) {
+    if (active_set_simplex(B, b, arma::find(x > 1e-10), x_as, 100,
+                           cheap_face)) {
+      return x_as;
+    }
+    if (use_nnls && nnls_rescue(B, b, x_as)) {
+      return x_as;
     }
   }
   return x;
@@ -537,7 +570,116 @@ arma::vec scm_inner_weights_cpp(const arma::mat& X0, const arma::vec& X1,
   if (arma::eig_sym(ev, arma::symmatu(BBt)) && ev.max() > 1e-14) L = ev.max();
   arma::vec x0 = arma::ones<arma::vec>(X0.n_cols) / X0.n_cols;
   return fista_simplex(B, b, L, x0, 10000, 1e-6, /*use_nnls=*/true,
-                       /*cheap_face=*/false, wolfe);
+                       /*cheap_face=*/false, wolfe, /*cold=*/true);
+}
+
+// ---- Gram-form inner QP for the outcomes-only coordinate sweep --------------
+// The factored form above wins when k (predictor rows) is small next to the
+// donor pool, which is the predictor path. Outcomes-only fits have a row per
+// pre-treatment period, so k is of the order of N, and there the factor makes
+// every pivot rebuild the face Gram B_A'B_A at O(k m^2) -- measured at 1.8
+// times the whole fit on a 96-period, 100-donor panel. The coordinate sweep
+// changes one V coordinate at a time, which is a rank-1 change of the N x N
+// Gram Q = X0' diag(V) X0, so carrying Q makes the face Gram a sub-matrix read
+// and the gradient O(N m). Same face problem, same routes, same KKT gate.
+// The grid point's Gram is Q + dv r r', kept implicit: forming it would write
+// N^2 entries per grid point, which is what the parallel placebo loop then
+// spends its memory bandwidth on.
+static bool active_set_simplex_gram(const arma::mat& Q, const arma::vec& r,
+                                    double dv, const arma::vec& c,
+                                    arma::uvec A, arma::vec& x_out,
+                                    int max_pivots = 100) {
+  const arma::uword N = Q.n_cols;
+  if (A.n_elem == 0) return false;
+
+  for (int pivot = 0; pivot < max_pivots; pivot++) {
+    arma::uword m = A.n_elem;
+    arma::vec wA;
+    double    mu;
+    arma::vec rA = r.elem(A);
+    arma::mat G  = Q.submat(A, A) + dv * (rA * rA.t());
+    arma::vec cA = c.elem(A);
+    if (m == 1) {
+      wA = arma::vec{1.0};
+      mu = cA(0) - G(0, 0);
+    } else if (!face_solve_bordered(G, cA, wA, mu) &&
+               !face_solve_helmert(G, cA, wA, mu)) {
+      return false;
+    }
+
+    bool bland = (pivot >= 30);   // anti-cycling, as in active_set_simplex
+
+    if (wA.min() < -1e-12) {
+      if (m <= 1) return false;
+      arma::uword drop = wA.index_min();
+      if (bland) {
+        for (arma::uword j = 0; j < m; j++) {
+          if (wA(j) < -1e-12) { drop = j; break; }
+        }
+      }
+      A.shed_row(drop);
+      continue;
+    }
+
+    arma::vec wpos = arma::clamp(wA, 0.0, arma::datum::inf);
+    double s = arma::accu(wpos);
+    if (s <= 0.0) return false;
+    wpos /= s;
+
+    // == (Q + dv r r') w - c, at O(N m)
+    arma::vec g   = Q.cols(A) * wpos + (dv * arma::dot(rA, wpos)) * r - c;
+    arma::vec lam = g + mu;
+    lam.elem(A).zeros();
+    double eps = 1e-9 * (1.0 + arma::norm(g, "inf"));
+    arma::uword worst = lam.index_min();
+    if (lam(worst) >= -eps) {
+      x_out.zeros(N);
+      x_out.elem(A) = wpos;
+      return true;
+    }
+    if (bland) {
+      for (arma::uword j = 0; j < N; j++) {
+        if (lam(j) < -eps) { worst = j; break; }
+      }
+    }
+    A.insert_rows(A.n_elem, arma::uvec{worst});
+  }
+  return false;
+}
+
+// Warm-started exact solve in Gram form with the gradient method as fallback
+// (the Gram-form twin of fista_simplex's warm path).
+static arma::vec fista_simplex_gram(const arma::mat& Q, const arma::vec& r,
+                                    double dv, const arma::vec& c,
+                                    double L, arma::vec x,
+                                    int max_iter = 10000, double tol = 1e-6) {
+  x = proj_simplex(x);
+  arma::vec x_as;
+  if (active_set_simplex_gram(Q, r, dv, c, arma::find(x > 1e-10), x_as)) {
+    return x_as;
+  }
+
+  if (L < 1e-14) L = 1.0;
+  double t = 1.0 / L;
+  arma::vec y = x;
+  double t_acc = 1.0;
+  for (int iter = 0; iter < max_iter; iter++) {
+    arma::vec x_prev = x;
+    arma::vec grad = Q * y + (dv * arma::dot(r, y)) * r - c;
+    x = proj_simplex(y - t * grad);
+    if (arma::dot(grad, x - x_prev) > 0.0) t_acc = 1.0;
+    double t_acc_next = (1.0 + std::sqrt(1.0 + 4.0 * t_acc * t_acc)) / 2.0;
+    y = x + ((t_acc - 1.0) / t_acc_next) * (x - x_prev);
+    t_acc = t_acc_next;
+    if (arma::norm(x - x_prev, 2) < tol) break;
+    if (iter > 0 && iter % 50 == 0) {
+      if (active_set_simplex_gram(Q, r, dv, c, arma::find(x > 1e-10),
+                                  x_as)) {
+        return x_as;
+      }
+    }
+  }
+  return x;
 }
 
 // Coordinate-descent core for the nested V/W SCM optimisation. Shared by
@@ -601,6 +743,14 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
   arma::mat B_base;
   arma::vec b_base;
 
+  // Outcomes-only sweeps with k of the order of N carry the Gram instead of
+  // the factor (see active_set_simplex_gram). The Wolfe and NNLS options are
+  // factor-form only and keep that form.
+  const bool gram = cheap_face && !wolfe && !use_nnls &&
+                    2 * (arma::uword)k >= X0.n_cols;
+  arma::mat Q_base;
+  arma::vec c_base;
+
   for (int iter = 0; iter < max_iter; iter++) {
     // Exact Lipschitz constant once per sweep, from the k x k Gram; the
     // single-coordinate bounds accumulate slack within the sweep only.
@@ -608,6 +758,11 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
     arma::mat BBt = B_base * B_base.t();
     double L_base = arma::max(arma::eig_sym(arma::symmatu(BBt)));
     if (L_base < 1e-14) L_base = 1.0;
+    if (gram) {
+      // Rebuilt from scratch each sweep so the rank-1 updates cannot drift.
+      Q_base = B_base.t() * B_base;
+      c_base = B_base.t() * b_base;
+    }
 
     double max_change = 0.0;
     for (int j = 0; j < k; j++) {
@@ -622,14 +777,22 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
         double vsum = arma::sum(V_diag) - orig_v + grid(g);
         if (vsum < 1e-14) continue;
         double dv = grid(g) - orig_v;
-        arma::vec V_g = V_diag;
-        V_g(j) = grid(g);
-        arma::mat B_g;
-        arma::vec b_g;
-        scm_make_factor(X0, X1, V_g, B_g, b_g);
         double L_g = L_base + std::max(dv, 0.0) * row_n2(j);
-        arma::vec cand_W = fista_simplex(B_g, b_g, L_g, warm, 10000, 1e-6,
-                                         use_nnls, cheap_face, wolfe);
+        arma::vec cand_W;
+        if (gram) {
+          // V_j -> V_j + dv adds dv x_j x_j' to Q and dv X1_j x_j to c.
+          arma::vec xj  = X0.row(j).t();
+          arma::vec c_g = c_base + (dv * X1(j)) * xj;
+          cand_W = fista_simplex_gram(Q_base, xj, dv, c_g, L_g, warm);
+        } else {
+          arma::vec V_g = V_diag;
+          V_g(j) = grid(g);
+          arma::mat B_g;
+          arma::vec b_g;
+          scm_make_factor(X0, X1, V_g, B_g, b_g);
+          cand_W = fista_simplex(B_g, b_g, L_g, warm, 10000, 1e-6,
+                                 use_nnls, cheap_face, wolfe);
+        }
         warm = cand_W;
         double cand_loss = arma::norm(Z1_eval - Z0_eval * cand_W, 2);
         if (cand_loss < local_best_loss) {
@@ -643,10 +806,19 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
         double dv_acc = local_best_v - orig_v;
         L_base += std::max(dv_acc, 0.0) * row_n2(j);
         V_diag(j) = local_best_v;
+        if (gram) {
+          arma::vec xj = X0.row(j).t();
+          Q_base += dv_acc * (xj * xj.t());
+          c_base += (dv_acc * X1(j)) * xj;
+        }
         double vsum_after = arma::sum(V_diag);
         if (vsum_after > 1e-14) {
           V_diag /= vsum_after;
           L_base /= vsum_after;
+          if (gram) {
+            Q_base /= vsum_after;
+            c_base /= vsum_after;
+          }
         }
         max_change = std::max(max_change, best_loss - local_best_loss);
         best_loss  = local_best_loss;

@@ -1,105 +1,39 @@
 # coresynth — CLAUDE.md
 
-本ファイルは Claude Code が本プロジェクトで作業する際のコンテキストガイド。詳細な理論的根拠・アルゴリズム決定事項は `.claude/rules/*.md`（該当ファイル編集時に自動読込）と `.claude/docs/*.md`（随時参照）に分離。
+**coresynth** は合成コントロール法（SCM）とその派生手法（SDID/GSC/MC/TASC/SI）を RcppArmadillo で高速実装した R パッケージ。全手法を統一的な Formula インターフェース（`scm_fit()`）で提供し、最適化（QP・SVD・カルマンフィルタ）は C++ 実装。
+
+手法ごとの論文根拠・アルゴリズム決定事項は `.claude/rules/<method>.md`（該当 R/C++ ファイルを開くと自動読込）に分離。ここには**複数ファイル・複数手法を横断しないと分からないこと**だけを書く。単一ファイルを読めば分かること（ディレクトリ構成・関数一覧など）は書かない。
+
+| 手法 | 詳細 | 手法 | 詳細 |
+|---|---|---|---|
+| SCM | `.claude/rules/scm.md` | TASC | `.claude/rules/tasc.md` |
+| SDID | `.claude/rules/sdid.md` | SI | `.claude/rules/si.md` |
+| GSC | `.claude/rules/gsc.md` | SCM-Design | `.claude/rules/scm-design.md` |
+| MC | `.claude/rules/mc.md` | Conformal Inference | `.claude/rules/conformal.md`（`scm`/`sdid`/`gsc`/`mc`/`si` の sharp fit に対応） |
+
+横断的ルール: `.claude/rules/object-model.md`（fit オブジェクトのクラス構造・アクセサ・staggered 推論の共通ロジック）、`.claude/rules/plot.md`、`.claude/rules/input-validation.md`、`.claude/rules/versioning.md`。随時参照: `.claude/docs/theory-crosscheck.md`（論文照合表・他パッケージとの照合基準値）、`.claude/docs/performance.md`（ベンチマーク）、`.claude/docs/backlog.md`（保留中の項目・文献バックログ）。論文 PDF/MD は `papers/`（gitignore）。
 
 ---
 
-## プロジェクト概要
-
-**coresynth** は合成コントロール法（SCM）とその派生手法を RcppArmadillo で高速実装した R パッケージ。
-
-- すべての推定手法に **統一的な Formula インターフェース** を提供
-- ボトルネックとなる最適化（QP、SVD、カルマンフィルタ）を全て **C++ で実装**
-- Synth パッケージ比の実測速度は `.claude/docs/performance.md` 参照（2026-09-23 実測: N_co=40〜100 で単一フィット ~2,100〜3,500 倍・in-space プラセボ ~15,000〜17,500 倍。倍率はマシン状態で揺れるので版間比較は同じ回で交互に計測する）
-
-### 対象手法
-
-論文・数式・アルゴリズム決定事項は各手法の詳細ファイル参照（該当 R/C++ ファイルを開くと自動読込）。
-
-| 手法 | 詳細 |
-|---|---|
-| SCM | `.claude/rules/scm.md` |
-| SDID | `.claude/rules/sdid.md` |
-| GSC | `.claude/rules/gsc.md` |
-| MC | `.claude/rules/mc.md` |
-| TASC | `.claude/rules/tasc.md` |
-| SI | `.claude/rules/si.md` |
-| SCM-Design | `.claude/rules/scm-design.md` |
-
-横断的推論として **Conformal Inference**（`R/conformal.R`）が `scm`/`sdid`/`gsc`/`mc`/`si` の sharp fit に対応（詳細は `.claude/rules/conformal.md`）。
-
-横断的ルール: `.claude/rules/object-model.md`（fit オブジェクトのクラス構造・アクセサ・staggered 推論の共通ロジック）、`.claude/rules/plot.md`（plot 内部規約）、`.claude/rules/input-validation.md`（入力検証）、`.claude/rules/versioning.md`（バージョン番号・CRAN 提出）。随時参照: `.claude/docs/theory-crosscheck.md`（全手法横断の論文照合表）、`.claude/docs/performance.md`（ベンチマーク）。
-
-論文テキスト・数式整理 MD は `papers/`（.gitignore 管理）に格納。
-
-### Staggered Adoption 共通仕様（Clarke et al. 2024）
+## Staggered Adoption 共通仕様（Clarke et al. 2024）
 
 $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{tr,g} \cdot T_{post,g}}$$
 
-- **コホート g**: 採用タイミングが同じ処置ユニット群
-- **コントロール群**: `"never_treated"`（デフォルト、v1.0.0 で変更）= 統制ユニットのみ。`"clean"`（非推奨・警告、次メジャーで削除）= never-treated ＋ 将来採用者（$T_{adopt}[j] > g$）。**コホート効果は採用時点からパネル末尾まで平均するので、将来採用者は事後窓の途中で処置済みになり反実仮想を汚染する**（τ=3 で −0.24〜−0.59 のバイアスを実測）。Clarke et al. Algorithm 1 は pure controls のみ、BFR S.2.2 は「推定する最終イベントタイムまで未処置」のドナーのみで、末尾まで推定するならどちらも never-treated に一致する。never-treated が 2 未満の staggered パネルは `.check_control_group()`（`R/utils.R`）が明示エラーで MC/TASC へ誘導。**MC/TASC は `control_group` を持たない**（下記）
-- **返却構造**: `staggered = TRUE`、`cohort_estimates`（data.frame）、`cohort_fits`（list）。集計は全手法 `.aggregate_cohorts()`（`R/utils.R`）に一元化
-- **コホート分割する手法としない手法**: SCM/SDID/GSC/SI はコホートごとに再フィットする。**MC/TASC は補完型**なので再フィットせず、観測マスク（MC は `O`、TASC は `Y_obs` の NA）が各ユニットの採用時点を表現し、単一フィットがそのまま staggered 推定になる。コホート表は `.impute_cohort_fits()` がその単一フィットの `gap` を分割して作る。**どちらも集計は同じ Clarke 加重**でなければならない — ユニット等加重にすると事後長の異なるコホートで他手法と別の推定量を返す
-- **cohort_fits[[g]]** の共通フィールド: `estimate`, `weight`, `idx_co`, `idx_tr`, `T_pre`, `T_post`（inference resampling に利用）。SCM は加えて `Y_treat_mat`（T × n_treated_g、per-unit 処置系列 — wild bootstrap 用。ドナー側の残差は fit の `Y_all` から作る）と `alpha`（fixedeff の intercept shift、なければ 0）
-
----
-
-## ファイル構成
-
-```
-coresynth/
-├── R/
-│   ├── scm_fit.R          Formula インターフェース・dispatch・new_coresynth()
-│   ├── scm.R              SCM・mspe_ratio_pval()・placebo_in_time()・loo_donors()
-│   ├── scm_rank.R         scm_rank_pval()（Abadie & L'Hour 順位検定）
-│   ├── scm_frontier.R     scm_balance_frontier()・plot.scm_frontier()
-│   ├── sdid.R             SDID・sdid_inference()
-│   ├── gsc.R              GSC・gsc_boot()・gsc_inference()
-│   ├── mc.R               MC ラッパー
-│   ├── tasc.R             TASC ラッパー
-│   ├── si.R               SI・si_inference()・multi-arm 実装
-│   ├── scm_design.R       SCM-Design（Abadie & Zhao 2026）
-│   ├── conformal.R        conformal_inference()（CWZ 2021）
-│   ├── utils.R            panel_to_matrices()・panel_to_tensor()・pred()・
-│   │                      build_predictor_matrices()・.check_panel_complete()
-│   ├── accessors.R        treated_outcomes()・synthetic_outcomes()・donor_outcomes()
-│   ├── broom.R            tidy() / glance() / augment()
-│   ├── plot.R             plot.coresynth()・plot.scm_placebo()（ggplot2）・plot_data()
-│   ├── export.R           export_json()
-│   └── coresynth-package.R useDynLib 宣言
-├── src/
-│   ├── optim.cpp          proj_simplex, solve_simplex_qp（FISTA）
-│   ├── scm.cpp            scm_inner_weights_cpp, scm_weights_cpp
-│   ├── sdid.cpp           sdid_unit/time_weights_cpp, sdid_estimate_cpp
-│   ├── gsc.cpp            gsc_ife_cpp（EM ループ・共変量対応）
-│   ├── mc.cpp             soft_impute_cpp
-│   ├── tasc.cpp           kalman_smoother_cpp
-│   ├── si.cpp             tensor_unfold_cpp, si_pcr_cpp
-│   └── inference.cpp      sdid_placebo_cpp, scm_placebo_cpp（OpenMP 並列化済み）
-├── tests/testthat/
-│   ├── test-integration.R   統合テスト（大半はここに集約）
-│   └── test-object-model.R  クラスタグ・アクセサ・S3 dispatch
-├── README.Rmd             ソース（knitr 生成物が README.md — README.md は直接編集しない）
-├── .claude/rules/, .claude/docs/, .claude/skills/  Claude Code 向け詳細ドキュメント・スキル
-└── sandbox/, papers/, plan/  gitignore（ベンチマーク・検証スクリプト / 論文 MD / 計画メモ）
-```
-
----
+- **コントロール群**: `"never_treated"`（既定）= 統制ユニットのみ。`"clean"`（非推奨・警告、次メジャーで削除）= never-treated ＋ 将来採用者。**コホート効果は採用時点からパネル末尾まで平均するので、将来採用者は事後窓の途中で処置済みになり反実仮想を汚染する**（τ=3 で −0.24〜−0.59 のバイアスを実測）。Clarke Algorithm 1・BFR S.2.2 とも、末尾まで推定するなら never-treated に一致する。never-treated が 2 未満なら `.check_control_group()` が明示エラーで MC/TASC へ誘導する。**MC/TASC は `control_group` を持たない**
+- **コホート分割する手法としない手法**: SCM/SDID/GSC/SI はコホートごとに再フィットする。**MC/TASC は補完型**なので再フィットせず、観測マスクが採用時点を表現し単一フィットがそのまま staggered 推定になる。**どちらも集計は同じ Clarke 加重**でなければならない — ユニット等加重にすると事後長の異なるコホートで他手法と別の推定量を返す
 
 ## 推論関数の対応表
 
-引数・返却値の詳細は各関数の roxygen ドキュメント（`?関数名`）参照。ここには複数手法・複数関数を横断しないと分からない対応関係だけをまとめる。
+| 手法 | sharp 推論 | staggered 推論 |
+|---|---|---|
+| SCM | `mspe_ratio_pval()` | `scm_inference()`（jackknife 既定 / wild bootstrap） |
+| SDID | `sdid_inference()`（4 method 全て） | 同左 |
+| GSC | `gsc_boot()` / `gsc_inference()` | `gsc_inference()` |
+| MC | — | — |
+| TASC | — | — （本パッケージで唯一、推論ツール自体なし） |
+| SI | `si_inference()`（multi-arm 含む） | 同左 |
 
-| 手法 | sharp 推論 | staggered 推論 | `conformal_inference()` |
-|---|---|---|---|
-| SCM | `mspe_ratio_pval()`（順列検定） | `scm_inference()`（jackknife 既定 / wild bootstrap） | ✅ |
-| SDID | `sdid_inference()`（4 method 全て） | 同左 | ✅ |
-| GSC | `gsc_boot()` / `gsc_inference()` | `gsc_inference()` | ✅ |
-| MC | — | — | ✅ |
-| TASC | — | — | ❌（推論ツール自体なし） |
-| SI | `si_inference()`（multi-arm 含む） | 同左 | ✅ |
-
-`jackknife_global` は staggered 専用（sharp・sharp multi-arm では不可）。`conformal_inference()` は sharp fit 限定（staggered/multi-arm/tasc はエラーで上表の手法別関数へ誘導）。fit オブジェクトのクラス構造・アクセサ（`treated_outcomes()`/`synthetic_outcomes()`/`donor_outcomes()` 等）は `.claude/rules/object-model.md`、`plot()`/`plot_data()` の内部規約は `.claude/rules/plot.md` 参照。
+`jackknife_global` は staggered 専用。`conformal_inference()` は sharp fit 限定（staggered/multi-arm/tasc はエラーで上表へ誘導）。
 
 ---
 
@@ -108,91 +42,49 @@ coresynth/
 - **`arma::solve_opts::fast` は使用禁止** — 本環境（Windows + Rtools45）でクラッシュ
 - Armadillo `vec` は R 側で **N×1 行列**になる → R 層で `as.numeric()` 正規化
 - `paste0("Donor ", integer(0))` は zero-length が `""` 扱いになり長さ 1 の `"Donor "` を返す → zero-length を保持する `sprintf()` を使う
-- `R CMD INSTALL` 失敗時は旧版に**サイレントロールバック**される — 失敗に気づかず古い DLL でテストする罠。ビルド・テストは `build-install` skill を使う（Stop-Process 手順込みで実行される）
-- `gh` CLI はインストール済み・認証済み（アカウント `yo5uke`）。PR 作成等は `gh` コマンドで行ってよい
-- **plot のタイトル・サブタイトルに非 ASCII 文字を入れない**（ギリシャ文字・Unicode マイナス記号 `−` U+2212 等）— UTF-8 でない ロケール（GitHub Actions macOS ランナー等）で grid のテキストメトリクス計算が `mbcsToSbcs` 変換に失敗し `R CMD check --run-donttest` がクラッシュする。マイナス記号は ASCII ハイフン `-`、ギリシャ文字は綴り（`lambda`/`omega`）で代替する。R ソース自体は ASCII のため `\uXXXX` エスケープで紛れ込みやすい
+- `R CMD INSTALL` 失敗時は旧版に**サイレントロールバック**される。ビルド・テストは `build-install` skill を使う
+- **plot のタイトル・サブタイトルに非 ASCII 文字を入れない**（ギリシャ文字・Unicode マイナス記号等）— UTF-8 でないロケールで `R CMD check --run-donttest` がクラッシュする。マイナスは ASCII ハイフン、ギリシャ文字は綴り（`lambda`/`omega`）で代替する
+- **`cohort_fits` から新しいフィールドを読むときは `[[ ]]`**（`$` は部分マッチする — SDID の `unit_weights` に `unit` が、GSC の `r_cv` に `r` が無言で吸われる）
+- **手法間の解の一致を検証する DGP**: 処置ユニットの予測子ベクトルがドナー凸包の外に出る設計だと、予測子経路の違いが結果に出ず「一致した」ように見える。因子モデル DGP ＋手計算での突き合わせで判定する
+- `gh` CLI はインストール済み・認証済み（アカウント `yo5uke`）
 
 ---
 
-## ビルド手順
+## ビルド・テスト
 
-`build-install` skill が正確な手順（DLL ロック解除・コピー込み）を実行する。手動で行う場合:
+`build-install` skill を使う（Windows の DLL ロック解除・サイレントロールバック回避の手順込み）。R は 4.6.1（`bin\` 直下の実行ファイル）。
 
-```powershell
-# R ファイルのみ変更後
-& "C:\Program Files\R\R-4.6.1\bin\R.exe" CMD INSTALL .
-
-# C++ 変更後（DLL ロック解除が必要）
-Get-Process | Where-Object {$_.Name -match "Rterm"} | Stop-Process -Force
-Start-Sleep -Seconds 1
-Remove-Item src\*.o -Force -ErrorAction SilentlyContinue
-& "C:\Program Files\R\R-4.6.1\bin\R.exe" CMD INSTALL .
-
-# テスト実行（DLL コピーが必要）
-Copy-Item "$env:USERPROFILE\AppData\Local\R\win-library\4.6\coresynth\libs\x64\coresynth.dll" `
-  -Destination "src\coresynth.dll" -Force
-& "C:\Program Files\R\R-4.6.1\bin\Rscript.exe" -e "devtools::test()"
-```
-
-> R は 4.6.1（2026-07 時点、`bin\x64` サブディレクトリではなく `bin\` 直下の実行ファイルを使用）。
+新しいエクスポート関数・S3 method を追加したら `pkgdown-check` skill でコミット前に検証する。
 
 ---
 
 ## コミット
 
-明示的な指示があるまでコミット・プッシュは行わない（作業後は変更を残して報告のみ）。
+明示的な指示があるまでコミット・プッシュは行わない。
 
-### コミットメッセージの書き方
-
-- 件名: Conventional Commits 形式・英語・命令形（`type: summary` または `type(scope): summary`）。主な type は `feat`/`fix`/`perf`/`docs`/`chore`（`chore(release)` を含む）/`ci`
-- 本文: 英語。「何をしたか」ではなく「なぜ」（動機・原因・トレードオフ・検証結果）を書く。自明な変更（typo 修正等）は本文を省略してよい
+- 件名: Conventional Commits・英語・命令形（`type: summary` / `type(scope): summary`）
+- 本文: 英語。「何をしたか」ではなく「なぜ」を書く。自明な変更は本文省略可
 - AI ツールの署名・Co-Authored-By は入れない
-
-### 新規 export 追加時のチェックリスト
-
-新しいエクスポート関数・S3 method（`plot.*`、`print.*` 等）を追加したら、`pkgdown-check` skill でコミット前に検証する（`_pkgdown.yml` の reference index にトピックが無いと GitHub Actions の pkgdown デプロイがサイト全体停止するため）。手動で行う場合の手順・検証コマンドは `.claude/skills/pkgdown-check/SKILL.md` 参照。
-
-### バージョン番号
-
-番号の決定は Claude に委任されている（破壊的変更と CRAN 提出時期はユーザーに確認）。DESCRIPTION の `Version:` を触る前に **CRAN 現行版を実際に参照**し、GitHub 先行中の未公開版なら番号を据え置いて NEWS.md の同じ見出しに追記する。判断手順・`.9000` サフィックスの使いどころ・CRAN 側の制約は `.claude/rules/versioning.md`（DESCRIPTION / NEWS.md 編集時に自動読込）。
+- バージョン番号は Claude に委任（破壊的変更・CRAN 提出時期はユーザーに確認）。`Version:` を触る前に **CRAN 現行版を実際に参照**。詳細は `.claude/rules/versioning.md`
 
 ---
 
 ## コーディング規約
 
-- C++ 関数名: `snake_case_cpp` サフィックス（例: `sdid_unit_weights_cpp`）
-- R ラッパー: `fit_<method>_cpp()` が内部関数、`scm_fit()` が公開 API
+- C++ 関数名: `snake_case_cpp` サフィックス。R ラッパー: `fit_<method>_cpp()` が内部関数、`scm_fit()` が公開 API
 - 行列の次元規約: `T × N`（行=時間、列=ユニット）統一
 - テストは `tests/testthat/test-integration.R` に集約（オブジェクトモデルのみ `test-object-model.R`）
-- ggplot の `aes()` 変数は `utils::globalVariables()` に登録（R CMD check NOTE 回避）
 - コメント: 論文セクション参照は `§` でなく `S.`。開発履歴メモ（いつ・なぜ変更したか）はコメントや CLAUDE.md に書かず、コミットメッセージ・NEWS.md に書く
-
-### roxygen2 規約（バージョン 8.1.0）
-
-```
-Config/roxygen2/markdown: TRUE   # DESCRIPTION に記載
-Config/roxygen2/version: 8.1.0
-```
-
-`RoxygenNote:` は roxygen2 8.0.0 で非推奨化され、後継の `Config/roxygen2/version` に統合された（`Roxygen:` → `Config/roxygen2/` フィールド群への移行と同時）。`devtools::document()`（`devtools::check()` 内部の document 呼び出し含む）が `RoxygenNote:` 行を削除するのはこの移行処理そのものであり、正しい挙動。**復元しない** — DESCRIPTION の差分に `RoxygenNote:` の削除が出てもそのままにする。`Config/roxygen2/version` の値が現在の roxygen2 バージョンと一致しているかだけ確認する。
+- `Config/roxygen2/version`（DESCRIPTION）を使う。`RoxygenNote:` が `devtools::document()` で消えるのは roxygen2 8.0.0 以降の正しい移行動作 — **復元しない**
 
 ---
 
-## 既知の制限
+## 既知の制限・スコープ外
 
-推論関数の可否は上表参照。それ以外の制限:
-
-- **SI の共変量**: 未対応（sharp/staggered とも。Agarwal et al. 2025 の原著が covariate なしの定式化）
-- **SCM staggered**: `predictors = NULL` 限定（`covariates` partial-out のみ。エラー時に代替案を案内）
+- **SI**: 共変量未対応（sharp/staggered とも、原著が covariate なしの定式化）
+- **SCM staggered**: `predictors = NULL` 限定（`covariates` partial-out のみ）
 - **plot()**: staggered fit は未対応（明示エラー）。cohort 別の系列は `augment()` の long df を使う
-- **MC/TASC の staggered**: `control_group` を選べない（マスク経由で全観測セルを使う設計のため。渡すとエラー）。推論関数は sharp/staggered とも無し
+- **MC/TASC の staggered**: `control_group` を選べない。推論関数は sharp/staggered とも無し
+- 意図的に対応しない: multivariate outcome の同時推定、SI の time-varying covariates、Callaway & Sant'Anna 型 group-time CATT、Hirshberg & Klosin 型 conformal CI
 
----
-
-## スコープ外（意図的な制限）
-
-応用論文で頻出するが本パッケージでは対応しない:
-- multivariate outcome（同時推定）— Dube (2026) の "ウェイト流用" 用途では使えない
-- SI の time-varying covariates — Agarwal et al. (2025) は covariate なしの定式化が原著
-- Callaway & Sant'Anna (2021) 型 group-time CATT — 別フレームワーク（コホート ATT 集計は対応済み）
-- Hirshberg & Klosin (2023) 型 conformal CI — 別枠
+保留中の項目・未着手の手法は `.claude/docs/backlog.md` 参照。

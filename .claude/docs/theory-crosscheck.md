@@ -20,3 +20,16 @@
 | SCM 検証ツール | in-time placebo（backdating）・ドナー LOO（V 固定, fn.20）・placebo gap プロット（Fig 4–8, mspe_prune 20/5/2） | ADH (2015)・ADH (2010) §3.4 |
 | SCM staggered | partially pooled SCM（Eq. 6 の ν 目的関数）・intercept shift（Eq. 8–10）・jackknife（App. A.1）・wild bootstrap（Eq. 12 の全ユニット和 ＋ Otsu & Rai 2017 Eq. 8–9 の乗数・中心化。Eq. 13 字面の全ユニット中心化は採らない）・コホート内完全プーリング（**App A.2 の和パラメータ化**: q_pool に n_g、q_sep に n_g²）。原著者実装 augsynth と重み・ν̂ が**不等コホートサイズを含め 4〜5 桁一致**（v1.0.0 でブロック質量を修正。それ以前は等サイズ限定の一致だった） | Ben-Michael, Feller & Rothstein (2022) 本文 + supporting information App A.1/A.2 + 付属コード augsynth・Otsu & Rai (2017) |
 | SCM 共変量 | balance で扱う（ADH 2010 S.2.3 の V 加重予測子）。sharp の `covariates`（partial-out）は明示エラー。**staggered の partial-out は Clarke S.2.2 の借用で BFR S.5.2 の ξ 項ではない**（保留中の申し送り） | Abadie et al. (2010) S.2.3・BFR (2022) S.4/S.5.2 |
+
+## 他パッケージとの照合（既定同士、再検証の基準値）
+
+正準ケースは California Prop 99。`scm_fit(cigsale ~ treated | state + year, method = "scm")` のみで ATT −19.514（ADH 2010 公表値 ≒ −19.6）、ドナー集合も論文と同一。
+
+| 手法 | 相手 | 結果 |
+|---|---|---|
+| SCM | Synth 1.1.10 / tidysynth | ドナー集合一致・重み 0.02 以内。共通目的関数（前処置 MSPE）で coresynth 3.077 < Synth 3.209（multistart の効果）。ADH 予測子指定では公表重みを max\|diff\| 0.0046 で再現（Synth は 0.0170） |
+| 順列検定 | ADH 2010 Fig. 8 | ADH 予測子指定で p=1/39=0.0256 を再現 |
+| SDID | synthdid | −15.6046 vs −15.6038、重み相関 0.9998 |
+| Conformal | scinference | p=0.096774 完全一致 |
+| GSC | gsynth / fect | 正しく特定された DGP で 3.011 / 2.992 / 3.010（真値 3） |
+| MC | MCPanel / fect | 2.9507 vs 2.9515 / 2.9138（真値 3） |

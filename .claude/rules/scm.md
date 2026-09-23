@@ -12,7 +12,9 @@ $$Y_{it}^{(0)} = \delta_t + \theta_t Z_i + \lambda_t \mu_i + \varepsilon_{it}$$
 
 重み推定は入れ子最適化: 外側 = V（予測子重み）の座標降下 / L-BFGS-B / multistart、内側 = simplex QP（FISTA + active-set）。推論は `mspe_ratio_pval()`（sharp、MSPE 比率順列検定）と `scm_inference()`（staggered 専用、jackknife 既定 / wild bootstrap）に分離。検証ツール: `placebo_in_time()`（in-time placebo backdating）・`loo_donors()`（V 固定ドナー LOO）。
 
-**Augmented SCM**（`augment_scm()`、Ben-Michael, Feller & Rothstein 2021, JASA）: sharp SCM fit（`coresynth_scm`）に対するリッジ回帰バイアス補正。ドナー横断のリッジ回帰で事後期間平均を予測するアウトカムモデル `beta_hat` を推定し、`tau_aug = tau_SCM + (m_tr_post - sum_j W_j * m_j_post)` で SCM の事前期間フィット不足を補正する。ペナルティ `lambda_ridge` は既定でコントロールユニット横断の LOO-CV により選択する。staggered SCM の partially pooled fit（2022, JRSS-B）とは別の拡張であり、両者を混同しない。
+**Augmented SCM**（`augment_scm()`、Ben-Michael, Feller & Rothstein 2021, JASA）: sharp SCM fit（`coresynth_scm`）に対するリッジ回帰バイアス補正。ドナー横断のリッジ回帰で事後期間平均を予測するアウトカムモデル `beta_hat` を推定し、`tau_aug = tau_SCM + (m_tr_post - sum_j W_j * m_j_post)` で SCM の事前期間フィット不足を補正する。ペナルティ `lambda_ridge` は既定でコントロールユニット横断の LOO-CV により選択する。staggered SCM の partially pooled fit（2022, JRSS-B）とは別の拡張であり、両者を混同しない。**staggered fit に渡すと「Y_co_pre が無い」という誤誘導なエラーになる**（本来は「staggered 非対応」と言うべき軽微な修正漏れ、保留中）。
+
+**sharp SCM の no-op 引数**: `control_group`・（`predictors = NULL` のときの）`scale_predictors` は受理されて無言で無視される。1.0.0 以前からの全手法共通の設計課題で、まとめて対応する予定。
 
 **採用パターンと既定**（BFR 2022 = `papers/Ben-Michael_et_al._2022`。ファイル名 `_2021` は Augmented SCM の別論文なので混同しない）:
 

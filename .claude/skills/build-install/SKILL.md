@@ -37,6 +37,18 @@ Copy-Item "$env:USERPROFILE\AppData\Local\R\win-library\4.6\coresynth\libs\x64\c
   残ったままになり、気づかずに古いビルドでテストしてしまう罠がある。
   `R CMD INSTALL .` の出力に `DONE (coresynth)` が出ているか必ず確認し、
   出ていなければテストを実行する前に原因を特定して修正する。
+- **`DONE (coresynth)` が出ても DLL が差し替わっていないことがある**: 出力の途中に
+  `problem copying ...coresynth.dll ...: Permission denied` の警告が出るケース。
+  `DONE` だけでなく警告行も確認し、疑わしければインストール先 DLL の更新時刻を見る。
+- **DLL をロックしているのは Rterm とは限らない**: Positron の R コンソール（プロセス名
+  `ark`）が coresynth を読み込んでいるとロックされ、`Stop-Process` の対象にもならない。
+  特定は `Get-Process | ForEach-Object { if ($_.Modules | Where-Object { $_.FileName -like "*coresynth*" }) { $_.Name } }`。
+  ユーザーの作業中セッションなので勝手に終了させず、閉じてもらうよう依頼する。
+  待てない計測は `--library=<scratch>` で別ライブラリに入れて行う。
+- **`devtools::test()` / `load_all()` は `src/*.o` を残す**: 次の `R CMD INSTALL .` は
+  それを再利用するので、C++ を触ったかどうかにかかわらず INSTALL 前に
+  `Remove-Item src\*.o, src\*.dll` しておくと、インストール済み DLL が常に同じ条件で
+  ビルドされたものになる（速度計測の前は特に）。
 - **`"cannot remove earlier installation"` エラー**: 上記の `Stop-Process` 手順
   （Rtermプロセスの強制終了→1秒待機→`.o`ファイル削除）で解消する。それでも
   解消しない場合はユーザーに報告する（他のRセッションがDLLをロックしている

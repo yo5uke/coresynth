@@ -68,27 +68,26 @@ fit$cohort_estimates
 
 ## Choosing the control group
 
-`control_group` controls which units serve as donors for each cohort:
+`control_group` controls which units serve as donors for each cohort in the
+estimators that refit cohort by cohort (`"scm"`, `"sdid"`, `"gsc"`, `"si"`):
 
-- `"clean"` (default) — never-treated units **plus** not-yet-treated units
-  (those adopting later than the current cohort).
-- `"never_treated"` — never-treated units only.
+- `"never_treated"` (default) — never-treated units only.
+- `"clean"` (deprecated) — never-treated units **plus** units adopting later
+  than the current cohort.
 
-```{r control-group}
-fit_clean <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
-                     control_group = "clean")
-fit_nt    <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
-                     control_group = "never_treated")
-c(clean = fit_clean$estimate, never_treated = fit_nt$estimate)
-```
+Each cohort's effect is averaged over every period from its adoption date to
+the end of the panel. A unit that adopts later is untreated before its own
+date but treated after it, so under `"clean"` its **post-adoption** outcomes
+enter the earlier cohort's synthetic control and pull the effect towards
+zero. Neither source design does this: Clarke et al. (2024, Algorithm 1) use
+pure controls only, and Ben-Michael, Feller & Rothstein (2022) admit a donor
+only if it is untreated through the last event time they estimate. `"clean"`
+therefore warns and will be removed in the next major release.
 
-Note the trade-off: `"clean"` gives earlier cohorts a larger donor pool, but a
-future adopter's **post-adoption** outcomes enter the synthetic control of the
-periods after it adopts, which attenuates the aggregate ATT when its treatment
-effect is large. If the effect you estimate is sizeable relative to the
-outcome noise, `"never_treated"` is the safer choice (this matches the fixed
-donor-pool rule of Ben-Michael, Feller & Rothstein 2022, who exclude any unit
-treated within the evaluation window).
+A staggered panel needs at least two never-treated units for these
+estimators. When every unit is eventually treated, `"mc"` and `"tasc"` still
+apply: they impute each unit's counterfactual from the untreated cells of the
+whole panel rather than from a donor pool.
 
 ## Across estimators
 
@@ -166,7 +165,14 @@ raising it buys covariate balance at the cost of outcome balance, and letting
 it fall to zero recovers the fit without covariates. The balance term needs
 the partially pooled solver, so it cannot be combined with `nu = "separate"`,
 `donor_mspe_threshold`, `lambda_pen` or `v_selection = "oos"`.
-`fit$pooling` then also reports `q_cov_sep` and `q_cov_pool`.
+`fit$pooling` then also reports `q_cov_sep` and `q_cov_pool`, and
+`scm_balance_frontier()` carries both across the `nu` grid. Read those
+diagnostics differently from the outcomes-only ones above: the paper's
+footnote 7 normalises by the *combined* measure, so `q_sep_separate` and
+`q_pool_separate` are not the outcome imbalance of the `nu = 0` solution, the
+`_rel` columns of the frontier are not 1 there, and the outcome imbalances can
+both fall with `nu` because the covariate side is the third quantity being
+traded off.
 
 ## Inference under staggered adoption
 
@@ -181,14 +187,19 @@ tidy(sdid_inference(fit, method = "bootstrap", n_boot = 100, seed = 1))
 tidy(sdid_inference(fit, method = "jackknife_global"))
 ```
 
-Staggered **SCM** fits use `scm_inference()`, the wild bootstrap of
-Ben-Michael, Feller & Rothstein (2022): donor weights stay fixed and
-per-treated-unit effect contributions are perturbed with mean-zero
-multipliers. With only a couple of treated units the interval is unreliable
-(a warning is issued below 5).
+Staggered **SCM** fits use `scm_inference()`. Its default is the
+leave-one-unit-out jackknife of Ben-Michael, Feller & Rothstein (2022,
+Appendix A.1): each unit of the panel, donors included, is dropped in turn
+and the weights refitted with `nu` held fixed, so the interval reflects the
+noise in the synthetic controls as well as in the treated units.
+`method = "wild_bootstrap"` gives their multiplier bootstrap instead, after
+Otsu & Rai (2017): the weights stay fixed and every unit's term -- a treated
+unit's effect, a donor's residual -- is perturbed by its own multiplier. It
+needs no refitting, so it suits panels too large for the jackknife, and is
+somewhat conservative.
 
 ```{r scm-inf, warning=FALSE}
-tidy(scm_inference(fit_pp, n_boot = 500, seed = 1))
+tidy(scm_inference(fit_pp))
 ```
 
 ## Notes

@@ -83,6 +83,10 @@ ratio (Abadie 2021, S.3.5), which is the variant that needs the cutoff:
 mspe_ratio_pval(fit_scm, mspe_prune = 5, statistic = "post_mspe")$p_value
 ```
 
+Plotting such a result gives the picture the p-value was computed from: both
+views drop the runs the cutoff discarded, and `type = "ratios"` draws whichever
+statistic the test ranked. Pass `mspe_prune = Inf` to see every run regardless.
+
 When **several units are treated at once** the fit pools them into one
 synthetic control, and this test no longer applies: the averaged treated
 series is less noisy than any single donor, so its MSPE ratio is inflated and
@@ -90,8 +94,9 @@ the test over-rejects. Use `scm_rank_pval()` instead — the rank-based
 permutation test of Abadie & L'Hour (2021, S.3.2), which ranks per-unit
 statistics so that only single-unit quantities are ever compared.
 
-For **staggered** SCM fits, use `scm_inference()` — the wild bootstrap of
-Ben-Michael, Feller & Rothstein (2022) — described in the
+For **staggered** SCM fits, use `scm_inference()` — the leave-one-unit-out
+jackknife (default) or wild bootstrap of Ben-Michael, Feller & Rothstein
+(2022) — described in the
 [Staggered adoption](staggered.html) article. `scm_rank_pval()` works there
 too, on a fit made with `pool_cohorts = FALSE`.
 

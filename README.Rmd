@@ -139,7 +139,9 @@ dat_s        <- dat
 dat_s$d      <- 0L
 dat_s$d[dat_s$id == "u1" & dat_s$time > 10] <- 1L
 dat_s$d[dat_s$id == "u2" & dat_s$time > 15] <- 1L
-dat_s$y[dat_s$d == 1] <- dat_s$y[dat_s$d == 1] + 2.0
+# u1 already carries the +2 from `dat`; give u2 the same effect
+dat_s$y[dat_s$id == "u2" & dat_s$d == 1] <-
+  dat_s$y[dat_s$id == "u2" & dat_s$d == 1] + 2.0
 
 # All methods detect staggered timing automatically
 fit_sdid <- scm_fit(y ~ d | id + time, data = dat_s, method = "sdid")
@@ -149,14 +151,12 @@ fit_si   <- scm_fit(y ~ d | id + time, data = dat_s, method = "si")
 
 # Cohort-level estimates are accessible
 fit_sdid$cohort_estimates
-#>   cohort estimate weight n_treated T_pre T_post
-#> 1     11    1.97  0.667         1    10      9
-#> 2     16    2.03  0.333         1    10      4
+#>   cohort n_treated T_pre T_post estimate weight
+#> 1     11         1    10     10     2.11  0.667
+#> 2     16         1    15      5     2.16  0.333
 
-# control_group = "clean" (default) uses never-treated + future-adopters as donors
-# control_group = "never_treated" restricts to never-treated only
-fit_sdid_clean <- scm_fit(y ~ d | id + time, data = dat_s, method = "sdid",
-                          control_group = "never_treated")
+# Donors are the never-treated units: a unit that adopts later would be
+# treated itself during the earlier cohort's post-treatment window
 ```
 
 ### SCM: Partially Pooled Synthetic Controls
@@ -181,8 +181,8 @@ fit_pp$pooling   # balance diagnostics: q_sep / q_pool vs. separate SCM
 # donor filtering and penalty options the pooled solver has no room for.
 scm_balance_frontier(fit_pp)   # the nu trade-off across a grid
 
-# Wild bootstrap inference (weights held fixed, multiplier resampling)
-scm_inference(fit_pp, n_boot = 1000, seed = 1)
+# Leave-one-unit-out jackknife (BFR Appendix A.1): donors are resampled too
+scm_inference(fit_pp)
 ```
 
 `pool_cohorts = FALSE` gives each treated unit its own weight vector instead
@@ -326,15 +326,15 @@ head(plot_data(fits$scm, type = "trend"))
 
 On a 100-donor, 10-year monthly panel, a full SCM fit and its in-space
 placebo test across all 100 donors both complete in well under a second;
-Synth takes about a minute and a half for the fit alone, and roughly two
-hours for the placebo test, on the same data and predictor specification
+Synth takes over a minute for the fit alone, and about an hour and a half
+for the placebo test, on the same data and predictor specification
 (outcomes-only, matching solutions). Measured against Synth 1.1.10 on
 Windows 11 / R 4.6.1.
 
 | Panel | Synth fit | coresynth fit | Synth placebo (all donors) | coresynth placebo (all donors) |
 |---|---:|---:|---:|---:|
-| 40 donors, 2 yr pre / 5 mo post   | 6.8 s | 3 ms  | 4.2 min  | 10 ms |
-| 100 donors, 8 yr pre / 2 yr post (monthly) | 81 s  | 30 ms | ~115 min | 0.3 s |
+| 40 donors, 2 yr pre / 5 mo post   | 5.8 s | 3 ms  | 3.5 min  | 12 ms |
+| 100 donors, 8 yr pre / 2 yr post (monthly) | 70 s  | 20 ms | ~97 min | 0.4 s |
 
 ## References
 

@@ -30,7 +30,7 @@
 - `.claude/docs/performance.md` — ベンチマーク
 
 ## Staggered Adoption 共通仕様（Clarke et al. 2024）
-コホート g（採用タイミングが同じ処置ユニット群）ごとに推定した推定量を `N_tr,g * T_post,g` で重み付け平均する。コントロール群は `"clean"`（デフォルト、never-treated + 将来採用者）と `"never_treated"`（統制ユニットのみ）の 2 種。返却構造は `staggered = TRUE`、`cohort_estimates`（data.frame）、`cohort_fits`（list）。数式・詳細は `CLAUDE.md` 参照。
+コホート g（採用タイミングが同じ処置ユニット群）ごとに推定した推定量を `N_tr,g * T_post,g` で重み付け平均する。コントロール群は `"never_treated"`（デフォルト、統制ユニットのみ）と `"clean"`（非推奨、never-treated + 将来採用者。事後窓で処置済みになるため汚染する）の 2 種。返却構造は `staggered = TRUE`、`cohort_estimates`（data.frame）、`cohort_fits`（list）。数式・詳細は `CLAUDE.md` 参照。
 
 ## ファイル構成（要点）
 ```
@@ -46,7 +46,7 @@ coresynth/
 ## 推論関数の対応表
 | 手法 | sharp 推論 | staggered 推論 | `conformal_inference()` |
 |---|---|---|---|
-| SCM | `mspe_ratio_pval()`（順列検定） | `scm_inference()`（wild bootstrap） | 対応 |
+| SCM | `mspe_ratio_pval()`（順列検定） | `scm_inference()`（jackknife 既定 / wild bootstrap） | 対応 |
 | SDID | `sdid_inference()`（4 method 全て） | 同左 | 対応 |
 | GSC | `gsc_boot()` / `gsc_inference()` | `gsc_inference()` | 対応 |
 | MC | — | — | 対応 |

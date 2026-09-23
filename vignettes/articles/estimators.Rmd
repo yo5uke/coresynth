@@ -112,6 +112,14 @@ fit_sdid <- scm_fit(y ~ d | id + time, data = dat, method = "sdid",
 fit_sdid$estimate
 ```
 
+The double differencing also means the estimate is not the average gap between
+the treated series and the synthetic one. SDID subtracts the pre-treatment
+level under its own time weights, so `augment()`'s `.resid` over the
+post-treatment periods averages to something else, and the two differ by
+however much those weights depart from a flat average. For the other five
+estimators the counterfactual is the whole story and the two agree; read the
+SDID series as a picture of the fit, and `fit$estimate` as the effect.
+
 ## GSC — Generalised Synthetic Control
 
 *Xu (2017).* Interactive fixed effects estimated by SVD; `r` sets the number of
@@ -177,7 +185,7 @@ c(free_A = fit_tasc$estimate, fixed_A = fit_tasc_fixA$estimate)
 
 *Agarwal et al. (2025).* SI-PCR uses a truncated SVD of the donor pre-period.
 `k` sets the rank; `k = NULL` (the default) applies the optimal hard threshold
-of Donoho & Gavish (2014) to the pre-treatment donor block, one of the
+of Gavish & Donoho (2014) to the pre-treatment donor block, one of the
 data-driven rules the paper names.
 
 ```{r si}

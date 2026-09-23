@@ -10,7 +10,7 @@
 
 - すべての推定手法に **統一的な Formula インターフェース** を提供
 - ボトルネックとなる最適化（QP、SVD、カルマンフィルタ）を全て **C++ で実装**
-- Synth パッケージ比の実測速度は `.claude/docs/performance.md` 参照（開発版ソルバ: N_co=40〜100 で単一フィット ~2,100〜2,700 倍・in-space プラセボ ~25,000〜26,000 倍）
+- Synth パッケージ比の実測速度は `.claude/docs/performance.md` 参照（2026-09-23 実測: N_co=40〜100 で単一フィット ~2,100〜3,500 倍・in-space プラセボ ~15,000〜17,500 倍。倍率はマシン状態で揺れるので版間比較は同じ回で交互に計測する）
 
 ### 対象手法
 
@@ -37,10 +37,10 @@
 $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{tr,g} \cdot T_{post,g}}$$
 
 - **コホート g**: 採用タイミングが同じ処置ユニット群
-- **コントロール群**: `"clean"`（デフォルト）= never-treated ＋ 将来採用者（$T_{adopt}[j] > g$）、`"never_treated"` = 統制ユニットのみ。**MC/TASC は `control_group` を持たない**（下記）
+- **コントロール群**: `"never_treated"`（デフォルト、v1.0.0 で変更）= 統制ユニットのみ。`"clean"`（非推奨・警告、次メジャーで削除）= never-treated ＋ 将来採用者（$T_{adopt}[j] > g$）。**コホート効果は採用時点からパネル末尾まで平均するので、将来採用者は事後窓の途中で処置済みになり反実仮想を汚染する**（τ=3 で −0.24〜−0.59 のバイアスを実測）。Clarke et al. Algorithm 1 は pure controls のみ、BFR S.2.2 は「推定する最終イベントタイムまで未処置」のドナーのみで、末尾まで推定するならどちらも never-treated に一致する。never-treated が 2 未満の staggered パネルは `.check_control_group()`（`R/utils.R`）が明示エラーで MC/TASC へ誘導。**MC/TASC は `control_group` を持たない**（下記）
 - **返却構造**: `staggered = TRUE`、`cohort_estimates`（data.frame）、`cohort_fits`（list）。集計は全手法 `.aggregate_cohorts()`（`R/utils.R`）に一元化
 - **コホート分割する手法としない手法**: SCM/SDID/GSC/SI はコホートごとに再フィットする。**MC/TASC は補完型**なので再フィットせず、観測マスク（MC は `O`、TASC は `Y_obs` の NA）が各ユニットの採用時点を表現し、単一フィットがそのまま staggered 推定になる。コホート表は `.impute_cohort_fits()` がその単一フィットの `gap` を分割して作る。**どちらも集計は同じ Clarke 加重**でなければならない — ユニット等加重にすると事後長の異なるコホートで他手法と別の推定量を返す
-- **cohort_fits[[g]]** の共通フィールド: `estimate`, `weight`, `idx_co`, `idx_tr`, `T_pre`, `T_post`（inference resampling に利用）。SCM は加えて `Y_treat_mat`（T × n_treated_g、per-unit 処置系列 — wild bootstrap 用）と `alpha`（fixedeff の intercept shift、なければ 0）
+- **cohort_fits[[g]]** の共通フィールド: `estimate`, `weight`, `idx_co`, `idx_tr`, `T_pre`, `T_post`（inference resampling に利用）。SCM は加えて `Y_treat_mat`（T × n_treated_g、per-unit 処置系列 — wild bootstrap 用。ドナー側の残差は fit の `Y_all` から作る）と `alpha`（fixedeff の intercept shift、なければ 0）
 
 ---
 
@@ -92,7 +92,7 @@ coresynth/
 
 | 手法 | sharp 推論 | staggered 推論 | `conformal_inference()` |
 |---|---|---|---|
-| SCM | `mspe_ratio_pval()`（順列検定） | `scm_inference()`（wild bootstrap） | ✅ |
+| SCM | `mspe_ratio_pval()`（順列検定） | `scm_inference()`（jackknife 既定 / wild bootstrap） | ✅ |
 | SDID | `sdid_inference()`（4 method 全て） | 同左 | ✅ |
 | GSC | `gsc_boot()` / `gsc_inference()` | `gsc_inference()` | ✅ |
 | MC | — | — | ✅ |

@@ -50,7 +50,6 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
                                const arma::mat& P0) {
   int T = Y.n_cols;
   int r = z0.n_elem;
-  int N = Y.n_rows;
 
   // Storage
   arma::mat  z_pred(r, T),  z_upd(r, T);

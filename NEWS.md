@@ -1,3 +1,50 @@
+# coresynth 1.0.1
+
+## Bug fixes
+
+- **`gsc_boot()` reports a confidence interval for the ATT.** Its
+  replicates are generated with no treatment effect, so they are draws of the
+  estimation error (Xu 2017, Algorithm 2), and the interval is the estimate
+  minus their quantiles. `ci_lower`/`ci_upper` were the raw quantiles
+  instead -- an acceptance region around zero that never contained a
+  non-zero estimate. **`ci_lower`/`ci_upper` change**; `p_value`, `se` and
+  `boot_dist` do not.
+
+- **`scm_fit()` rejects a transformed outcome or treatment in the formula.**
+  The columns are read from `data` by name, so `log(y) ~ d | id + time` was
+  fitted as `y` and `y ~ I(t > 1990) | id + time` used `t` as the treatment,
+  without a word. Both are now errors that ask for the variable to be created
+  in `data` first.
+
+- **The parallel placebo loops cannot take the R session down.** An
+  exception thrown inside an OpenMP region terminates the process; the
+  outcomes-only SCM and the SDID placebo loops now catch it and mark that
+  placebo `NaN`, as the predictor-spec SCM loop already did.
+
+- **OpenMP honours a thread limit.** The placebo loops and the multi-start
+  search used every core, which the CRAN Repository Policy forbids during
+  checks. `options(coresynth.threads = n)` now caps the thread count, and
+  `R CMD check --as-cran` runs on at most two threads (see
+  `?coresynth-package`). Results do not depend on the thread count.
+
+- **`R CMD check` runs the test suite.** `tests/testthat.R` was missing, so
+  the checks (locally and on CI) never ran the tests.
+
+## Performance
+
+- **SDID weights are solved without forming the donor Gram matrix.** The unit
+  weight QP has one row per pre-treatment period and a column per donor, so
+  with more donors than periods the gradient and the step size now come from
+  the factor instead of an N-by-N matrix and its eigendecomposition. Same
+  iterates up to round-off (estimates, standard errors and p-values agree to
+  ten digits); on a 300-donor panel the placebo, jackknife and bootstrap
+  methods of `sdid_inference()` run about 6 times faster.
+
+- **The TASC Kalman filter avoids an N-by-N inverse per period.** The
+  observation noise is diagonal, so the gain reduces to an r-by-r solve by the
+  push-through identity. Same moments up to round-off; a 200-unit fit runs
+  about 10 times faster.
+
 # coresynth 1.0.0
 
 ## Breaking changes
@@ -474,34 +521,6 @@
 
 ## Bug fixes
 
-- **`gsc_boot()` reports a confidence interval for the ATT.** Its
-  replicates are generated with no treatment effect, so they are draws of the
-  estimation error (Xu 2017, Algorithm 2), and the interval is the estimate
-  minus their quantiles. `ci_lower`/`ci_upper` were the raw quantiles
-  instead -- an acceptance region around zero that never contained a
-  non-zero estimate. **`ci_lower`/`ci_upper` change**; `p_value`, `se` and
-  `boot_dist` do not.
-
-- **`scm_fit()` rejects a transformed outcome or treatment in the formula.**
-  The columns are read from `data` by name, so `log(y) ~ d | id + time` was
-  fitted as `y` and `y ~ I(t > 1990) | id + time` used `t` as the treatment,
-  without a word. Both are now errors that ask for the variable to be created
-  in `data` first.
-
-- **The parallel placebo loops cannot take the R session down.** An
-  exception thrown inside an OpenMP region terminates the process; the
-  outcomes-only SCM and the SDID placebo loops now catch it and mark that
-  placebo `NaN`, as the predictor-spec SCM loop already did.
-
-- **OpenMP honours a thread limit.** The placebo loops and the multi-start
-  search used every core, which the CRAN Repository Policy forbids during
-  checks. `options(coresynth.threads = n)` now caps the thread count, and
-  `R CMD check --as-cran` runs on at most two threads (see
-  `?coresynth-package`). Results do not depend on the thread count.
-
-- **`R CMD check` runs the test suite.** `tests/testthat.R` was missing, so
-  the checks (locally and on CI) never ran the tests.
-
 - **Outcomes-only SCM is fast again.** Since 0.4.1 the default fit and its
   in-space placebo test had run about 3 times slower on panels with many
   pre-treatment periods, and 1.0.0's Wolfe default had made it 10 to 14
@@ -551,21 +570,6 @@
   the parameter. The fields are also read exactly rather than with `$`, which
   would partial-match `r` to `r_cv`, or `lambda` to `lambda_cv`, if the exact
   name were ever absent.
-
-## Performance
-
-- **SDID weights are solved without forming the donor Gram matrix.** The unit
-  weight QP has one row per pre-treatment period and a column per donor, so
-  with more donors than periods the gradient and the step size now come from
-  the factor instead of an N-by-N matrix and its eigendecomposition. Same
-  iterates up to round-off (estimates, standard errors and p-values agree to
-  ten digits); on a 300-donor panel `sdid_inference()` runs 4 to 8 times
-  faster (placebo 4.8 s to 0.8 s, jackknife 6.4 s to 0.8 s).
-
-- **The TASC Kalman filter avoids an N-by-N inverse per period.** The
-  observation noise is diagonal, so the gain reduces to an r-by-r solve by the
-  push-through identity. Same moments up to round-off; a 200-unit fit takes
-  0.34 s instead of 3.9 s.
 
 # coresynth 0.5.0
 

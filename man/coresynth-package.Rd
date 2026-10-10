@@ -12,7 +12,12 @@ A unified 'Formula' interface to the Synthetic Control Method (SCM) and related 
 }
 \section{Parallel computation}{
 
-The in-space placebo refits of \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} and \code{\link[=sdid_inference]{sdid_inference()}}, and the multi-start search of \code{\link[=scm_fit]{scm_fit()}}, run in parallel with OpenMP. Set \code{options(coresynth.threads = n)} to cap the number of threads. Left unset, the OpenMP default applies (all cores, or \code{OMP_NUM_THREADS} / \code{OMP_THREAD_LIMIT} when set), except under \verb{R CMD check --as-cran}, where at most two threads are used. The results do not depend on the thread count.
+The in-space placebo refits of \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} and \code{\link[=sdid_inference]{sdid_inference()}},
+and the multi-start search of \code{\link[=scm_fit]{scm_fit()}}, run in parallel with OpenMP.
+Set \code{options(coresynth.threads = n)} to cap the number of threads. Left
+unset, the OpenMP default applies (all cores, or \code{OMP_NUM_THREADS} /
+\code{OMP_THREAD_LIMIT} when set), except under \verb{R CMD check --as-cran}, where at
+most two threads are used. The results do not depend on the thread count.
 }
 
 \seealso{

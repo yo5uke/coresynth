@@ -46,6 +46,8 @@ $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{
 - **plot のタイトル・サブタイトルに非 ASCII 文字を入れない**（ギリシャ文字・Unicode マイナス記号等）— UTF-8 でないロケールで `R CMD check --run-donttest` がクラッシュする。マイナスは ASCII ハイフン、ギリシャ文字は綴り（`lambda`/`omega`）で代替する
 - **`cohort_fits` から新しいフィールドを読むときは `[[ ]]`**（`$` は部分マッチする — SDID の `unit_weights` に `unit` が、GSC の `r_cv` に `r` が無言で吸われる）
 - **手法間の解の一致を検証する DGP**: 処置ユニットの予測子ベクトルがドナー凸包の外に出る設計だと、予測子経路の違いが結果に出ず「一致した」ように見える。因子モデル DGP ＋手計算での突き合わせで判定する
+- **OpenMP の並列ループは `num_threads(cs_num_threads())`（`src/threads.h`）で上限を付け、本体を `try/catch` で囲む** — CRAN ポリシーは check 中 2 スレッドまで（`_R_CHECK_LIMIT_CORES_` で自動判定、利用者は `options(coresynth.threads=)`）。例外が OpenMP 領域を抜けると `std::terminate` で R ごと落ちる。`cs_num_threads()` は R の状態を読むので**並列領域の外（メインスレッド）でのみ**呼ぶ。スレッド内では Rcpp 型（`Nullable` 等）も使わない
+- **Formula の項は列名そのものに限る**: `scm_fit()` は `all.vars()` で列名を取り `data` から直接読むので、`log(y)` や `I(t > 1990)` を許すと変換が黙って捨てられる。入口で `is.name()` 検査してエラーにしている
 - `gh` CLI はインストール済み・認証済み（アカウント `yo5uke`）
 
 ---

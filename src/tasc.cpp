@@ -50,7 +50,6 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
                                const arma::mat& P0) {
   int T = Y.n_cols;
   int r = z0.n_elem;
-  int N = Y.n_rows;
 
   // Storage
   arma::mat  z_pred(r, T),  z_upd(r, T);
@@ -59,6 +58,15 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
   arma::vec  z_curr = z0;
   arma::mat  P_curr = P0;
   arma::mat  I_r = arma::eye(r, r);
+
+  // With a diagonal, positive R (what the TASC EM always passes) the gain
+  // needs no N x N inverse: by the push-through identity
+  //   K = P W'(W P W' + R)^{-1} = (I_r + P W'R^{-1}W)^{-1} P W'R^{-1},
+  // an r x r solve, and K R K' is a column scaling. Per time step this costs
+  // O(N r^2) instead of O(N^3); the filtered moments are the same up to
+  // round-off. A general R keeps the direct form.
+  const bool diag_R = R.is_diagmat() && arma::all(R.diag() > 0.0);
+  const arma::vec R_diag = R.diag();
 
   // ── Forward Kalman Filter ──
   for(int t = 0; t < T; t++) {
@@ -75,18 +83,34 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
     if(obs_idx.n_elem > 0) {
       arma::mat W_obs = W.rows(obs_idx);
       arma::vec y_obs = y_t.elem(obs_idx);
-      arma::mat R_obs = R.submat(obs_idx, obs_idx);
 
-      // Innovation covariance S and Kalman gain K
-      arma::mat S = W_obs * P_p * W_obs.t() + R_obs;
-      arma::mat K = P_p * W_obs.t() * safe_inv_sympd(S);
+      arma::mat K, KRK;
+      bool gain_ok = false;
+      if (diag_R) {
+        arma::vec r_obs = R_diag.elem(obs_idx);
+        arma::mat WtRi = W_obs.t();                 // r x n_obs: W'R^{-1}
+        WtRi.each_row() /= r_obs.t();
+        gain_ok = arma::solve(K, I_r + P_p * (WtRi * W_obs), P_p * WtRi);
+        if (gain_ok) {
+          arma::mat KR = K;
+          KR.each_row() %= r_obs.t();
+          KRK = KR * K.t();
+        }
+      }
+      if (!gain_ok) {
+        arma::mat R_obs = R.submat(obs_idx, obs_idx);
+        // Innovation covariance S and Kalman gain K
+        arma::mat S = W_obs * P_p * W_obs.t() + R_obs;
+        K   = P_p * W_obs.t() * safe_inv_sympd(S);
+        KRK = K * R_obs * K.t();
+      }
 
       // State update
       z_curr = z_p + K * (y_obs - W_obs * z_p);
 
       // Covariance update — Joseph form for numerical stability
       arma::mat IKW = I_r - K * W_obs;
-      P_curr = IKW * P_p * IKW.t() + K * R_obs * K.t();
+      P_curr = IKW * P_p * IKW.t() + KRK;
 
       // Enforce symmetry
       P_curr = 0.5 * (P_curr + P_curr.t());

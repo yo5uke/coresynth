@@ -321,6 +321,21 @@ scm_fit <- function(
     )
   }
 
+  # The outcome and treatment are read from `data` by column name, so a term
+  # such as log(y) or I(t > 1990) would otherwise be reduced to its variable
+  # and fitted untransformed.
+  for (part in list(list(lhs = 1, rhs = 0, what = "outcome"),
+                    list(lhs = 0, rhs = 1, what = "treatment"))) {
+    f_part <- formula(f_parts, lhs = part$lhs, rhs = part$rhs)
+    term   <- f_part[[2L]]   # lhs of y ~ 0, rhs of ~ D
+    if (!is.name(term))
+      stop(sprintf(paste0(
+        "The %s must be a column name, not the expression '%s'. Create the ",
+        "transformed variable in `data` first, e.g. ",
+        "data$log_y <- log(data$y)."),
+        part$what, deparse1(term)), call. = FALSE)
+  }
+
   y_var <- all.vars(formula(f_parts, lhs = 1, rhs = 0))
   d_var <- all.vars(formula(f_parts, lhs = 0, rhs = 1))
   idx_vars <- all.vars(formula(f_parts, lhs = 0, rhs = 2))

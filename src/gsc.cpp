@@ -67,31 +67,27 @@ Rcpp::List gsc_ife_cpp(const arma::mat& Y_co,
     F    = U.cols(0, r - 1) * arma::diagmat(D.subvec(0, r - 1));
     L_co = V.cols(0, r - 1);
 
-    int n_obs = T * N_co;
+    // The covariates do not change across EM iterations, so neither does the
+    // normal matrix X'X of the pooled regression over all (t, i) cells; only
+    // X'R moves with the factors. Each entry is a sum over the T x N_co cells
+    // of the covariate slices, so no stacked design matrix is needed.
+    // Ridge-regularised: beta = (X'X + ridge*I)^{-1} X'R.
+    double ridge = 1e-8;
+    arma::mat XtX(p, p);
+    for (int j = 0; j < p; j++)
+      for (int k = j; k < p; k++)
+        XtX(j, k) = XtX(k, j) = arma::accu(X_co.slice(j) % X_co.slice(k));
+    XtX.diag() += ridge;
 
     for (int iter = 0; iter < max_iter; iter++) {
       arma::vec beta_old = beta;
 
       // M-step: OLS regression of residuals R_it on covariates x_{it}
       // R_it = Y_co(t,i) - F(t,:) . L_co(i,:)
-      // X_stack(t*N_co + i, j) = X_co(t, i, j)
-      arma::mat X_stack(n_obs, p);
-      arma::vec R_stack(n_obs);
-
-      for (int t = 0; t < T; t++) {
-        for (int i = 0; i < N_co; i++) {
-          int idx = t * N_co + i;
-          R_stack(idx) = Y_co(t, i) - arma::dot(F.row(t), L_co.row(i));
-          for (int j = 0; j < p; j++) {
-            X_stack(idx, j) = X_co(t, i, j);
-          }
-        }
-      }
-
-      // Ridge-regularised OLS: beta = (X'X + ridge*I)^{-1} X'R
-      double ridge = 1e-8;
-      arma::mat XtX = X_stack.t() * X_stack + ridge * arma::eye(p, p);
-      arma::vec XtR = X_stack.t() * R_stack;
+      arma::mat R = Y_co - F * L_co.t();
+      arma::vec XtR(p);
+      for (int j = 0; j < p; j++)
+        XtR(j) = arma::accu(X_co.slice(j) % R);
       arma::vec beta_new = arma::solve(XtX, XtR);
 
       // E-step: update F, L_co from demeaned Y_tilde = Y_co - X_co * beta

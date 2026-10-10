@@ -67,8 +67,6 @@ Rcpp::List si_pcr_cpp(const arma::mat& Y_pre_co,
                       int k) {
   int T_pre = Y_pre_co.n_rows;
   int N_co  = Y_pre_co.n_cols;
-  int T_post = Y_post_co.n_rows;
-  int N_tr  = Y_pre_tr.n_cols;
 
   if (k < 1)
     Rcpp::stop("k must be >= 1");
@@ -98,15 +96,9 @@ Rcpp::List si_pcr_cpp(const arma::mat& Y_pre_co,
     S_k_inv(l) = (S_k(l) > tol_si) ? (1.0 / S_k(l)) : 0.0;
   arma::mat Pinv = U_k * arma::diagmat(S_k_inv) * V_k.t();
 
-  // Compute weights and counterfactuals for each treated unit
-  arma::mat W(N_co, N_tr);
-  arma::mat Y_hat(T_post, N_tr);
-
-  for (int i = 0; i < N_tr; i++) {
-    arma::vec w_i    = Pinv * Y_pre_tr.col(i);  // N_co x 1
-    W.col(i)         = w_i;
-    Y_hat.col(i)     = Y_post_co * w_i;          // T_post x 1
-  }
+  // Weights and counterfactuals for all treated units at once
+  arma::mat W     = Pinv * Y_pre_tr;   // N_co x N_tr
+  arma::mat Y_hat = Y_post_co * W;     // T_post x N_tr
 
   return Rcpp::List::create(
     Rcpp::Named("W")     = W,

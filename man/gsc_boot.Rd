@@ -19,8 +19,9 @@ gsc_boot(fit, B = 499L, alpha = 0.05, seed = NULL)
 A list with:
 \itemize{
 \item \code{p_value}:   Two-sided p-value: mean(|ATT*| >= |ATT_obs|)
-\item \code{ci_lower}:  Lower bound of (1-alpha)*100\% bootstrap CI
-\item \code{ci_upper}:  Upper bound of (1-alpha)*100\% bootstrap CI
+\item \code{ci_lower}:  Lower bound of the (1-alpha)*100\% CI for the ATT,
+\code{ATT_obs - q(1 - alpha/2)} where \code{q} are quantiles of \code{boot_dist}
+\item \code{ci_upper}:  Upper bound, \code{ATT_obs - q(alpha/2)}
 \item \code{se}:        Bootstrap standard error
 \item \code{boot_dist}: Numeric vector of length B (bootstrap ATT* values)
 \item \code{att_obs}:   Observed ATT from the original fit

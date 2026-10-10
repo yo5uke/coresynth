@@ -3,9 +3,7 @@
 #include <chrono>
 #include <random>
 #include <vector>
-#ifdef _OPENMP
-#include <omp.h>
-#endif
+#include "threads.h"
 
 // [[Rcpp::depends(RcppArmadillo)]]
 
@@ -1122,8 +1120,11 @@ static arma::vec scm_multistart_core(const arma::mat& X0, const arma::vec& X1,
 #else
   const bool spawn_team = false;
 #endif
+  // cs_num_threads() reads R state, so only the thread that spawns the team
+  // (the R main thread) may call it.
+  const int n_threads = spawn_team ? cs_num_threads() : 1;
 
-  #pragma omp parallel for schedule(dynamic, 1) if(spawn_team)
+  #pragma omp parallel for schedule(dynamic, 1) if(spawn_team) num_threads(n_threads)
   for (int qi = 0; qi < n_cand; qi++) {
     try {
       slots[qi] = scm_ms_pipeline(X0, X1, Z0_eval, Z1_eval, max_iter, tol,
@@ -1181,11 +1182,12 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
   W_out.assign(N, arma::vec());
   ok_out.assign(N, 0);
   if (N == 0) return;
+  const int n_threads = cs_num_threads();
 
   // Single predictor: the multi-start search is vacuous (see
   // scm_multistart_core), so every donor reduces to one inner QP.
   if (X0d[0].n_rows == 1) {
-    #pragma omp parallel for schedule(dynamic, 1)
+    #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
     for (int d = 0; d < N; d++) {
       try {
         arma::vec V = arma::ones<arma::vec>(1);
@@ -1209,7 +1211,7 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
   std::vector<std::vector<arma::uword>> cand(N);
   std::vector<char>   screened(N, 0);
   std::vector<double> screen_cost(N, 0.0);
-  #pragma omp parallel for schedule(dynamic, 1)
+  #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
   for (int d = 0; d < N; d++) {
     try {
       auto t0 = std::chrono::steady_clock::now();
@@ -1246,7 +1248,7 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
   const int n_task = (int)task_d.size();
   std::vector<scm_ms_result> res(n_task);
 
-  #pragma omp parallel for schedule(dynamic, 1)
+  #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
   for (int t = 0; t < n_task; t++) {
     try {
       const int d = task_d[t];

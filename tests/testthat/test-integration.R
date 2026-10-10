@@ -6263,3 +6263,63 @@ test_that("the wild bootstrap follows Otsu & Rai (2017, Eq. 9)", {
   # (the shifted panel is refitted, so equal up to the block solver's tolerance)
   expect_equal(inf_s$se, inf$se, tolerance = 1e-4)
 })
+
+test_that("scm_fit() rejects transformed outcome or treatment terms", {
+  # The columns are read from `data` by name, so log(y) used to be fitted as y.
+  expect_error(scm_fit(log(y) ~ d | id + time, data = panel, method = "sdid"),
+               "outcome must be a column name")
+  expect_error(scm_fit(y ~ I(d > 0) | id + time, data = panel, method = "sdid"),
+               "treatment must be a column name")
+  dat <- panel; dat$log_y <- log(dat$y + 100)
+  expect_silent(scm_fit(log_y ~ d | id + time, data = dat, method = "sdid"))
+})
+
+test_that("gsc_boot() centres its interval on the estimate (Xu 2017 Alg. 2)", {
+  fit  <- scm_fit(y ~ d | id + time, data = panel, method = "gsc", r = 2)
+  boot <- gsc_boot(fit, B = 59L, seed = 3L)
+  q <- quantile(boot$boot_dist, c(0.025, 0.975), names = FALSE, na.rm = TRUE)
+  # the replicates are draws of the estimation error under no effect
+  expect_equal(boot$ci_lower, fit$estimate - q[2])
+  expect_equal(boot$ci_upper, fit$estimate - q[1])
+  expect_true(boot$ci_lower < fit$estimate && fit$estimate < boot$ci_upper)
+})
+
+test_that("placebo results do not depend on the thread count", {
+  fit_scm  <- suppressMessages(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm"))
+  fit_sdid <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  run <- function(n) {
+    old <- options(coresynth.threads = n)
+    on.exit(options(old))
+    list(scm  = mspe_ratio_pval(fit_scm)$placebo_effects,
+         sdid = sdid_inference(fit_sdid, "placebo")$placebo_effects)
+  }
+  expect_identical(run(1L), run(2L))
+})
+
+test_that("the diagonal-R Kalman gain matches the direct form", {
+  set.seed(5)
+  N <- 12L; TT <- 15L; r <- 2L
+  Y <- matrix(rnorm(N * TT), N, TT)
+  Y[1:2, 11:15] <- NA                       # treated post cells
+  W <- matrix(rnorm(N * r), N, r)
+  A <- diag(0.9, r); C <- c(0.1, -0.1); Q <- diag(0.2, r)
+  R_diag  <- diag(runif(N, 0.5, 1.5))
+  # numerically the same matrix, but no longer diagonal: takes the direct form
+  R_dense <- R_diag; R_dense[1, 2] <- R_dense[2, 1] <- 1e-300
+  ks_fast <- kalman_smoother_cpp(Y, W, A, C, Q, R_diag, rep(0, r), diag(r))
+  ks_ref  <- kalman_smoother_cpp(Y, W, A, C, Q, R_dense, rep(0, r), diag(r))
+  for (nm in c("z_smooth", "P_smooth", "P_cross", "z_upd"))
+    expect_equal(ks_fast[[nm]], ks_ref[[nm]], tolerance = 1e-10)
+})
+
+test_that("SDID unit weights solve the same QP with or without forming Q", {
+  set.seed(9)
+  Y_pre <- matrix(rnorm(8 * 40), 8, 40)    # wide: T_pre < N_co
+  y_tr  <- rnorm(8)
+  zeta2 <- 0.3
+  w  <- sdid_unit_weights_cpp(Y_pre, y_tr, zeta2)
+  Q  <- crossprod(Y_pre) + diag(zeta2 * nrow(Y_pre), ncol(Y_pre))
+  w_ref <- solve_simplex_qp(Q, crossprod(Y_pre, y_tr))
+  expect_equal(drop(w), drop(w_ref), tolerance = 1e-8)
+})

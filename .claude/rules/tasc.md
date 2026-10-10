@@ -12,6 +12,8 @@ EM アルゴリズム（E-step: カルマンフィルタ + RTS スムーザ、M-
 
 **状態次元 `r` は固定 2**: GSC/MC/SI は論文のルールでデータ駆動選択するが、TASC は状態空間モデルの状態次元が別物で、論文の選択規則をまだ確認できていない。保留中。
 
+**カルマンゲインは R 対角なら r×r で解く**（`kalman_smoother_cpp`）: push-through 恒等式 `P W'(W P W' + R)⁻¹ = (I + P W'R⁻¹W)⁻¹ P W'R⁻¹` で N×N の逆行列を避ける（N=200 で 3.9s→0.34s、推定値は 10 桁一致）。EM は常に対角 R を渡すが、一般の R が来たら直接形にフォールバックする。
+
 **M-step（W・R）の注意**: 処置ユニットは事後期間が NA のため、OLS 更新は **per-unit ループ**で観測済み時点のみを使う必要がある（Shumway-Stoffer missing-data EM 準拠）。全 T 期間を分母に使うと処置ユニットの W が T_pre/T 倍にバイアスされ ATT を過大推定する。
 
 **`Y_hat` の規約**: TASC だけ `Y_hat` が T×N の**全ユニット**行列（GSC は `Y_tr_hat`、MC は処置列のみを返す）。**消費側が処置列を選ぶ**のが正しい規約 — `synthetic_outcomes()`・`export_json()` は `idx_tr` 列だけを使う。全ユニット平均を使うと plot/augment/export の表示が壊れる（ATT 自体は per-unit gap 由来のため影響しない）。

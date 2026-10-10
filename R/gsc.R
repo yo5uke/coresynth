@@ -388,8 +388,9 @@ fit_gsc_cpp <- function(
 #' @param seed  RNG seed for reproducibility (default NULL).
 #' @return A list with:
 #'   * `p_value`:   Two-sided p-value: mean(|ATT*| >= |ATT_obs|)
-#'   * `ci_lower`:  Lower bound of (1-alpha)*100% bootstrap CI
-#'   * `ci_upper`:  Upper bound of (1-alpha)*100% bootstrap CI
+#'   * `ci_lower`:  Lower bound of the (1-alpha)*100% CI for the ATT,
+#'     `ATT_obs - q(1 - alpha/2)` where `q` are quantiles of `boot_dist`
+#'   * `ci_upper`:  Upper bound, `ATT_obs - q(alpha/2)`
 #'   * `se`:        Bootstrap standard error
 #'   * `boot_dist`: Numeric vector of length B (bootstrap ATT* values)
 #'   * `att_obs`:   Observed ATT from the original fit
@@ -512,12 +513,16 @@ gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
   }
 
   valid <- boot_dist[!is.na(boot_dist)]
-  ci <- quantile(valid, c(alpha / 2, 1 - alpha / 2), names = FALSE)
+  # Each replicate is generated with no effect, so ATT* is a draw of the
+  # estimation error ATT_hat - ATT (Xu 2017, Algorithm 2). The interval for
+  # the ATT therefore subtracts the error quantiles from the estimate; the raw
+  # quantiles of ATT* are an acceptance region around zero, not a CI.
+  err_q <- quantile(valid, c(alpha / 2, 1 - alpha / 2), names = FALSE)
 
   list(
     p_value = mean(abs(valid) >= abs(att_obs)),
-    ci_lower = ci[1],
-    ci_upper = ci[2],
+    ci_lower = att_obs - err_q[2],
+    ci_upper = att_obs - err_q[1],
     se = sd(valid),
     boot_dist = boot_dist,
     att_obs = att_obs

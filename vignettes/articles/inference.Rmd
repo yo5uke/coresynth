@@ -129,7 +129,9 @@ glance(inf_boot)
 
 ## GSC — parametric and non-parametric
 
-*Xu (2017).* `gsc_boot()` is a parametric bootstrap under H0 (sharp fits only);
+*Xu (2017).* `gsc_boot()` is a parametric bootstrap under H0 (sharp fits only):
+its replicates are draws of the estimation error, so the interval is the
+estimate minus their quantiles;
 `gsc_inference()` offers non-parametric bootstrap / jackknife.
 
 ```{r gsc-inf}

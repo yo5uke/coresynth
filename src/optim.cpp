@@ -26,6 +26,61 @@ arma::vec proj_simplex(arma::vec y) {
   return x;
 }
 
+// Accelerated projected gradient (FISTA) on the unit simplex, shared by the
+// dense and factored QP entry points below. `grad(y)` returns Q y - c; `L` is
+// an upper bound on lambda_max(Q). Pure Armadillo, so it is safe inside
+// OpenMP threads.
+template <typename Grad>
+static arma::vec fista_simplex_core(Grad grad_fn, arma::vec x, double L,
+                                    int max_iter, double tol) {
+  if (L < 1e-14) L = 1.0;  // guard against degenerate Q
+  double t = 1.0 / L;
+
+  arma::vec y = x;
+  double t_acc = 1.0;
+
+  for (int iter = 0; iter < max_iter; iter++) {
+    arma::vec x_prev = x;
+
+    // Gradient step
+    arma::vec grad = grad_fn(y);
+
+    // Projection step
+    x = proj_simplex(y - t * grad);
+
+    // Adaptive restart (O'Donoghue & Candes 2015, gradient scheme): when the
+    // momentum direction disagrees with the descent direction, the
+    // acceleration is overshooting and slowing convergence on ill-conditioned
+    // Q (the dominant cost in SCM, where Q = X0'VX0 is highly collinear).
+    // Resetting t_acc removes the stale momentum. This only changes the path
+    // to the optimum, not the optimum itself.
+    if (arma::dot(grad, x - x_prev) > 0.0) {
+      t_acc = 1.0;
+    }
+
+    // FISTA acceleration
+    double t_acc_next = (1.0 + std::sqrt(1.0 + 4.0 * t_acc * t_acc)) / 2.0;
+    y = x + ((t_acc - 1.0) / t_acc_next) * (x - x_prev);
+    t_acc = t_acc_next;
+
+    if (arma::norm(x - x_prev, 2) < tol) {
+      break;
+    }
+  }
+
+  return x;
+}
+
+// Largest eigenvalue of a symmetric matrix. Symmetrise before eig_sym: when
+// the matrix is a rank-deficient Gram (e.g. Q = X0'VX0 with fewer rows than
+// columns), floating-point errors in the near-zero eigenspace can make it
+// look slightly asymmetric to Armadillo's strict check.
+static double lambda_max_sym(const arma::mat& M) {
+  arma::mat M_sym = (M + M.t()) / 2.0;
+  arma::vec eigval = arma::eig_sym(M_sym);
+  return arma::max(eigval);
+}
+
 // Projected Gradient Descent for Quadratic Programming on the unit simplex
 // min 0.5 * x^T Q x - c^T x
 // s.t. sum(x) = 1, x >= 0
@@ -53,86 +108,42 @@ arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter 
   // eig_sym is O(n^3) but gives the tightest step size, minimising FISTA iterations.
   // norm_inf is cheaper to compute but yields a smaller step → more iterations;
   // benchmarking shows eig_sym wins overall for the n <= 100 range typical in SCM.
-  // Symmetrise before eig_sym: when X0 has fewer rows than columns (k < N_co),
-  // Q = X0'VX0 is rank-deficient; floating-point errors in the near-zero
-  // eigenspace can make Q appear slightly asymmetric to Armadillo's strict check.
   double L = lipschitz;
-  if (L <= 0.0) {
-    arma::mat Q_sym = (Q + Q.t()) / 2.0;
-    arma::vec eigval = arma::eig_sym(Q_sym);
-    L = arma::max(eigval);
-  }
-  if(L < 1e-14) L = 1.0;  // guard against degenerate Q
-  double t = 1.0 / L;
-  
-  arma::vec y = x;
-  double t_acc = 1.0;
+  if (L <= 0.0) L = lambda_max_sym(Q);
 
-  for(int iter = 0; iter < max_iter; iter++) {
-    arma::vec x_prev = x;
-
-    // Gradient step
-    arma::vec grad = Q * y - c;
-
-    // Projection step
-    x = proj_simplex(y - t * grad);
-
-    // Adaptive restart (O'Donoghue & Candes 2015, gradient scheme): when the
-    // momentum direction disagrees with the descent direction, the
-    // acceleration is overshooting and slowing convergence on ill-conditioned
-    // Q (the dominant cost in SCM, where Q = X0'VX0 is highly collinear).
-    // Resetting t_acc removes the stale momentum. This only changes the path
-    // to the optimum, not the optimum itself.
-    if (arma::dot(grad, x - x_prev) > 0.0) {
-      t_acc = 1.0;
-    }
-
-    // FISTA acceleration
-    double t_acc_next = (1.0 + std::sqrt(1.0 + 4.0 * t_acc * t_acc)) / 2.0;
-    y = x + ((t_acc - 1.0) / t_acc_next) * (x - x_prev);
-    t_acc = t_acc_next;
-
-    if(arma::norm(x - x_prev, 2) < tol) {
-      break;
-    }
-  }
-
-  return x;
+  return fista_simplex_core(
+    [&](const arma::vec& y) -> arma::vec { return Q * y - c; },
+    x, L, max_iter, tol);
 }
 
-// Low-rank FISTA for inner SCM QP when k < N_co/2.
-// Solves min_{w in Delta} ||B*w - b||^2  (B = sqrt(V)*X0: k x N_co)
-// without forming the N_co x N_co matrix Q = B'B explicitly.
-// Lipschitz constant: lambda_max(B*B') via eig_sym(k x k) [O(k^3)] vs O(N_co^3).
-// Gradient per iter: B'*(B*y - b) [O(k*N_co)] vs Q*y [O(N_co^2)].
-// Only activated when 2*k < N_co (guarantees per-iteration speedup).
-arma::vec solve_simplex_qp_lr(const arma::mat& B, const arma::vec& b,
-                               int max_iter, double tol) {
-  int N_co = B.n_cols;
-  arma::vec x = arma::ones<arma::vec>(N_co) / N_co;
+// Ridge-penalised least squares on the unit simplex:
+//   min_w 0.5 ||A w||^2 + 0.5 * ridge * ||w||^2 - (A'b)'w,  w in simplex,
+// i.e. solve_simplex_qp with Q = A'A + ridge * I and c = A'b, without forming
+// Q when A is wide. The SDID weight problems have this shape, and the unit
+// weights are wide (T_pre rows, N_co columns): there Q is N_co x N_co of rank
+// at most T_pre, so the factor gives the gradient A'(A y) + ridge * y in
+// O(T_pre N_co) instead of O(N_co^2), and the Lipschitz constant
+// lambda_max(AA') + ridge from a T_pre x T_pre eigenproblem instead of an
+// O(N_co^3) one. The FISTA iterates are the same as for the dense form up to
+// round-off. Pure Armadillo (OpenMP-safe); starts from the uniform vector.
+arma::vec solve_simplex_ridge_ls(const arma::mat& A, const arma::vec& b,
+                                 double ridge, int max_iter, double tol) {
+  const arma::uword n = A.n_cols;
+  arma::vec x = arma::ones(n) / n;
+  arma::vec c = A.t() * b;
 
-  arma::mat BBt     = B * B.t();                    // k x k
-  arma::mat BBt_sym = (BBt + BBt.t()) / 2.0;        // symmetry guard
-  arma::vec eigval  = arma::eig_sym(BBt_sym);
-  double L = arma::max(eigval);
-  if (L < 1e-14) L = 1.0;
-  double t = 1.0 / L;
-
-  arma::vec y = x;
-  double t_acc = 1.0;
-
-  for (int iter = 0; iter < max_iter; iter++) {
-    arma::vec x_prev = x;
-    arma::vec grad   = B.t() * (B * y - b);         // O(k * N_co)
-    x = proj_simplex(y - t * grad);
-    // Adaptive restart (gradient scheme) -- see solve_simplex_qp for rationale.
-    if (arma::dot(grad, x - x_prev) > 0.0) {
-      t_acc = 1.0;
-    }
-    double t_acc_next = (1.0 + std::sqrt(1.0 + 4.0 * t_acc * t_acc)) / 2.0;
-    y = x + ((t_acc - 1.0) / t_acc_next) * (x - x_prev);
-    t_acc = t_acc_next;
-    if (arma::norm(x - x_prev, 2) < tol) break;
+  if (A.n_rows >= n) {
+    arma::mat Q = A.t() * A;
+    Q.diag() += ridge;
+    return fista_simplex_core(
+      [&](const arma::vec& y) -> arma::vec { return Q * y - c; },
+      x, lambda_max_sym(Q), max_iter, tol);
   }
-  return x;
+
+  double L = lambda_max_sym(A * A.t()) + ridge;
+  return fista_simplex_core(
+    [&](const arma::vec& y) -> arma::vec {
+      return A.t() * (A * y) + ridge * y - c;
+    },
+    x, L, max_iter, tol);
 }

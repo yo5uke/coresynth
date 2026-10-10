@@ -3,7 +3,9 @@
 // [[Rcpp::depends(RcppArmadillo)]]
 
 // Declaration of the solver from optim.cpp
-arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter = 10000, double tol = 1e-6, Rcpp::Nullable<Rcpp::NumericVector> x0 = R_NilValue, double lipschitz = -1.0);
+arma::vec solve_simplex_ridge_ls(const arma::mat& A, const arma::vec& b,
+                                 double ridge, int max_iter = 10000,
+                                 double tol = 1e-6);
 
 //' Calculate SDID Unit Weights (omega)
 //'
@@ -23,13 +25,9 @@ arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pr
   int T_pre = Y_pre.n_rows;
 
   // Q = Y_pre^T * Y_pre + zeta^2 * T_pre * I   (Eq. 5 in Arkhangelsky et al. 2021)
-  arma::mat Q = Y_pre.t() * Y_pre;
-  Q.diag() += zeta2 * T_pre;   // <-- paper-correct scaling
-
   // c = Y_pre^T * Y_tr
-  arma::vec c = Y_pre.t() * Y_tr_pre;
-
-  return solve_simplex_qp(Q, c);
+  // Q is never formed when N_co > T_pre (see solve_simplex_ridge_ls).
+  return solve_simplex_ridge_ls(Y_pre, Y_tr_pre, zeta2 * T_pre);
 }
 
 //' Calculate SDID Time Weights (lambda)
@@ -55,12 +53,10 @@ arma::vec sdid_time_weights_cpp(const arma::mat& Y_pre_co,
   int N_co  = Y_pre_co.n_cols;
 
   // QP: min ||Y_pre_co^T lambda - Y_post_target||^2 + zeta_t^2 * N_co * ||lambda||^2
-  arma::mat Q = Y_pre_co * Y_pre_co.t();   // T_pre x T_pre
-  Q.diag() += zeta_t * zeta_t * N_co;
-
-  arma::vec c = Y_pre_co * Y_post_target;  // T_pre x 1
-
-  return solve_simplex_qp(Q, c);
+  // i.e. Q = Y_pre_co Y_pre_co^T + zeta_t^2 N_co I (T_pre x T_pre),
+  //      c = Y_pre_co Y_post_target.
+  return solve_simplex_ridge_ls(Y_pre_co.t(), Y_post_target,
+                                zeta_t * zeta_t * N_co);
 }
 
 

@@ -1,8 +1,6 @@
 #include <RcppArmadillo.h>
 #include <vector>
-#ifdef _OPENMP
-#include <omp.h>
-#endif
+#include "threads.h"
 
 // [[Rcpp::depends(RcppArmadillo)]]
 
@@ -43,9 +41,13 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
                            const arma::vec& time_weights, double zeta2) {
   int N_co  = Y_pre.n_cols;
   arma::vec placebo_effects(N_co);
+  const int n_threads = cs_num_threads();
 
-  #pragma omp parallel for schedule(dynamic, 1)
+  #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
   for(int i = 0; i < N_co; i++) {
+    // Exceptions must not escape the OpenMP region (std::terminate would take
+    // the R session down); a failed solve marks this placebo NaN.
+    try {
     // Pseudo-treated unit
     arma::vec y_tr_pre  = Y_pre.col(i);
     arma::vec y_tr_post = Y_post.col(i);
@@ -72,6 +74,9 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
     double synth_post_mean = arma::dot(unit_w, co_post_mean);
 
     placebo_effects(i) = (tr_post_mean - tr_pre_wt) - (synth_post_mean - synth_pre_wt);
+    } catch (...) {
+      placebo_effects(i) = arma::datum::nan;
+    }
   }
 
   return placebo_effects;
@@ -119,8 +124,13 @@ Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
     for (int i = 0; i < zri.size(); i++) zr(i) = (arma::uword)(zri[i] - 1);
   }
 
-  #pragma omp parallel for schedule(dynamic, 1)
+  const int n_threads = cs_num_threads();
+
+  #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
   for (int i = 0; i < N_co; i++) {
+    // Exceptions must not escape the OpenMP region; a failed solver marks
+    // this unit NaN (same contract as scm_placebo_x_cpp).
+    try {
     arma::vec y_pre_i  = Y_pre.col(i);
     arma::vec y_post_i = Y_post.col(i);
     arma::uvec donors  = all_idx(arma::find(all_idx != (arma::uword)i));
@@ -155,6 +165,12 @@ Rcpp::List scm_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
     mspe_post(i) = arma::mean(arma::square(y_post_i - synth_post));
     effects(i)   = arma::mean(y_post_i - synth_post);
     gaps.col(i)  = arma::join_cols(y_pre_i - synth_pre, y_post_i - synth_post);
+    } catch (...) {
+      mspe_pre(i)  = arma::datum::nan;
+      mspe_post(i) = arma::datum::nan;
+      effects(i)   = arma::datum::nan;
+      gaps.col(i).fill(arma::datum::nan);
+    }
   }
 
   return Rcpp::List::create(
@@ -279,7 +295,9 @@ Rcpp::List scm_placebo_x_cpp(const arma::mat& X0,
     );
   }
 
-  #pragma omp parallel for schedule(dynamic, 1)
+  const int n_threads = cs_num_threads();
+
+  #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
   for (int i = 0; i < N_co; i++) {
     arma::uvec donors = all_idx(arma::find(all_idx != (arma::uword)i));
     // Exceptions must not escape the OpenMP region; a failed solver marks

@@ -1,3 +1,39 @@
+# coresynth 1.1.0
+
+## New features
+
+- **`sdid_event_study()` computes period-by-period SDID treatment effects with
+  cluster or unit bootstrap inference.** For a sharp `method = "sdid"` fit, it
+  returns the event-study series aligned on the `lambda`-weighted pre-treatment
+  gap -- so the post-treatment mean of the period effects equals `fit$estimate`
+  (the ATT) -- alongside bootstrap standard errors and both normal-approximation
+  and percentile confidence intervals for every period and for the overall ATT
+  from the same bootstrap draws:
+
+  - `cluster` accepts a column name in `data` (or one-sided formula `~ col`) or
+    a named vector keyed by unit ID (positional unnamed vectors are rejected so
+    unit-to-cluster alignment never depends on row order). When `cluster = NULL`
+    (default), individual units are resampled.
+  - Each bootstrap draw resamples **both treated and control clusters/units**
+    with replacement, treats duplicated units as distinct columns, and
+    re-estimates `sigma_hat`, `zeta2`, unit weights `omega`, and time weights
+    `lambda`. Draws in which either the treated or control group is empty (or
+    has fewer than two controls) are discarded, and `n_boot_valid` and
+    `n_boot_dropped` report the valid and discarded counts.
+  - `boot_gaps` (`n_boot_valid x T` matrix) and `boot_att` (length
+    `n_boot_valid` vector) store the replication draws for full reproducibility
+    with `seed`.
+  - `plot()`, `plot_data()`, `tidy()`, and `glance()` methods format
+    and plot the event-study series with point estimates, confidence intervals,
+    zero and treatment reference lines, and observed-period axis breaks that
+    handle non-consecutive time indices cleanly.
+
+- **`sdid_inference()` documents and enforces its control-only bootstrap
+  scope.** Its `method = "bootstrap"` resamples control units only with the
+  treated mean series and `zeta2` held fixed; passing `cluster` to
+  `sdid_inference()` now raises an informative error pointing to
+  `sdid_event_study()` (and notes when a non-bootstrap `method` was selected).
+
 # coresynth 1.0.1
 
 ## Bug fixes

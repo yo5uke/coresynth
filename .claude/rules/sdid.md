@@ -14,6 +14,13 @@ $$\hat\tau^{sdid} = (\bar{Y}_{tr,post} - \hat\lambda^\top Y_{tr,pre}) - (\hat\om
 
 `sdid_unit_weights_cpp`/`sdid_time_weights_cpp` は `solve_simplex_ridge_ls()`（`optim.cpp`）で `min ½‖Aw‖² + ½ρ‖w‖² − (A'b)'w` を解く。A が横長（ユニット重み: T_pre 行 × N_co 列）なら N×N の Gram を作らず勾配 `A'(Ay) + ρy − c` と `λ_max(AA') + ρ` で FISTA を回す — 反復列は密形式と丸め誤差を除いて同一。N_co=300 で placebo/jackknife が 4〜8 倍速。
 
+## bootstrap の 2 系統
+
+- **`sdid_inference(method = "bootstrap")`**: 統制ユニットだけを復元抽出し、処置群平均系列と ζ² は元の推定値に固定する。`cluster` は受け付けず、渡すと `sdid_event_study()` へ誘導するエラーになる
+- **`sdid_event_study()`**（sharp 限定）: 処置群と統制群の両方をユニット単位またはクラスタ単位で復元抽出する。重複して引かれたユニットは別の列（新しい ID）として扱い、σ̂²・ζ²（`scm_fit()` で指定されていなければ）・ω・λ を毎回推定し直す。処置群が空、または統制が 2 未満の draw は捨てて `n_boot_dropped` に数える。共変量があれば抽出後のパネルで `.sdid_partial_out_staggered()` からやり直す。各 draw は「抽出したデータフレームに `scm_fit()` をかけ直した結果」と丸め誤差の範囲で一致する（テストで照合済み）。期間別効果は λ 整列済みのギャップで、事後平均が τ̂ に一致する
+- クラスタの抽出順序は `levels(factor(列))`。`split(data, data[[cluster]])` と同じ順序なので、同じ seed なら手書きのループと同じ draw 列になる。数値の ID を文字列のまま `sort()` すると `"10" < "2"` の順になり、ずれる
+- 共変量の経路でしか使わない `Y_raw`・`X_arr` は、共変量なしの fit では `NULL`
+
 ## staggered placebo
 
 never-treated 集合は全コホートの `idx_co` の共通部分（既定の `"never_treated"` では全コホート共通。非推奨の `"clean"` では future-treated が後期コホートの `idx_co` に含まれないため自然に除外される）。各コホートで `sdid_placebo_cpp`（λ・ζ² 固定）を呼び、加重平均でグローバル placebo ATT を作る。p 値はこの置換分布から計算する。OpenMP 並列化の設計は `scm.md` の placebo 節と同じパターンを共有している。

@@ -20,7 +20,7 @@ $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{
 | 手法 | sharp 推論 | staggered 推論 |
 |---|---|---|
 | SCM | `mspe_ratio_pval()` | `scm_inference()`（jackknife 既定 / wild bootstrap） |
-| SDID | `sdid_inference()`（4 method 全て） | 同左 |
+| SDID | `sdid_inference()`（4 method 全て）/ `sdid_event_study()`（期間別効果＋クラスタ/ユニット bootstrap） | `sdid_inference()` のみ |
 | GSC | `gsc_boot()` / `gsc_inference()` | `gsc_inference()` |
 | MC | — | — |
 | TASC | — | — （本パッケージで唯一、推論ツール自体なし） |

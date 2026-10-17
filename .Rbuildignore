@@ -16,3 +16,4 @@
 ^pkgdown$
 ^vignettes/articles$
 ^\.agents$
+^AGENTS\.md$

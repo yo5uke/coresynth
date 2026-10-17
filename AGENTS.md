@@ -1,17 +1,10 @@
-# coresynth — CLAUDE.md
+# coresynth
 
 **coresynth** は合成コントロール法（SCM）とその派生手法（SDID/GSC/MC/TASC/SI）を RcppArmadillo で高速実装した R パッケージ。全手法を統一的な Formula インターフェース（`scm_fit()`）で提供し、最適化（QP・SVD・カルマンフィルタ）は C++ 実装。
 
-手法ごとの論文根拠・アルゴリズム決定事項は `.claude/rules/<method>.md`（該当 R/C++ ファイルを開くと自動読込）に分離。ここには**複数ファイル・複数手法を横断しないと分からないこと**だけを書く。単一ファイルを読めば分かること（ディレクトリ構成・関数一覧など）は書かない。
+手法ごとの論文根拠・アルゴリズム決定事項は `.claude/rules/<method>.md`（`scm`/`sdid`/`gsc`/`mc`/`tasc`/`si`/`scm-design`/`conformal`）にある。**該当手法の R/C++ を編集・レビューする前に必ず読む**。横断ルールは `object-model.md`（fit オブジェクトのクラス構造・アクセサ・staggered 推論の共通ロジック）、`plot.md`、`input-validation.md`、`versioning.md`。ここには**複数ファイル・複数手法を横断しないと分からないこと**だけを書く。
 
-| 手法 | 詳細 | 手法 | 詳細 |
-|---|---|---|---|
-| SCM | `.claude/rules/scm.md` | TASC | `.claude/rules/tasc.md` |
-| SDID | `.claude/rules/sdid.md` | SI | `.claude/rules/si.md` |
-| GSC | `.claude/rules/gsc.md` | SCM-Design | `.claude/rules/scm-design.md` |
-| MC | `.claude/rules/mc.md` | Conformal Inference | `.claude/rules/conformal.md`（`scm`/`sdid`/`gsc`/`mc`/`si` の sharp fit に対応） |
-
-横断的ルール: `.claude/rules/object-model.md`（fit オブジェクトのクラス構造・アクセサ・staggered 推論の共通ロジック）、`.claude/rules/plot.md`、`.claude/rules/input-validation.md`、`.claude/rules/versioning.md`。随時参照: `.claude/docs/theory-crosscheck.md`（論文照合表・他パッケージとの照合基準値）、`.claude/docs/performance.md`（ベンチマーク）、`.claude/docs/backlog.md`（保留中の項目・文献バックログ）。論文 PDF/MD は `papers/`（gitignore）。
+自動では読み込まれない参照資料: `.claude/docs/theory-crosscheck.md`（論文照合表・他パッケージとの基準値）、`.claude/docs/performance.md`（ベンチマーク）、`.claude/docs/backlog.md`（保留項目）。論文 PDF/MD は `papers/`（gitignore）。
 
 ---
 
@@ -42,7 +35,7 @@ $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{
 - **`arma::solve_opts::fast` は使用禁止** — 本環境（Windows + Rtools45）でクラッシュ
 - Armadillo `vec` は R 側で **N×1 行列**になる → R 層で `as.numeric()` 正規化
 - `paste0("Donor ", integer(0))` は zero-length が `""` 扱いになり長さ 1 の `"Donor "` を返す → zero-length を保持する `sprintf()` を使う
-- `R CMD INSTALL` 失敗時は旧版に**サイレントロールバック**される。ビルド・テストは `build-install` skill を使う
+- `R CMD INSTALL` 失敗時は旧版に**サイレントロールバック**される。ビルド手順は下記
 - **plot のタイトル・サブタイトルに非 ASCII 文字を入れない**（ギリシャ文字・Unicode マイナス記号等）— UTF-8 でないロケールで `R CMD check --run-donttest` がクラッシュする。マイナスは ASCII ハイフン、ギリシャ文字は綴り（`lambda`/`omega`）で代替する
 - **`cohort_fits` から新しいフィールドを読むときは `[[ ]]`**（`$` は部分マッチする — SDID の `unit_weights` に `unit` が、GSC の `r_cv` に `r` が無言で吸われる）
 - **手法間の解の一致を検証する DGP**: 処置ユニットの予測子ベクトルがドナー凸包の外に出る設計だと、予測子経路の違いが結果に出ず「一致した」ように見える。因子モデル DGP ＋手計算での突き合わせで判定する
@@ -54,20 +47,19 @@ $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{
 
 ## ビルド・テスト
 
-`build-install` skill を使う（Windows の DLL ロック解除・サイレントロールバック回避の手順込み）。R は 4.6.1（`bin\` 直下の実行ファイル）。
-
-新しいエクスポート関数・S3 method を追加したら `pkgdown-check` skill でコミット前に検証する。
+手順は `.claude/skills/build-install/SKILL.md`（Windows の DLL ロック解除・サイレントロールバック回避込み）。R は 4.6.1（`bin\` 直下の実行ファイル）。新しい export 関数・S3 method を追加したら、コミット前に `.claude/skills/pkgdown-check/SKILL.md` で `_pkgdown.yml` の reference index を検証する（漏れると pkgdown デプロイが全体停止する）。
 
 ---
 
 ## コミット
 
-明示的な指示があるまでコミット・プッシュは行わない。
+明示的な指示があるまでコミット・プッシュは行わない。作業後は変更を残して報告のみ。
 
 - 件名: Conventional Commits・英語・命令形（`type: summary` / `type(scope): summary`）
 - 本文: 英語。「何をしたか」ではなく「なぜ」を書く。自明な変更は本文省略可
 - AI ツールの署名・Co-Authored-By は入れない
-- バージョン番号は Claude に委任（破壊的変更・CRAN 提出時期はユーザーに確認）。`Version:` を触る前に **CRAN 現行版を実際に参照**。詳細は `.claude/rules/versioning.md`
+- バージョン番号はエージェントが判断してよい（破壊的変更・CRAN 提出時期はユーザーに確認）。`Version:` を触る前に **CRAN 現行版を実際に参照**。詳細は `.claude/rules/versioning.md`
+- CRAN 提出用 `.tar.gz` の作成・アップロードはユーザーが行う
 
 ---
 
@@ -76,7 +68,8 @@ $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{
 - C++ 関数名: `snake_case_cpp` サフィックス。R ラッパー: `fit_<method>_cpp()` が内部関数、`scm_fit()` が公開 API
 - 行列の次元規約: `T × N`（行=時間、列=ユニット）統一
 - テストは `tests/testthat/test-integration.R` に集約（オブジェクトモデルのみ `test-object-model.R`）
-- コメント: 論文セクション参照は `§` でなく `S.`。開発履歴メモ（いつ・なぜ変更したか）はコメントや CLAUDE.md に書かず、コミットメッセージ・NEWS.md に書く
+- ggplot の `aes()` 変数は `utils::globalVariables()` に登録する
+- コメント: 論文セクション参照は `§` でなく `S.`。開発履歴メモ（いつ・なぜ変更したか）や知らなくても困らないことは書かない。履歴はコミットメッセージ・NEWS.md へ
 - `Config/roxygen2/version`（DESCRIPTION）を使う。`RoxygenNote:` が `devtools::document()` で消えるのは roxygen2 8.0.0 以降の正しい移行動作 — **復元しない**
 
 ---

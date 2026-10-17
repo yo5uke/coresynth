@@ -368,6 +368,7 @@ fit_sdid_cpp <- function(y, d, id, time,
     Y_work   <- po$Y_tilde
     beta_hat <- po$beta_hat
   } else {
+    X_arr    <- NULL
     Y_work   <- Y
     beta_hat <- numeric(0)
   }
@@ -390,27 +391,38 @@ fit_sdid_cpp <- function(y, d, id, time,
   Y_treat <- rowMeans(Y_work[, idx_tr, drop = FALSE])
 
   list(
-    method         = "sdid",
-    staggered      = FALSE,
-    unit_weights   = omega,
-    omega0         = mfit$omega0,
-    time_weights   = mfit$time_weights,
-    lambda0        = mfit$lambda0,
-    estimate       = mfit$estimate,
-    zeta2          = mfit$zeta2,
-    sigma2_hat     = mfit$sigma2_hat,
-    Y_synth        = Y_synth,
-    Y_treat        = Y_treat,
-    gap            = Y_treat - Y_synth,
-    times          = pan$times,
-    T_pre          = T_pre,
-    covariates     = covariates,
-    beta_hat       = beta_hat,
-    Y_co_pre       = Y_work[pre_rows,  idx_co, drop = FALSE],
-    Y_co_post      = Y_work[post_rows, idx_co, drop = FALSE],
-    Y_tr_pre_mean  = rowMeans(Y_work[pre_rows,  idx_tr, drop = FALSE]),
-    Y_tr_post_mean = rowMeans(Y_work[post_rows, idx_tr, drop = FALSE]),
-    N_tr           = N_tr
+    method          = "sdid",
+    staggered       = FALSE,
+    unit_weights    = omega,
+    omega0          = mfit$omega0,
+    time_weights    = mfit$time_weights,
+    lambda0         = mfit$lambda0,
+    estimate        = mfit$estimate,
+    zeta2           = mfit$zeta2,
+    zeta2_user      = zeta2,
+    zeta_t          = zeta_t,
+    sigma2_hat      = mfit$sigma2_hat,
+    Y_synth         = Y_synth,
+    Y_treat         = Y_treat,
+    gap             = Y_treat - Y_synth,
+    times           = pan$times,
+    T_pre           = T_pre,
+    covariates      = covariates,
+    beta_hat        = beta_hat,
+    Y_co_pre        = Y_work[pre_rows,  idx_co, drop = FALSE],
+    Y_co_post       = Y_work[post_rows, idx_co, drop = FALSE],
+    Y_tr_pre        = Y_work[pre_rows,  idx_tr, drop = FALSE],
+    Y_tr_post       = Y_work[post_rows, idx_tr, drop = FALSE],
+    Y_tr_pre_mean   = rowMeans(Y_work[pre_rows,  idx_tr, drop = FALSE]),
+    Y_tr_post_mean  = rowMeans(Y_work[post_rows, idx_tr, drop = FALSE]),
+    Y_raw           = if (use_cov) Y,
+    X_arr           = X_arr,
+    units           = pan$units,
+    id_var          = id_var,
+    idx_tr          = idx_tr,
+    idx_co          = idx_co,
+    N_tr            = N_tr,
+    n_treated       = N_tr
   )
 }
 
@@ -419,10 +431,19 @@ fit_sdid_cpp <- function(y, d, id, time,
 #' Inference for Synthetic Difference-in-Differences
 #'
 #' Computes standard errors and p-values for a SDID estimate using one of
-#' four methods, following Clarke et al. (2024): permutation placebo test
-#' (Algorithm 4), cluster bootstrap (Algorithm 2), leave-one-out jackknife
-#' (Algorithm 3), or (staggered fits only) a global jackknife across the
-#' unique control units of all cohorts.
+#' four methods: permutation placebo test (Clarke et al. 2024, Algorithm 4),
+#' control-unit bootstrap, leave-one-control-out jackknife (Algorithm 3), or
+#' (staggered fits only) a global jackknife across the unique control units of
+#' all cohorts.
+#'
+#' **What `method = "bootstrap"` resamples:** `sdid_inference()` resamples
+#' **control (donor) units only** with replacement, holding the treated mean
+#' series (`Y_tr_pre_mean`, `Y_tr_post_mean`) and the regularisation penalty
+#' `zeta2` fixed at their original-fit values. To resample **both treated and
+#' control units** (at the unit or cluster level, e.g. prefectures or states),
+#' re-estimating \eqn{\hat\sigma^2}, \eqn{\zeta^2}, \eqn{\hat\omega}, and \eqn{\hat\lambda} on
+#' every draw and obtaining period-by-period event-study confidence intervals
+#' alongside the ATT standard error, use [sdid_event_study()] instead.
 #'
 #' For `method = "placebo"`, the p-value is the permutation p-value, while
 #' the standard error is the dispersion of the placebo distribution
@@ -432,13 +453,17 @@ fit_sdid_cpp <- function(y, d, id, time,
 #' interpret it with caution when the donor pool is small.
 #'
 #' @param fit A `coresynth` object with `method = "sdid"` (sharp or staggered).
-#' @param method Inference method: `"placebo"` (permutation), `"bootstrap"`,
-#'   `"jackknife"`, or `"jackknife_global"` (staggered only).
+#' @param method Inference method: `"placebo"` (permutation), `"bootstrap"`
+#'   (resamples control units only; see Details and [sdid_event_study()] for
+#'   unit- or cluster-level resampling of all units), `"jackknife"`, or
+#'   `"jackknife_global"` (staggered only).
 #' @param n_boot Number of bootstrap replications (only for `method = "bootstrap"`).
 #' @param level Confidence level for the interval (all methods).
 #' @param alternative Direction of the alternative hypothesis: `"two.sided"`,
 #'   `"greater"`, or `"less"`.
 #' @param seed Integer seed for reproducibility (only for `method = "bootstrap"`).
+#' @param ... Not used. Passing `cluster` raises an error that points to
+#'   [sdid_event_study()]; any other argument is reported as unused.
 #'
 #' @return A list with:
 #' * `estimate`: The SDID point estimate.
@@ -451,6 +476,8 @@ fit_sdid_cpp <- function(y, d, id, time,
 #' * `placebo_effects`: Named vector of LOO placebo effects (placebo only).
 #' * `boot_ests`: Bootstrap estimate distribution (bootstrap only).
 #'
+#' @seealso [sdid_event_study()] for period-by-period event-study effects and
+#'   cluster (or unit) bootstrap resampling over both treated and control units.
 #' @export
 sdid_inference <- function(
   fit,
@@ -458,8 +485,25 @@ sdid_inference <- function(
   n_boot      = 200L,
   level       = 0.95,
   alternative = c("two.sided", "greater", "less"),
-  seed        = NULL
+  seed        = NULL,
+  ...
 ) {
+  dots <- list(...)
+  if ("cluster" %in% names(dots)) {
+    if (!identical(tryCatch(match.arg(method), error = function(e) NULL),
+                   "bootstrap")) {
+      stop("`cluster` applies only to bootstrap resampling, not method = \"",
+           method[1L], "\". Use sdid_event_study(fit, cluster = ...) for ",
+           "cluster bootstrap inference.", call. = FALSE)
+    }
+    stop("sdid_inference() does not accept `cluster` (its bootstrap resamples ",
+         "control units only). Use sdid_event_study(fit, cluster = ...) to ",
+         "resample clusters of treated and control units.", call. = FALSE)
+  }
+  if (length(dots) > 0L) {
+    stop("unused argument(s) in sdid_inference(): ",
+         paste(names(dots), collapse = ", "), ".", call. = FALSE)
+  }
   method      <- match.arg(method)
   alternative <- match.arg(alternative)
 
@@ -797,10 +841,547 @@ print.sdid_inference <- function(x, digits = 4, ...) {
   cat("  Estimate  :", round(x$estimate, digits), "\n")
   if (!is.null(x$se))
     cat("  SE        :", round(x$se, digits), "\n")
-  cat("  p-value   :", round(x$p_value, digits), "\n")
+  cat("  p-value   :", format.pval(x$p_value, digits = digits,
+                                   eps = 10^(-digits)), "\n")
   if (!is.null(x$ci_lower))
     cat("  CI        : [", round(x$ci_lower, digits), ", ",
         round(x$ci_upper, digits), "]\n", sep = "")
   cat("  Controls  :", x$n_controls, "\n")
   invisible(x)
 }
+
+# ── SDID Event Study with Cluster / Unit Bootstrap ───────────────────────────
+
+# Resolve cluster membership for each panel unit (in fit$units order).
+# Accepts ONLY:
+#   - NULL: unit-level resampling (each unit is its own cluster)
+#   - A single column name in `data` (requires `data` to be supplied), or a
+#     one-sided formula `~ col` naming that column
+#   - A named vector (atomic) keyed by unit ID
+# Positional (unnamed) vectors are rejected explicitly so unit-to-cluster
+# alignment never depends on row or column order.
+.resolve_sdid_clusters <- function(cluster, data, fit) {
+  units  <- as.character(fit$units)
+  id_var <- fit$id_var
+
+  if (is.null(cluster)) {
+    return(stats::setNames(units, units))
+  }
+
+  # Allow one-sided formula `~ pref` as syntactic sugar for column name "pref"
+  if (inherits(cluster, "formula")) {
+    vars <- all.vars(cluster)
+    if (length(vars) != 1L || length(cluster) != 2L || !is.name(cluster[[2L]]))
+      stop("`cluster` formula must be a single column name, e.g. `~ pref`.",
+           call. = FALSE)
+    cluster <- vars[1L]
+  }
+
+  # Case 1: Named vector keyed by unit ID (must have names; positional rejected)
+  if (!is.null(names(cluster))) {
+    if (any(!nzchar(names(cluster))) || anyNA(names(cluster)))
+      stop("`cluster` has missing or empty names. Every entry in a named ",
+           "`cluster` vector must be keyed by unit ID.", call. = FALSE)
+    if (anyDuplicated(names(cluster))) {
+      dup_u <- names(cluster)[duplicated(names(cluster))]
+      # Allow duplicates only if they map to the same cluster; error if conflicting
+      for (u in unique(dup_u)) {
+        vals <- unique(cluster[names(cluster) == u])
+        if (length(vals) > 1L)
+          stop(sprintf("Unit '%s' is assigned to multiple clusters in `cluster` (%s).",
+                       u, paste(vals, collapse = ", ")), call. = FALSE)
+      }
+      cluster <- cluster[!duplicated(names(cluster))]
+    }
+    miss <- setdiff(units, names(cluster))
+    if (length(miss) > 0L)
+      stop(sprintf(
+        "`cluster` is missing %d unit(s) present in `fit` (first: '%s').",
+        length(miss), miss[1L]), call. = FALSE)
+    cl_vec <- as.character(cluster[units])
+    if (anyNA(cl_vec) || any(!nzchar(cl_vec)))
+      stop("`cluster` contains NA or empty cluster IDs for one or more units in `fit`.",
+           call. = FALSE)
+    names(cl_vec) <- units
+    return(cl_vec)
+  }
+
+  # Case 2: Single character string naming a column in `data`
+  if (is.character(cluster) && length(cluster) == 1L) {
+    if (is.null(data)) {
+      stop(sprintf(
+        "`cluster = \"%s\"` names a column, so `data` must also be supplied ",
+        cluster),
+        "(or pass `cluster` as a named vector keyed by unit ID).",
+        call. = FALSE)
+    }
+    if (!is.data.frame(data))
+      stop("`data` must be a data.frame.", call. = FALSE)
+    if (!cluster %in% names(data))
+      stop(sprintf("Cluster column '%s' not found in `data`.", cluster),
+           call. = FALSE)
+    if (is.null(id_var) || !id_var %in% names(data))
+      stop(sprintf("Unit identifier column '%s' not found in `data`.",
+                   id_var %||% "<unknown>"), call. = FALSE)
+
+    u_col  <- as.character(data[[id_var]])
+    cl_col <- data[[cluster]]
+    keep   <- !is.na(u_col) & u_col %in% units
+    u_sub  <- u_col[keep]
+    c_sub  <- cl_col[keep]
+
+    if (anyNA(c_sub))
+      stop(sprintf("Cluster column '%s' contains NA values for units in `fit`.",
+                   cluster), call. = FALSE)
+    c_sub <- as.character(c_sub)
+
+    # Check that each unit belongs to a single cluster across all periods
+    first_idx <- match(units, u_sub)
+    if (anyNA(first_idx)) {
+      miss <- units[is.na(first_idx)]
+      stop(sprintf("`data` is missing %d unit(s) present in `fit` (first: '%s').",
+                   length(miss), miss[1L]), call. = FALSE)
+    }
+    cl_map <- stats::setNames(c_sub[first_idx], units)
+    if (any(c_sub != cl_map[u_sub])) {
+      bad_u <- unique(u_sub[c_sub != cl_map[u_sub]])[1L]
+      stop(sprintf(
+        "Unit '%s' is assigned to more than one cluster in column '%s'; ",
+        bad_u, cluster),
+        "cluster membership must be time-invariant per unit.", call. = FALSE)
+    }
+    # Same level order as split(data, data[[cluster]]): factor levels for a
+    # factor, numeric order for a numeric column, so a given seed draws the
+    # same cluster sequence as splitting `data`.
+    cl_levels <- levels(factor(cl_col[keep]))
+    attr(cl_map, "cl_levels") <- cl_levels
+    return(cl_map)
+  }
+
+  stop("`cluster` must be either a single column name in `data` (with `data` ",
+       "supplied) or a named vector keyed by unit ID. Unnamed positional ",
+       "vectors are not accepted.", call. = FALSE)
+}
+
+#' Event Study with Cluster or Unit Bootstrap for SDID
+#'
+#' Computes period-by-period treatment effects (event-study series) for a sharp
+#' Synthetic Difference-in-Differences fit, aligned on the
+#' \eqn{\hat\lambda}-weighted pre-treatment gap so that the post-treatment mean
+#' of the period effects equals the SDID ATT (`fit$estimate`) exactly, together
+#' with bootstrap standard errors and confidence intervals (both normal
+#' approximation and percentile) for every period and for the overall ATT from
+#' the same bootstrap draws.
+#'
+#' **Resampling scheme:** Unlike [sdid_inference()] with `method = "bootstrap"`,
+#' which resamples control units only while holding the treated mean and
+#' \eqn{\zeta^2} fixed, `sdid_event_study()` resamples **both treated and
+#' control units** with replacement (at the cluster level when `cluster` is
+#' supplied, or at the unit level when `cluster = NULL`). Duplicated units in a
+#' bootstrap draw enter as distinct unit columns (equivalent to assigning fresh
+#' unit IDs per draw), and \eqn{\hat\sigma^2}, \eqn{\zeta^2} (unless user-fixed in
+#' `scm_fit()`), unit weights \eqn{\hat\omega}, and time weights \eqn{\hat\lambda} are
+#' all re-estimated on each draw. Draws in which either the resampled treated
+#' group or the resampled control group has zero units (or fewer than two
+#' control units) are discarded; the counts of valid and discarded draws are
+#' reported in `n_boot_valid` and `n_boot_dropped`.
+#'
+#' Pre-treatment period coefficients are returned and plotted for visual
+#' inspection of pre-trends only; no joint Wald test is performed because the
+#' pre-treatment gaps are constrained by the \eqn{\hat\omega} and
+#' \eqn{\hat\lambda} weights and their covariance matrix can be singular.
+#'
+#' @param fit A sharp `coresynth` object fitted with `method = "sdid"`.
+#'   Staggered fits are not supported and raise an error.
+#' @param cluster Cluster specification for block/cluster bootstrap resampling
+#'   (e.g. prefecture or state):
+#'   * `NULL` (default): resample individual units (both treated and control)
+#'     with replacement.
+#'   * A single character string naming a column in `data` (or a one-sided
+#'     formula `~ col`), in which case `data` must also be supplied.
+#'   * A named vector whose names are unit IDs matching the units in `fit` and
+#'     whose values give each unit's cluster ID.
+#'
+#'   Unnamed positional vectors are rejected to prevent silent misalignment
+#'   between row/column order and unit IDs.
+#' @param data Optional `data.frame` containing the unit identifier column and
+#'   the `cluster` column when `cluster` is given as a column name.
+#' @param n_boot Integer number of bootstrap replications (default `200L`). Set
+#'   `n_boot = 0L` (or `NULL`) to skip the bootstrap and return point estimates
+#'   only.
+#' @param level Confidence level for the intervals (default `0.95`).
+#' @param ci_type Which confidence interval type (`"normal"` or `"percentile"`)
+#'   to populate `conf.low` and `conf.high` with in [tidy()], [glance()], and
+#'   [plot()] by default. Both normal-approximation (`ci_norm_lower`,
+#'   `ci_norm_upper`) and percentile (`ci_pct_lower`, `ci_pct_upper`) intervals
+#'   are always computed and stored.
+#' @param seed Optional integer seed for reproducible bootstrap resampling.
+#'
+#' @return An object of class `"sdid_event_study"` (a named list) containing:
+#' * `terms`: A `data.frame` with one row per period (`time`, `event_time`,
+#'   `period` (`"pre"` / `"post"`), `estimate`, `se`, `ci_norm_lower`,
+#'   `ci_norm_upper`, `ci_pct_lower`, `ci_pct_upper`, `conf.low`, `conf.high`).
+#'   `mean(terms$estimate[terms$period == "post"])` equals `estimate` (ATT).
+#' * `estimate`: Overall SDID ATT (`fit$estimate`).
+#' * `se`: Bootstrap standard error of the ATT (`sd(boot_att)`).
+#' * `p_value`: Two-sided normal-approximation p-value for the ATT.
+#' * `ci_norm_lower`, `ci_norm_upper`: Normal-approximation CI for the ATT.
+#' * `ci_pct_lower`, `ci_pct_upper`: Percentile CI for the ATT.
+#' * `ci_lower`, `ci_upper`: ATT CI bounds matching `ci_type`.
+#' * `ci_type`: Resolved default CI type (`"normal"` or `"percentile"`).
+#' * `level`: Confidence level.
+#' * `n_boot`: Requested number of bootstrap draws.
+#' * `n_boot_valid`: Number of valid bootstrap draws completed.
+#' * `n_boot_dropped`: Number of draws discarded (empty treated/control group
+#'   or solver failure).
+#' * `clustered`: Logical; `TRUE` when `cluster` was supplied.
+#' * `n_clusters`: Number of unique clusters (or total units when unclustered).
+#' * `n_treated`: Number of treated units in `fit`.
+#' * `n_controls`: Number of control units in `fit`.
+#' * `times`: Time index vector (`fit$times`).
+#' * `T_pre`: Number of pre-treatment periods (`fit$T_pre`).
+#' * `boot_gaps`: Numeric matrix of dimension `n_boot_valid x T` holding the
+#'   aligned period-by-period gap series for each valid bootstrap draw
+#'   (colnames are `as.character(times)`), or `NULL` when `n_boot == 0`.
+#' * `boot_att`: Numeric vector of length `n_boot_valid` holding the ATT for
+#'   each valid draw (identical to `rowMeans(boot_gaps[, (T_pre + 1):T])`), or
+#'   `NULL` when `n_boot == 0`.
+#'
+#' @seealso [scm_fit()], [sdid_inference()], [plot.sdid_event_study()]
+#' @examples
+#' set.seed(1)
+#' panel <- expand.grid(unit = 1:12, year = 2001:2010)
+#' panel$pref <- paste0("pref_", (panel$unit - 1) %% 4 + 1)
+#' panel$d <- as.integer(panel$unit <= 3 & panel$year >= 2007)
+#' panel$y <- panel$unit + 0.5 * (panel$year - 2000) +
+#'   rnorm(nrow(panel), sd = 0.3) - 1.5 * panel$d
+#'
+#' fit <- scm_fit(y ~ d | unit + year, data = panel, method = "sdid")
+#' es  <- sdid_event_study(fit, cluster = "pref", data = panel,
+#'                         n_boot = 50, seed = 42)
+#' es
+#' broom::tidy(es)
+#' \donttest{
+#' plot(es)
+#' }
+#' @export
+sdid_event_study <- function(
+  fit,
+  cluster = NULL,
+  data    = NULL,
+  n_boot  = 200L,
+  level   = 0.95,
+  ci_type = c("normal", "percentile"),
+  seed    = NULL
+) {
+  if (!inherits(fit, "coresynth_sdid"))
+    stop("sdid_event_study() requires a coresynth fit with method = 'sdid'.",
+         call. = FALSE)
+  if (inherits(fit, "coresynth_staggered") || isTRUE(fit$staggered))
+    stop("sdid_event_study() supports sharp (single-adoption-date) SDID fits ",
+         "only; staggered fits are not supported.", call. = FALSE)
+  if (is.null(fit$Y_co_pre) || is.null(fit$Y_tr_pre))
+    stop("`fit` is missing unit-level outcome matrices (`Y_tr_pre`). ",
+         "Re-estimate the model with the current version of coresynth.",
+         call. = FALSE)
+
+  ci_type <- match.arg(ci_type)
+  if (!is.numeric(level) || length(level) != 1L || is.na(level) ||
+      level <= 0 || level >= 1)
+    stop("`level` must be a single number in (0, 1).", call. = FALSE)
+
+  if (is.null(n_boot)) n_boot <- 0L
+  if (!is.numeric(n_boot) || length(n_boot) != 1L || is.na(n_boot) ||
+      n_boot < 0 || n_boot != trunc(n_boot))
+    stop("`n_boot` must be a non-negative integer.", call. = FALSE)
+  n_boot <- as.integer(n_boot)
+
+  # Resolve cluster assignment per unit (in fit$units order, length N_all)
+  clustered <- !is.null(cluster)
+  cl_map    <- .resolve_sdid_clusters(cluster, data, fit)
+
+  T_pre     <- fit$T_pre
+  times     <- fit$times
+  TT        <- length(times)
+  T_post    <- TT - T_pre
+  pre_rows  <- seq_len(T_pre)
+  post_rows <- (T_pre + 1L):TT
+
+  # Point estimate of period-by-period lambda-aligned gaps:
+  # delta_t = (Y_tr_t - Y_synth_t) - sum_{s <= T_pre} lambda_s (Y_tr_s - Y_synth_s)
+  raw_gap    <- as.numeric(fit$Y_treat) - as.numeric(fit$Y_synth)
+  pre_offset <- sum(fit$time_weights * raw_gap[pre_rows])
+  est_gaps   <- raw_gap - pre_offset
+  tau_hat    <- fit$estimate
+
+  is_post    <- c(rep(FALSE, T_pre), rep(TRUE, T_post))
+  period_chr <- ifelse(is_post, "post", "pre")
+  event_time <- seq_len(TT) - (T_pre + 1L)
+
+  N_tr       <- ncol(fit$Y_tr_pre)
+  N_co       <- ncol(fit$Y_co_pre)
+  cl_levels  <- attr(cl_map, "cl_levels") %||%
+                (if (clustered) sort(unique(unname(cl_map))) else unique(unname(cl_map)))
+  n_clusters <- length(cl_levels)
+
+  if (n_boot == 0L) {
+    terms_df <- data.frame(
+      time          = times,
+      event_time    = event_time,
+      period        = period_chr,
+      estimate      = est_gaps,
+      se            = NA_real_,
+      ci_norm_lower = NA_real_,
+      ci_norm_upper = NA_real_,
+      ci_pct_lower  = NA_real_,
+      ci_pct_upper  = NA_real_,
+      conf.low      = NA_real_,
+      conf.high     = NA_real_,
+      stringsAsFactors = FALSE
+    )
+    return(structure(list(
+      terms          = terms_df,
+      estimate       = tau_hat,
+      se             = NA_real_,
+      p_value        = NA_real_,
+      ci_norm_lower  = NA_real_,
+      ci_norm_upper  = NA_real_,
+      ci_pct_lower   = NA_real_,
+      ci_pct_upper   = NA_real_,
+      ci_lower       = NA_real_,
+      ci_upper       = NA_real_,
+      ci_type        = ci_type,
+      level          = level,
+      n_boot         = 0L,
+      n_boot_valid   = 0L,
+      n_boot_dropped = 0L,
+      clustered      = clustered,
+      n_clusters     = n_clusters,
+      n_treated      = N_tr,
+      n_controls     = N_co,
+      times          = times,
+      T_pre          = T_pre,
+      boot_gaps      = NULL,
+      boot_att       = NULL
+    ), class = "sdid_event_study"))
+  }
+
+  # Pre-index each cluster's treated and control unit positions for fast draws
+  idx_tr_all <- fit$idx_tr
+  idx_co_all <- fit$idx_co
+  units_tr   <- as.character(fit$units[idx_tr_all])
+  units_co   <- as.character(fit$units[idx_co_all])
+  cl_tr      <- unname(cl_map[units_tr])
+  cl_co      <- unname(cl_map[units_co])
+
+  # Map each cluster k in 1..G to:
+  # - local column indices in Y_co_pre / Y_co_post (1..N_co)
+  # - local column indices in Y_tr_pre / Y_tr_post (1..N_tr)
+  # - global column indices in Y_raw / X_arr (for the covariate path)
+  co_by_cl     <- lapply(cl_levels, function(cl) which(cl_co == cl))
+  tr_by_cl     <- lapply(cl_levels, function(cl) which(cl_tr == cl))
+  raw_co_by_cl <- lapply(cl_levels, function(cl) idx_co_all[cl_co == cl])
+  raw_tr_by_cl <- lapply(cl_levels, function(cl) idx_tr_all[cl_tr == cl])
+
+  has_cov    <- !is.null(fit$covariates) && length(fit$covariates) > 0L &&
+                !is.null(fit$X_arr) && !is.null(fit$Y_raw)
+  Y_co_pre   <- fit$Y_co_pre
+  Y_co_post  <- fit$Y_co_post
+  Y_tr_all   <- rbind(fit$Y_tr_pre, fit$Y_tr_post)
+  zeta2_user <- fit$zeta2_user
+  zeta_t_val <- fit$zeta_t %||% 1e-6
+
+  # Pre-sum treated outcomes per cluster (T x 1 vector and count per cluster)
+  # for the standard no-covariate path so each draw computes Y_tr_mean in O(G)
+  tr_sum_by_cl <- lapply(tr_by_cl, function(cols) {
+    if (length(cols) == 0L) NULL
+    else rowSums(Y_tr_all[, cols, drop = FALSE])
+  })
+  tr_cnt_by_cl <- vapply(tr_by_cl, length, integer(1L))
+  co_cnt_by_cl <- vapply(co_by_cl, length, integer(1L))
+
+  if (!is.null(seed)) set.seed(seed)
+
+  boot_One <- function() {
+    draw <- sample.int(n_clusters, n_clusters, replace = TRUE)
+    n_tr_b <- sum(tr_cnt_by_cl[draw])
+    n_co_b <- sum(co_cnt_by_cl[draw])
+    # Discard draws where treated or control group is empty (or < 2 controls)
+    if (n_tr_b < 1L || n_co_b < 2L) return(NULL)
+
+    if (!has_cov) {
+      co_cols <- unlist(co_by_cl[draw], use.names = FALSE)
+      # Weighted sum of cluster treated sums by draw frequency
+      freq    <- tabulate(draw, nbins = n_clusters)
+      active  <- which(freq > 0L & tr_cnt_by_cl > 0L)
+      Y_tr_sum <- numeric(TT)
+      for (k in active) {
+        Y_tr_sum <- Y_tr_sum + freq[k] * tr_sum_by_cl[[k]]
+      }
+      Y_tr_b      <- Y_tr_sum / n_tr_b
+      Y_co_pre_b  <- Y_co_pre[, co_cols, drop = FALSE]
+      Y_co_post_b <- Y_co_post[, co_cols, drop = FALSE]
+    } else {
+      # With covariates: re-run two-way FE partial-out on the resampled panel
+      # so matches re-running scm_fit() on the resampled data frame.
+      co_raw <- unlist(raw_co_by_cl[draw], use.names = FALSE)
+      tr_raw <- unlist(raw_tr_by_cl[draw], use.names = FALSE)
+      all_b  <- c(co_raw, tr_raw)
+      Y_b    <- fit$Y_raw[, all_b, drop = FALSE]
+      X_b    <- fit$X_arr[, all_b, , drop = FALSE]
+      pan_b  <- list(
+        idx_control = seq_len(n_co_b),
+        idx_treat   = n_co_b + seq_len(n_tr_b),
+        T_adopt     = c(rep(NA_integer_, n_co_b), rep(T_pre + 1L, n_tr_b))
+      )
+      po_b <- tryCatch(
+        suppressWarnings(.sdid_partial_out_staggered(Y_b, X_b, pan_b)),
+        error = function(e) NULL
+      )
+      if (is.null(po_b)) return(NULL)
+      Y_work_b    <- po_b$Y_tilde
+      Y_co_pre_b  <- Y_work_b[pre_rows,  pan_b$idx_control, drop = FALSE]
+      Y_co_post_b <- Y_work_b[post_rows, pan_b$idx_control, drop = FALSE]
+      Y_tr_b      <- rowMeans(Y_work_b[, pan_b$idx_treat, drop = FALSE])
+    }
+
+    mfit_b <- tryCatch(
+      .fit_sdid_matrices(
+        Y_co_pre       = Y_co_pre_b,
+        Y_co_post      = Y_co_post_b,
+        Y_tr_pre_mean  = Y_tr_b[pre_rows],
+        Y_tr_post_mean = Y_tr_b[post_rows],
+        N_tr           = n_tr_b,
+        zeta2          = zeta2_user,
+        zeta_t         = zeta_t_val
+      ),
+      error = function(e) NULL
+    )
+    if (is.null(mfit_b)) return(NULL)
+
+    omega_b  <- mfit_b$unit_weights
+    lambda_b <- mfit_b$time_weights
+    synth_pre_b  <- drop(Y_co_pre_b  %*% omega_b)
+    synth_post_b <- drop(Y_co_post_b %*% omega_b)
+    raw_gap_b    <- Y_tr_b - c(synth_pre_b, synth_post_b)
+    offset_b     <- sum(lambda_b * raw_gap_b[pre_rows])
+    gap_b        <- raw_gap_b - offset_b
+    if (length(gap_b) != TT || any(!is.finite(gap_b))) return(NULL)
+    gap_b
+  }
+
+  draws <- replicate(n_boot, boot_One(), simplify = FALSE)
+  valid_mask     <- !vapply(draws, is.null, logical(1L))
+  n_boot_valid   <- sum(valid_mask)
+  n_boot_dropped <- n_boot - n_boot_valid
+
+  if (n_boot_valid < 2L)
+    stop(sprintf(
+      "Too few valid bootstrap replications (%d of %d succeeded; %d discarded).",
+      n_boot_valid, n_boot, n_boot_dropped), call. = FALSE)
+
+  boot_gaps <- do.call(rbind, draws[valid_mask])
+  colnames(boot_gaps) <- as.character(times)
+  boot_att  <- rowMeans(boot_gaps[, post_rows, drop = FALSE])
+
+  alpha <- 1 - level
+  z_val <- qnorm(1 - alpha / 2)
+
+  # Period-by-period SE and CIs (both normal and percentile)
+  se_t      <- apply(boot_gaps, 2L, sd)
+  ci_norm_l <- est_gaps - z_val * se_t
+  ci_norm_u <- est_gaps + z_val * se_t
+  ci_pct_mat <- apply(boot_gaps, 2L, quantile,
+                      probs = c(alpha / 2, 1 - alpha / 2), names = FALSE)
+  ci_pct_l  <- as.numeric(ci_pct_mat[1L, ])
+  ci_pct_u  <- as.numeric(ci_pct_mat[2L, ])
+
+  # ATT SE and CIs from the exact same bootstrap draws
+  att_se     <- sd(boot_att)
+  att_norm_l <- tau_hat - z_val * att_se
+  att_norm_u <- tau_hat + z_val * att_se
+  att_pct    <- quantile(boot_att, probs = c(alpha / 2, 1 - alpha / 2),
+                         names = FALSE)
+  att_pct_l  <- att_pct[1L]
+  att_pct_u  <- att_pct[2L]
+  att_pval   <- 2 * pnorm(-abs(tau_hat / max(att_se, .Machine$double.eps)))
+
+  use_norm <- identical(ci_type, "normal")
+  terms_df <- data.frame(
+    time          = times,
+    event_time    = event_time,
+    period        = period_chr,
+    estimate      = est_gaps,
+    se            = as.numeric(se_t),
+    ci_norm_lower = as.numeric(ci_norm_l),
+    ci_norm_upper = as.numeric(ci_norm_u),
+    ci_pct_lower  = as.numeric(ci_pct_l),
+    ci_pct_upper  = as.numeric(ci_pct_u),
+    conf.low      = as.numeric(if (use_norm) ci_norm_l else ci_pct_l),
+    conf.high     = as.numeric(if (use_norm) ci_norm_u else ci_pct_u),
+    stringsAsFactors = FALSE
+  )
+  rownames(terms_df) <- NULL
+
+  structure(list(
+    terms          = terms_df,
+    estimate       = tau_hat,
+    se             = att_se,
+    p_value        = att_pval,
+    ci_norm_lower  = att_norm_l,
+    ci_norm_upper  = att_norm_u,
+    ci_pct_lower   = att_pct_l,
+    ci_pct_upper   = att_pct_u,
+    ci_lower       = if (use_norm) att_norm_l else att_pct_l,
+    ci_upper       = if (use_norm) att_norm_u else att_pct_u,
+    ci_type        = ci_type,
+    level          = level,
+    n_boot         = n_boot,
+    n_boot_valid   = n_boot_valid,
+    n_boot_dropped = n_boot_dropped,
+    clustered      = clustered,
+    n_clusters     = n_clusters,
+    n_treated      = N_tr,
+    n_controls     = N_co,
+    times          = times,
+    T_pre          = T_pre,
+    boot_gaps      = boot_gaps,
+    boot_att       = boot_att
+  ), class = "sdid_event_study")
+}
+
+#' @export
+print.sdid_event_study <- function(x, digits = 4, ...) {
+  boot_lbl <- if (x$n_boot == 0L) {
+    "point estimates only"
+  } else if (isTRUE(x$clustered)) {
+    sprintf("cluster bootstrap, %d clusters", x$n_clusters)
+  } else {
+    sprintf("unit bootstrap, %d units", x$n_clusters)
+  }
+  cat(sprintf("=== SDID Event Study (%s) ===\n", boot_lbl))
+  cat("  ATT Estimate :", round(x$estimate, digits), "\n")
+  if (is.finite(x$se)) {
+    pct_str <- sprintf("%g%%", 100 * x$level)
+    cat("  ATT SE       :", round(x$se, digits), "\n")
+    cat("  p-value      :", format.pval(x$p_value, digits = digits,
+                                       eps = 10^(-digits)), "\n")
+    cat(sprintf("  %s CI (norm): [%.*f, %.*f]\n",
+                pct_str, digits, x$ci_norm_lower, digits, x$ci_norm_upper))
+    cat(sprintf("  %s CI (pct) : [%.*f, %.*f]\n",
+                pct_str, digits, x$ci_pct_lower, digits, x$ci_pct_upper))
+    cat(sprintf("  Bootstrap    : %d valid / %d requested (%d discarded)\n",
+                x$n_boot_valid, x$n_boot, x$n_boot_dropped))
+  }
+  cat("\nPeriod-by-period effects (lambda-aligned; post-period mean = ATT):\n")
+  df <- x$terms[, c("time", "period", "estimate", "se",
+                    "ci_norm_lower", "ci_norm_upper",
+                    "ci_pct_lower", "ci_pct_upper"), drop = FALSE]
+  for (col in c("estimate", "se", "ci_norm_lower", "ci_norm_upper",
+                "ci_pct_lower", "ci_pct_upper")) {
+    df[[col]] <- round(df[[col]], digits)
+  }
+  print(df, row.names = FALSE)
+  invisible(x)
+}
+

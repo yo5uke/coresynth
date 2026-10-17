@@ -51,6 +51,7 @@ reference:
   - plot.scm_frontier
   - scm_inference
   - sdid_inference
+  - sdid_event_study
   - gsc_boot
   - gsc_inference
   - si_inference
@@ -69,6 +70,7 @@ reference:
   - augment_scm
   - tidy.coresynth_inference
   - glance.coresynth_inference
+  - tidy.sdid_event_study
 
 - title: Accessors
   desc: >
@@ -82,6 +84,7 @@ reference:
   - plot.coresynth
   - plot.scm_placebo
   - plot.scm_design
+  - plot.sdid_event_study
   - plot_data
   - export_json
 

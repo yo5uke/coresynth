@@ -751,8 +751,9 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = NULL,
 #' of [plot()] (`colors`, `labels`, `linetypes`, `vline`, `fill`, ...) have no
 #' data counterpart and are not part of this interface.
 #'
-#' @param x A `coresynth` fit (from [scm_fit()]) or a `scm_placebo` object
-#'   (from [mspe_ratio_pval()]).
+#' @param x A `coresynth` fit (from [scm_fit()]), a `scm_placebo` object
+#'   (from [mspe_ratio_pval()]), or a `sdid_event_study` object (from
+#'   [sdid_event_study()]).
 #' @param type For a `coresynth` fit: one of `"trend"`, `"gap"`, `"weights"`,
 #'   or `"pred_weights"`, matching [plot.coresynth()]. For a `scm_placebo`
 #'   object: `"gaps"` or `"ratios"`, matching [plot.scm_placebo()].
@@ -770,6 +771,9 @@ plot.scm_placebo <- function(x, type = c("gaps", "ratios"), mspe_prune = NULL,
 #'   treated unit's, as in [plot.scm_placebo()]. `NULL` (default) reuses the
 #'   cutoff [mspe_ratio_pval()] computed the p-value under; `Inf` keeps every
 #'   run.
+#' @param ci_type For a `sdid_event_study` object: which confidence interval
+#'   (`"normal"` or `"percentile"`) fills `conf.low`/`conf.high`, as in
+#'   [plot.sdid_event_study()]. `NULL` (default) uses the object's `ci_type`.
 #' @param ... Passed to methods (unused by the current methods).
 #' @return A tidy `data.frame`. Columns by `type`:
 #'   \describe{
@@ -815,8 +819,9 @@ plot_data <- function(x, ...) UseMethod("plot_data")
 plot_data.default <- function(x, ...) {
   stop("plot_data() has no method for an object of class ",
        paste(class(x), collapse = "/"),
-       ". It supports coresynth fits (from scm_fit()) and scm_placebo ",
-       "objects (from mspe_ratio_pval()).", call. = FALSE)
+       ". It supports coresynth fits (from scm_fit()), scm_placebo ",
+       "objects (from mspe_ratio_pval()), and sdid_event_study objects ",
+       "(from sdid_event_study()).", call. = FALSE)
 }
 
 #' @rdname plot_data
@@ -1010,3 +1015,124 @@ plot_data.scm_placebo <- function(x, type = c("gaps", "ratios"),
   rownames(df) <- NULL
   df
 }
+
+#' @rdname plot_data
+#' @export
+plot_data.sdid_event_study <- function(x, ci_type = NULL, ...) {
+  tidy.sdid_event_study(x, ci_type = ci_type, conf.int = TRUE)
+}
+
+#' Plot an SDID Event Study
+#'
+#' Draws the period-by-period treatment effect estimates and bootstrap
+#' confidence intervals returned by [sdid_event_study()], together with a
+#' horizontal zero reference line and a vertical treatment-time reference line.
+#' When the numeric time index has gaps (e.g. missing survey years such as
+#' 2011--2012 between 2010 and 2013), axis tick marks default to the observed
+#' periods (`x$times`) so unobserved years are never labeled on the axis, and
+#' `vline_offset` interpolates across the adjacent observed periods (`-0.5`
+#' places the vertical line midway between the last pre-treatment period and
+#' the first post-treatment period; the default `-1` places it on the last
+#' pre-treatment period).
+#'
+#' @param x An `sdid_event_study` object from [sdid_event_study()].
+#' @param ci_type Which confidence interval to draw: `"normal"` or
+#'   `"percentile"`. Defaults to `x$ci_type`.
+#' @param colors Optional single color string for the point estimates and
+#'   error bars (default `"#1a9641"`).
+#' @param connect Logical; connect adjacent period estimates with a line
+#'   (default `FALSE`, standard point-and-interval event-study style).
+#' @param vline Aesthetic overrides for the vertical treatment-time line, as a
+#'   list passed to [ggplot2::geom_vline()] (e.g. `list(color = "red")`), or
+#'   `NULL`/`FALSE` to hide the line. May include `xintercept` to pin an
+#'   explicit axis position.
+#' @param vline_offset Where to draw the vertical treatment line, in periods
+#'   relative to the first post-treatment period (default `-1`, the last
+#'   pre-treatment period; `-0.5` lands midway between the last pre-treatment
+#'   and first post-treatment period, even when intermediate years are absent).
+#'   Cannot be combined with `vline = list(xintercept = ...)`.
+#' @param hline Aesthetic overrides for the horizontal zero line, as a list
+#'   passed to [ggplot2::geom_hline()], or `NULL`/`FALSE` to hide the line.
+#' @param ... Ignored.
+#' @return A `ggplot2` plot object.
+#' @seealso [sdid_event_study()], [plot_data()]
+#' @export
+plot.sdid_event_study <- function(x, ci_type = NULL,
+                                  colors = NULL,
+                                  connect = FALSE,
+                                  vline = list(),
+                                  vline_offset = .VLINE_OFFSET_DEFAULT,
+                                  hline = list(), ...) {
+  ci_use <- if (is.null(ci_type)) x$ci_type %||% "normal"
+            else match.arg(ci_type, c("normal", "percentile"))
+  if (!isTRUE(connect) && !isFALSE(connect))
+    stop("`connect` must be TRUE or FALSE.", call. = FALSE)
+  .check_vline_offset(vline_offset)
+
+  df    <- plot_data.sdid_event_study(x, ci_type = ci_use)
+  times <- df$time
+  if (is.character(times) || is.factor(times)) {
+    num_times <- suppressWarnings(as.numeric(as.character(times)))
+    if (!anyNA(num_times)) times <- num_times
+  }
+  df$time <- times
+
+  pt_color    <- if (is.null(colors)) "#1a9641" else unname(colors[[1L]])
+  vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
+  hline_style <- .line_style(list(color = "gray50", linetype = "dashed"), hline)
+  vl          <- .vline_split(vline_style, times, vline_offset)
+  vline_style <- vl$style
+  treat_time  <- if (!is.null(vl$at)) vl$at
+                 else if (!is.null(x$T_pre)) .vline_position(times, x$T_pre, vline_offset)
+                 else NA
+
+  has_ci <- any(is.finite(df$conf.low) & is.finite(df$conf.high))
+  # Scale width of errorbar caps to the minimum spacing between observed times
+  eb_width <- if (is.numeric(times) && length(times) > 1L) {
+    0.2 * min(diff(sort(unique(times))))
+  } else {
+    0.2
+  }
+
+  sub_str <- if (has_ci) {
+    boot_kind <- if (isTRUE(x$clustered)) {
+      sprintf("cluster bootstrap (%d clusters", x$n_clusters)
+    } else {
+      sprintf("unit bootstrap (%d units", x$n_clusters)
+    }
+    sprintf(
+      "ATT = %s (SE = %s); %g%% %s CI from %s, %d valid draws)",
+      formatC(x$estimate, digits = 4, format = "g"),
+      formatC(x$se, digits = 3, format = "g"),
+      100 * x$level,
+      ci_use,
+      boot_kind,
+      x$n_boot_valid
+    )
+  } else {
+    "Treated - synthetic control, lambda-aligned on the pre-period (post-period mean = ATT)"
+  }
+
+  p <- ggplot(df, aes(x = time, y = estimate)) +
+    {if (!is.null(hline_style))
+      do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
+    {if (!is.null(vline_style) && !anyNA(treat_time))
+      do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
+    {if (has_ci)
+      geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                    width = eb_width, color = pt_color, linewidth = 0.6)} +
+    {if (isTRUE(connect))
+      geom_line(color = pt_color, linewidth = 0.7)} +
+    geom_point(color = pt_color, size = 2.2) +
+    {if (is.numeric(times) && length(times) <= 30L)
+      scale_x_continuous(breaks = times)} +
+    theme_minimal(base_size = 13) +
+    labs(
+      title    = "Event Study  [SDID]",
+      subtitle = sub_str,
+      x        = "Time",
+      y        = "Treatment Effect"
+    )
+  p
+}
+

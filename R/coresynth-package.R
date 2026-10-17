@@ -17,5 +17,5 @@ utils::globalVariables(c(
   "time", "value", "series", "weight",
   "group", "tau_hat", "ci_lower", "ci_upper",
   "sd", "gap", "ratio", "label", "panel", "predictor",
-  "xv", "yv", "nu"
+  "xv", "yv", "nu", "estimate", "conf.low", "conf.high"
 ))

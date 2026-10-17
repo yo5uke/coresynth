@@ -5,6 +5,7 @@
 \alias{plot_data.default}
 \alias{plot_data.coresynth}
 \alias{plot_data.scm_placebo}
+\alias{plot_data.sdid_event_study}
 \title{Extract the tidy data behind a coresynth plot}
 \usage{
 plot_data(x, ...)
@@ -21,10 +22,13 @@ plot_data(x, ...)
 )
 
 \method{plot_data}{scm_placebo}(x, type = c("gaps", "ratios"), mspe_prune = NULL, ...)
+
+\method{plot_data}{sdid_event_study}(x, ci_type = NULL, ...)
 }
 \arguments{
-\item{x}{A \code{coresynth} fit (from \code{\link[=scm_fit]{scm_fit()}}) or a \code{scm_placebo} object
-(from \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}}).}
+\item{x}{A \code{coresynth} fit (from \code{\link[=scm_fit]{scm_fit()}}), a \code{scm_placebo} object
+(from \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}}), or a \code{sdid_event_study} object (from
+\code{\link[=sdid_event_study]{sdid_event_study()}}).}
 
 \item{...}{Passed to methods (unused by the current methods).}
 
@@ -49,6 +53,10 @@ placebo units whose pre-treatment MSPE exceeds \code{mspe_prune} times the
 treated unit's, as in \code{\link[=plot.scm_placebo]{plot.scm_placebo()}}. \code{NULL} (default) reuses the
 cutoff \code{\link[=mspe_ratio_pval]{mspe_ratio_pval()}} computed the p-value under; \code{Inf} keeps every
 run.}
+
+\item{ci_type}{For a \code{sdid_event_study} object: which confidence interval
+(\code{"normal"} or \code{"percentile"}) fills \code{conf.low}/\code{conf.high}, as in
+\code{\link[=plot.sdid_event_study]{plot.sdid_event_study()}}. \code{NULL} (default) uses the object's \code{ci_type}.}
 }
 \value{
 A tidy \code{data.frame}. Columns by \code{type}:

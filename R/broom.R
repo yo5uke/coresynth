@@ -167,6 +167,90 @@ glance.coresynth_inference <- function(x, ...) {
   )
 }
 
+#' Tidy or Glance at an SDID Event Study
+#'
+#' `tidy()` returns the period-by-period event-study table (one row per time
+#' period, with the \eqn{\hat\lambda}-aligned point estimate, bootstrap
+#' standard error, and both normal-approximation and percentile confidence
+#' intervals). `glance()` returns a one-row summary for the overall ATT
+#' alongside the valid and discarded bootstrap replication counts.
+#'
+#' @param x An `sdid_event_study` object returned by [sdid_event_study()].
+#' @param ci_type Optional override (`"normal"` or `"percentile"`) selecting
+#'   which confidence interval populates `conf.low` and `conf.high`. Defaults to
+#'   `x$ci_type`. Both `ci_norm_lower`/`ci_norm_upper` and
+#'   `ci_pct_lower`/`ci_pct_upper` are always included as well.
+#' @param conf.int Logical; include `conf.low`/`conf.high` columns (default
+#'   `TRUE`).
+#' @param ... Unused.
+#' @return For `tidy()`, a `data.frame` with one row per period and columns
+#'   `time`, `event_time`, `period`, `estimate`, `std.error`, `conf.low`,
+#'   `conf.high`, `ci_norm_lower`, `ci_norm_upper`, `ci_pct_lower`,
+#'   `ci_pct_upper`. For `glance()`, a one-row `data.frame` with columns
+#'   `estimate`, `std.error`, `p.value`, `conf.low`, `conf.high`,
+#'   `ci_norm_lower`, `ci_norm_upper`, `ci_pct_lower`, `ci_pct_upper`,
+#'   `ci_type`, `level`, `clustered`, `n_clusters`, `n_treated`, `n_controls`,
+#'   `T_pre`, `T_post`, `n_boot`, `n_boot_valid`, `n_boot_dropped`.
+#' @importFrom broom tidy
+#' @export
+tidy.sdid_event_study <- function(x, ci_type = NULL, conf.int = TRUE, ...) {
+  ci_use <- if (is.null(ci_type)) x$ci_type %||% "normal"
+            else match.arg(ci_type, c("normal", "percentile"))
+  use_norm <- identical(ci_use, "normal")
+  df <- x$terms
+  out <- data.frame(
+    time          = df$time,
+    event_time    = df$event_time,
+    period        = df$period,
+    estimate      = df$estimate,
+    std.error     = df$se,
+    conf.low      = if (use_norm) df$ci_norm_lower else df$ci_pct_lower,
+    conf.high     = if (use_norm) df$ci_norm_upper else df$ci_pct_upper,
+    ci_norm_lower = df$ci_norm_lower,
+    ci_norm_upper = df$ci_norm_upper,
+    ci_pct_lower  = df$ci_pct_lower,
+    ci_pct_upper  = df$ci_pct_upper,
+    stringsAsFactors = FALSE
+  )
+  if (!isTRUE(conf.int)) {
+    out$conf.low  <- NULL
+    out$conf.high <- NULL
+  }
+  out
+}
+
+#' @rdname tidy.sdid_event_study
+#' @importFrom broom glance
+#' @export
+glance.sdid_event_study <- function(x, ci_type = NULL, ...) {
+  ci_use <- if (is.null(ci_type)) x$ci_type %||% "normal"
+            else match.arg(ci_type, c("normal", "percentile"))
+  use_norm <- identical(ci_use, "normal")
+  data.frame(
+    estimate       = x$estimate,
+    std.error      = x$se %||% NA_real_,
+    p.value        = x$p_value %||% NA_real_,
+    conf.low       = if (use_norm) x$ci_norm_lower else x$ci_pct_lower,
+    conf.high      = if (use_norm) x$ci_norm_upper else x$ci_pct_upper,
+    ci_norm_lower  = x$ci_norm_lower %||% NA_real_,
+    ci_norm_upper  = x$ci_norm_upper %||% NA_real_,
+    ci_pct_lower   = x$ci_pct_lower  %||% NA_real_,
+    ci_pct_upper   = x$ci_pct_upper  %||% NA_real_,
+    ci_type        = ci_use,
+    level          = x$level,
+    clustered      = isTRUE(x$clustered),
+    n_clusters     = x$n_clusters,
+    n_treated      = x$n_treated,
+    n_controls     = x$n_controls,
+    T_pre          = x$T_pre,
+    T_post         = length(x$times) - x$T_pre,
+    n_boot         = x$n_boot,
+    n_boot_valid   = x$n_boot_valid,
+    n_boot_dropped = x$n_boot_dropped,
+    stringsAsFactors = FALSE
+  )
+}
+
 #' @importFrom broom augment
 #' @export
 augment.coresynth <- function(x, include_donors = FALSE, ...) {

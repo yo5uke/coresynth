@@ -10,14 +10,17 @@ sdid_inference(
   n_boot = 200L,
   level = 0.95,
   alternative = c("two.sided", "greater", "less"),
-  seed = NULL
+  seed = NULL,
+  ...
 )
 }
 \arguments{
 \item{fit}{A \code{coresynth} object with \code{method = "sdid"} (sharp or staggered).}
 
-\item{method}{Inference method: \code{"placebo"} (permutation), \code{"bootstrap"},
-\code{"jackknife"}, or \code{"jackknife_global"} (staggered only).}
+\item{method}{Inference method: \code{"placebo"} (permutation), \code{"bootstrap"}
+(resamples control units only; see Details and \code{\link[=sdid_event_study]{sdid_event_study()}} for
+unit- or cluster-level resampling of all units), \code{"jackknife"}, or
+\code{"jackknife_global"} (staggered only).}
 
 \item{n_boot}{Number of bootstrap replications (only for \code{method = "bootstrap"}).}
 
@@ -27,6 +30,9 @@ sdid_inference(
 \code{"greater"}, or \code{"less"}.}
 
 \item{seed}{Integer seed for reproducibility (only for \code{method = "bootstrap"}).}
+
+\item{...}{Not used. Passing \code{cluster} raises an error that points to
+\code{\link[=sdid_event_study]{sdid_event_study()}}; any other argument is reported as unused.}
 }
 \value{
 A list with:
@@ -44,16 +50,29 @@ A list with:
 }
 \description{
 Computes standard errors and p-values for a SDID estimate using one of
-four methods, following Clarke et al. (2024): permutation placebo test
-(Algorithm 4), cluster bootstrap (Algorithm 2), leave-one-out jackknife
-(Algorithm 3), or (staggered fits only) a global jackknife across the
-unique control units of all cohorts.
+four methods: permutation placebo test (Clarke et al. 2024, Algorithm 4),
+control-unit bootstrap, leave-one-control-out jackknife (Algorithm 3), or
+(staggered fits only) a global jackknife across the unique control units of
+all cohorts.
 }
 \details{
+\strong{What \code{method = "bootstrap"} resamples:} \code{sdid_inference()} resamples
+\strong{control (donor) units only} with replacement, holding the treated mean
+series (\code{Y_tr_pre_mean}, \code{Y_tr_post_mean}) and the regularisation penalty
+\code{zeta2} fixed at their original-fit values. To resample \strong{both treated and
+control units} (at the unit or cluster level, e.g. prefectures or states),
+re-estimating \eqn{\hat\sigma^2}, \eqn{\zeta^2}, \eqn{\hat\omega}, and \eqn{\hat\lambda} on
+every draw and obtaining period-by-period event-study confidence intervals
+alongside the ATT standard error, use \code{\link[=sdid_event_study]{sdid_event_study()}} instead.
+
 For \code{method = "placebo"}, the p-value is the permutation p-value, while
 the standard error is the dispersion of the placebo distribution
 (Clarke et al. 2024, Algorithm 4) and the confidence interval is the
 normal approximation around the estimate with that SE. The placebo SE
 assumes the treated unit's noise is comparable to the control units';
 interpret it with caution when the donor pool is small.
+}
+\seealso{
+\code{\link[=sdid_event_study]{sdid_event_study()}} for period-by-period event-study effects and
+cluster (or unit) bootstrap resampling over both treated and control units.
 }

@@ -6323,3 +6323,324 @@ test_that("SDID unit weights solve the same QP with or without forming Q", {
   w_ref <- solve_simplex_qp(Q, crossprod(Y_pre, y_tr))
   expect_equal(drop(w), drop(w_ref), tolerance = 1e-8)
 })
+
+# ── SDID Event Study with Cluster / Unit Bootstrap ───────────────────────────
+
+make_clustered_sdid_panel <- function(n_clusters = 20L, units_per_cl = 4L,
+                                      times = c(2007:2010, 2013:2021),
+                                      treat_from = 2013L,
+                                      cl_sd = 1.2, eps_sd = 0.15,
+                                      effect = -0.15, seed = 123L) {
+  set.seed(seed)
+  TT <- length(times)
+  N  <- n_clusters * units_per_cl
+  cl_id   <- rep(sprintf("pref_%02d", seq_len(n_clusters)), each = units_per_cl)
+  unit_id <- sprintf("muni_%03d", seq_len(N))
+  # First 6 clusters are predominantly treated (or mixed) so cluster draws
+  # always have both treated and control units
+  is_tr <- rep(c(TRUE, FALSE), c(n_clusters %/% 3L * units_per_cl,
+                                 N - (n_clusters %/% 3L * units_per_cl)))
+  # Also mix a few treated units into other clusters
+  is_tr[seq(1L, N, by = units_per_cl)] <- TRUE
+
+  unit_fe <- rnorm(N, 0, 0.5)
+  time_fe <- seq(-0.2, 0.4, length.out = TT)
+  # Strong cluster-by-period shock creates positive intra-cluster correlation
+  cl_shock <- matrix(rnorm(n_clusters * TT, 0, cl_sd), nrow = TT, ncol = n_clusters)
+
+  rows <- expand.grid(time_idx = seq_len(TT), u_idx = seq_len(N))
+  t_i  <- rows$time_idx
+  u_i  <- rows$u_idx
+  c_i  <- (u_i - 1L) %/% units_per_cl + 1L
+
+  d <- as.integer(is_tr[u_i] & times[t_i] >= treat_from)
+  y <- unit_fe[u_i] + time_fe[t_i] +
+    cl_shock[cbind(t_i, c_i)] +
+    rnorm(nrow(rows), 0, eps_sd) +
+    effect * d
+
+  data.frame(
+    unit = unit_id[u_i],
+    pref = cl_id[u_i],
+    year = times[t_i],
+    d    = d,
+    y    = y,
+    stringsAsFactors = FALSE
+  )
+}
+
+test_that("sdid_event_study: post-period mean of period estimates equals ATT exactly", {
+  dat <- make_clustered_sdid_panel()
+  fit <- scm_fit(y ~ d | unit + year, data = dat, method = "sdid")
+  es  <- sdid_event_study(fit, cluster = "pref", data = dat, n_boot = 30L, seed = 1L)
+
+  expect_s3_class(es, "sdid_event_study")
+  expect_equal(es$estimate, fit$estimate, tolerance = 1e-12)
+
+  # Point estimates match plot_data(fit, type = "gap", align = TRUE)
+  gap_aligned <- plot_data(fit, type = "gap", align = TRUE)
+  expect_equal(es$terms$estimate, gap_aligned$gap, tolerance = 1e-12)
+  expect_equal(mean(es$terms$estimate[es$terms$period == "post"]),
+               fit$estimate, tolerance = 1e-12)
+  # Pre-period lambda-weighted mean is 0 by construction
+  expect_equal(sum(fit$time_weights * es$terms$estimate[es$terms$period == "pre"]),
+               0, tolerance = 1e-12)
+})
+
+test_that("sdid_event_study: bootstrap draws match provisional data-frame refit exactly", {
+  dat <- make_clustered_sdid_panel(n_clusters = 8L, units_per_cl = 3L, seed = 77L)
+  fit <- scm_fit(y ~ d | unit + year, data = dat, method = "sdid")
+
+  es <- sdid_event_study(fit, cluster = "pref", data = dat, n_boot = 15L, seed = 99L)
+
+  # Run the exact provisional loop with the same RNG sequence
+  by_pref <- split(dat, dat$pref)
+  set.seed(99L)
+  ref_draws <- replicate(15L, {
+    draw <- sample(names(by_pref), length(by_pref), replace = TRUE)
+    parts <- lapply(seq_along(draw), function(k) {
+      x <- by_pref[[draw[k]]]
+      x$unit <- paste0(x$unit, "_b", k)
+      x
+    })
+    b <- do.call(rbind, parts)
+    u <- tapply(b$d, b$unit, max)
+    if (all(u == 0) || all(u == 1)) return(NULL)
+    f <- tryCatch(suppressMessages(scm_fit(y ~ d | unit + year, data = b, method = "sdid")),
+                  error = function(e) NULL)
+    if (is.null(f)) return(NULL)
+    plot_data(f, type = "gap", align = TRUE)$gap
+  }, simplify = FALSE)
+  ref_valid <- do.call(rbind, ref_draws[!vapply(ref_draws, is.null, logical(1L))])
+
+  expect_equal(unname(es$boot_gaps), unname(ref_valid), tolerance = 1e-10)
+  expect_equal(es$boot_att, rowMeans(ref_valid[, es$terms$period == "post", drop = FALSE]),
+               tolerance = 1e-10)
+  expect_equal(es$se, sd(es$boot_att), tolerance = 1e-12)
+})
+
+test_that("sdid_event_study: numeric cluster IDs are drawn in numeric order", {
+  dat <- make_clustered_sdid_panel(n_clusters = 12L, units_per_cl = 3L, seed = 31L)
+  dat$pref_num <- as.integer(sub("pref_", "", dat$pref))
+  fit <- scm_fit(y ~ d | unit + year, data = dat, method = "sdid")
+
+  # pref_01..pref_12 sort the same way as 1..12 numerically, but not as
+  # character "1","10","11","12","2",...
+  es_num <- sdid_event_study(fit, cluster = "pref_num", data = dat,
+                             n_boot = 10L, seed = 8L)
+  es_chr <- sdid_event_study(fit, cluster = "pref", data = dat,
+                             n_boot = 10L, seed = 8L)
+  expect_identical(es_num$boot_gaps, es_chr$boot_gaps)
+})
+
+test_that("sdid fit keeps the raw outcome matrix only with covariates", {
+  dat <- make_clustered_sdid_panel(n_clusters = 6L, units_per_cl = 3L)
+  fit <- scm_fit(y ~ d | unit + year, data = dat, method = "sdid")
+  expect_null(fit$Y_raw)
+  expect_null(fit$X_arr)
+
+  dat$x <- rnorm(nrow(dat))
+  fit_x <- suppressWarnings(scm_fit(y ~ d | unit + year, data = dat,
+                                    method = "sdid", covariates = "x"))
+  expect_true(is.matrix(fit_x$Y_raw))
+  expect_false(is.null(fit_x$X_arr))
+  es <- sdid_event_study(fit_x, cluster = "pref", data = dat,
+                         n_boot = 5L, seed = 1L)
+  expect_s3_class(es, "sdid_event_study")
+})
+
+test_that("sdid_event_study: seed reproducibility and both normal & percentile CIs", {
+  dat <- make_clustered_sdid_panel(n_clusters = 10L, units_per_cl = 3L)
+  fit <- scm_fit(y ~ d | unit + year, data = dat, method = "sdid")
+
+  es1 <- sdid_event_study(fit, cluster = "pref", data = dat, n_boot = 40L, seed = 42L)
+  es2 <- sdid_event_study(fit, cluster = "pref", data = dat, n_boot = 40L, seed = 42L)
+  expect_identical(es1$boot_gaps, es2$boot_gaps)
+  expect_identical(es1$boot_att,  es2$boot_att)
+  expect_identical(es1$se,        es2$se)
+  expect_identical(es1$terms,     es2$terms)
+
+  # Both normal and percentile CIs are computed from the same draws
+  z <- qnorm(0.975)
+  expect_equal(es1$ci_norm_lower, es1$estimate - z * es1$se, tolerance = 1e-12)
+  expect_equal(es1$ci_norm_upper, es1$estimate + z * es1$se, tolerance = 1e-12)
+  expect_equal(es1$ci_pct_lower,
+               unname(quantile(es1$boot_att, 0.025)), tolerance = 1e-12)
+  expect_equal(es1$ci_pct_upper,
+               unname(quantile(es1$boot_att, 0.975)), tolerance = 1e-12)
+  expect_equal(es1$terms$ci_norm_lower,
+               es1$terms$estimate - z * es1$terms$se, tolerance = 1e-12)
+  expect_equal(es1$terms$ci_pct_lower,
+               unname(apply(es1$boot_gaps, 2L, quantile, probs = 0.025, names = FALSE)),
+               tolerance = 1e-12)
+
+  # tidy() and glance() switch conf.low / conf.high with ci_type
+  td_norm <- broom::tidy(es1, ci_type = "normal")
+  td_pct  <- broom::tidy(es1, ci_type = "percentile")
+  expect_equal(td_norm$conf.low, td_norm$ci_norm_lower)
+  expect_equal(td_pct$conf.low,  td_pct$ci_pct_lower)
+
+  gl_norm <- broom::glance(es1, ci_type = "normal")
+  gl_pct  <- broom::glance(es1, ci_type = "percentile")
+  expect_equal(gl_norm$conf.low, es1$ci_norm_lower)
+  expect_equal(gl_pct$conf.low,  es1$ci_pct_lower)
+})
+
+test_that("sdid_event_study: reports valid and discarded draws when clusters have pure treatment/control", {
+  # 2 clusters: cluster 1 is all treated, cluster 2 is all control.
+  # With 2 clusters drawn with replacement, P(all cluster 1 or all cluster 2) = 0.5,
+  # so roughly half of the draws have an empty treated or control group and get discarded.
+  set.seed(10)
+  dat <- expand.grid(unit = sprintf("u%d", 1:6), year = 2001:2008,
+                     stringsAsFactors = FALSE)
+  dat$pref <- ifelse(dat$unit %in% c("u1", "u2", "u3"), "P_tr", "P_co")
+  dat$d    <- as.integer(dat$pref == "P_tr" & dat$year >= 2005)
+  dat$y    <- rnorm(nrow(dat)) - 1.0 * dat$d
+
+  fit <- scm_fit(y ~ d | unit + year, data = dat, method = "sdid")
+  es  <- sdid_event_study(fit, cluster = "pref", data = dat, n_boot = 60L, seed = 7L)
+
+  expect_equal(es$n_boot, 60L)
+  expect_equal(es$n_boot_valid + es$n_boot_dropped, 60L)
+  expect_gt(es$n_boot_dropped, 0L)
+  expect_gt(es_boot_valid <- es$n_boot_valid, 0L)
+  expect_equal(nrow(es$boot_gaps), es$n_boot_valid)
+  expect_length(es$boot_att, es$n_boot_valid)
+  expect_output(print(es), "discarded")
+
+  # Tiny p-value prints as "< 1e-04" rather than rounding to "0"
+  es_tiny <- es
+  es_tiny$p_value <- 1.4e-14
+  expect_output(print(es_tiny), "< 1e-04")
+})
+
+test_that("sdid_event_study: cluster bootstrap SE exceeds unit bootstrap SE under intra-cluster correlation", {
+  dat <- make_clustered_sdid_panel(
+    n_clusters = 24L, units_per_cl = 6L,
+    cl_sd = 1.8, eps_sd = 0.1, seed = 2026L
+  )
+  fit <- scm_fit(y ~ d | unit + year, data = dat, method = "sdid")
+
+  es_unit <- sdid_event_study(fit, cluster = NULL, n_boot = 150L, seed = 11L)
+  es_cl   <- sdid_event_study(fit, cluster = "pref", data = dat, n_boot = 150L, seed = 11L)
+
+  expect_false(es_unit$clustered)
+  expect_true(es_cl$clustered)
+  expect_equal(es_cl$n_clusters, 24L)
+  expect_equal(es_unit$n_clusters, 144L)
+  # Under strong cluster-level shocks, cluster bootstrap SE is substantially larger
+  expect_gt(es_cl$se, es_unit$se * 1.4)
+  expect_gt(mean(es_cl$terms$se), mean(es_unit$terms$se) * 1.4)
+})
+
+test_that("sdid_event_study: cluster specification accepts column name or named vector, rejects unnamed vector", {
+  dat <- make_clustered_sdid_panel(n_clusters = 8L, units_per_cl = 3L)
+  fit <- scm_fit(y ~ d | unit + year, data = dat, method = "sdid")
+
+  # Named lookup vector (even in scrambled order) gives identical results to column name
+  u_unique <- unique(dat[, c("unit", "pref")])
+  scram    <- sample(nrow(u_unique))
+  cl_vec   <- stats::setNames(u_unique$pref[scram], u_unique$unit[scram])
+
+  es_col <- sdid_event_study(fit, cluster = "pref", data = dat, n_boot = 25L, seed = 5L)
+  es_vec <- sdid_event_study(fit, cluster = cl_vec, n_boot = 25L, seed = 5L)
+  es_fml <- sdid_event_study(fit, cluster = ~ pref, data = dat, n_boot = 25L, seed = 5L)
+  expect_identical(es_col$boot_gaps, es_vec$boot_gaps)
+  expect_identical(es_col$boot_gaps, es_fml$boot_gaps)
+
+  # Positional (unnamed) vector is rejected
+  expect_error(
+    sdid_event_study(fit, cluster = u_unique$pref, n_boot = 10L),
+    "Unnamed positional vectors are not accepted"
+  )
+  # Column name without `data` is rejected
+  expect_error(
+    sdid_event_study(fit, cluster = "pref", n_boot = 10L),
+    "`data` must also be supplied"
+  )
+  # Missing unit in named vector is rejected
+  expect_error(
+    sdid_event_study(fit, cluster = cl_vec[-1L], n_boot = 10L),
+    "missing 1 unit"
+  )
+  # Time-varying cluster in `data` is rejected
+  dat_bad <- dat
+  dat_bad$pref[1L] <- "other_pref"
+  expect_error(
+    sdid_event_study(fit, cluster = "pref", data = dat_bad, n_boot = 10L),
+    "more than one cluster"
+  )
+})
+
+test_that("sdid_event_study and sdid_inference: reject staggered fits and invalid cluster args", {
+  stag <- make_staggered_panel()
+  fit_stag <- scm_fit(y ~ d | id + time, data = stag, method = "sdid")
+  expect_error(sdid_event_study(fit_stag), "staggered")
+
+  fit_scm <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  expect_error(sdid_event_study(fit_scm), "method = 'sdid'")
+
+  # scm_fit() does not accept `cluster`
+  expect_error(
+    scm_fit(y ~ d | id + time, data = panel, method = "sdid", cluster = "id"),
+    "unused argument"
+  )
+
+  # sdid_inference() rejects `cluster` with method-specific guidance
+  fit_sdid <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  expect_error(
+    sdid_inference(fit_sdid, method = "bootstrap", cluster = "id"),
+    "sdid_event_study"
+  )
+  expect_error(
+    sdid_inference(fit_sdid, method = "placebo", cluster = "id"),
+    "applies only to bootstrap"
+  )
+  expect_error(
+    sdid_inference(fit_sdid, method = "jackknife", cluster = "id"),
+    "applies only to bootstrap"
+  )
+})
+
+test_that("plot.sdid_event_study: handles non-consecutive years (2011-2012 gap) and reference lines", {
+  dat <- make_clustered_sdid_panel(
+    n_clusters = 8L, units_per_cl = 3L,
+    times = c(2007:2010, 2013:2021), treat_from = 2013L
+  )
+  fit <- scm_fit(y ~ d | unit + year, data = dat, method = "sdid")
+  es  <- sdid_event_study(fit, cluster = "pref", data = dat, n_boot = 20L, seed = 3L)
+
+  p <- plot(es)
+  expect_s3_class(p, "ggplot")
+  built <- ggplot2::ggplot_build(p)
+
+  # x-axis breaks are the observed years only (no 2011 or 2012 ticks)
+  x_scale <- built$layout$panel_params[[1L]]$x
+  breaks  <- x_scale$get_breaks()
+  breaks  <- breaks[!is.na(breaks)]
+  expect_identical(as.integer(breaks), c(2007:2010, 2013:2021))
+  expect_false(any(c(2011L, 2012L) %in% as.integer(breaks)))
+
+  # Default vline_offset = -1 places the vertical line on the last pre-period (2010)
+  expect_equal(.vline_x(p), 2010)
+  # vline_offset = -0.5 interpolates midway between 2010 and 2013 -> 2011.5
+  p_mid <- plot(es, vline_offset = -0.5)
+  expect_equal(.vline_x(p_mid), 2011.5)
+
+  # Percentile CI plot and plot_data()
+  p_pct <- plot(es, ci_type = "percentile", connect = TRUE)
+  expect_s3_class(p_pct, "ggplot")
+  pd <- plot_data(es, ci_type = "percentile")
+  expect_equal(pd$conf.low, es$terms$ci_pct_lower)
+})
+
+test_that("unbalanced panel is rejected with a clear error message in SDID", {
+  dat <- make_clustered_sdid_panel(n_clusters = 6L, units_per_cl = 2L)
+  # Drop one unit-year observation to make the panel unbalanced
+  dat_unbal <- dat[-1L, ]
+  expect_error(
+    scm_fit(y ~ d | unit + year, data = dat_unbal, method = "sdid"),
+    "balanced panel"
+  )
+})
+

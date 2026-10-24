@@ -7,7 +7,8 @@
 | 項目 | 内容 |
 |---|---|
 | not-yet-treated ドナー（`control_group` の第 3 の値） | BFR の `D = {T_i > T(g) + K}` は推定窓 k ≤ K の打ち切りとセット。coresynth は事後窓を末尾まで使うので、対応するには全推論関数が前提にしている「事後行 = T_pre+1..TT」を崩す必要があり、波及範囲が広い |
-| GSC の加法固定効果、TASC の `r` 選択 | 各手法の rules ファイル参照 |
+| TASC の `r` 選択・予測区間 | 論文に d の選択規則は無い（ユーザー指定）。論文は状態共分散から予測区間を出している。`tasc.md` 参照 |
+| SI の共変量 | Agarwal et al. Appendix E（時不変共変量を事前アウトカムの下に積む）。`si.md` 参照 |
 | `augment_scm()` の staggered エラー文言、sharp SCM の no-op 引数 | `.claude/rules/scm.md` 参照 |
 
 ## 推定値・推論結果が変わる設計選択（ユーザー判断待ち）
@@ -16,8 +17,7 @@
 
 | 項目 | 現状と論文との差 |
 |---|---|
-| SDID placebo | λ・ζ を元のフィットの値で固定し、N_tr>1 でも疑似処置を 1 ユニットにしている（`sdid.md` の「λ・ζ² 固定」は意図的）。Clarke et al. (2024) Algorithm 4 は λ を再推定し N_tr 個を疑似処置にする → N_tr>1 で SE が保守的 |
-| SDID bootstrap | 対照群だけをリサンプル（処置は固定）。Clarke Algorithm 2 は全ユニットをリサンプル |
+| SDID placebo | λ・ζ を元のフィットの値で固定し、N_tr>1 でも疑似処置を 1 ユニットにしている（`sdid.md` の「λ・ζ² 固定」は意図的）。Clarke et al. (2024) Algorithm 4 は λ を再推定し N_tr 個を疑似処置にする。実測（`sandbox/31_inference_coverage_sdid.R`）で N_tr=5・20 の被覆は 0.97〜1.00 と保守的、N_tr=1 では 0.81（SE 0.33 vs SD 0.49）と過小。bootstrap・jackknife は 1.1.0.9000 で論文どおりにした（`sdid.md`） |
 | `gsc_boot()` の p 値 | `mean(\|boot\| >= \|att\|)` で +1 補正が無くちょうど 0 になりうる（Davison–Hinkley の `(1+#)/(B+1)` が標準） |
 | 処置の途中解除（d が 1→0） | 吸収的とみなして黙って処理される（6 手法とも推定値は解除なしと同一）。`panel_to_matrices()` で警告かエラーにする余地 |
 | `summary.coresynth()` | summary クラスを返さず表示だけする（CRAN 上は問題なし、慣習上の改善点） |

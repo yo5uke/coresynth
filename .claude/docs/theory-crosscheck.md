@@ -6,10 +6,10 @@
 |---|---|---|
 | SDID | σ̂²（Eq. 2.2）・ζ²・QP 正則化・推定量（Eq. 2.4–2.5） | Arkhangelsky et al. (2021) |
 | SCM | 座標降下 11 点グリッド・OOS V 選択・低ランク FISTA パス・`proj_simplex` 単調早期 break | Abadie et al. (2010) |
-| GSC | EM ループ（E: truncated SVD、M: ridge OLS）・処置ローディング OLS・反事実構成 | Xu (2017) |
+| GSC | Bai (2009) 反復（集中化 β 更新、収束判定つき）・処置ローディング OLS・反事実構成・加法 FE（Remark 3、within 変換＋残差平均）・Algorithm 2 の parametric bootstrap（残差ベクトル再抽出・LOO 予測誤差） | Xu (2017) |
 | SI-PCR | `Y_pre_co^T` の SVD から疑似逆行列構成（`Pinv = U_k diag(1/S_k) V_k^T`） | Agarwal et al. (2025) §3.3 |
 | MC | Soft-Impute（fill-in + SVD 閾値）アルゴリズム | Mazumder et al. (2010) |
-| TASC（C++） | `kalman_smoother_cpp`（Joseph form）・`arma::find_finite` による NA 除外 | Shumway & Stoffer (2000) |
+| TASC | `kalman_smoother_cpp`（Joseph form）・`arma::find_finite` による NA 除外・Algorithm 7 の厳密 M-step（P^s 込み、m0/P0 更新、対角 Q・R）＋欠測セル（観測期間のみ）＋ユニット切片 | Rho et al. (2026)・Shumway & Stoffer (1982) |
 | SCM-Design | base/weakly_targeted/unit_level 3 バリアント（eq.7/9/10 を S 固定下で厳密最適化）・順列検定・共形 CI | Abadie & Zhao (2026) + 付属コード SCDesign |
 | Staggered 加重 | `Σ N_tr,g·T_post,g·τ̂_g / Σ N_tr,g·T_post,g` を全手法で正しく実装 | Clarke et al. (2024) |
 | SDID 推論（sharp） | placebo（時間重み固定・ユニット重み再計算）・bootstrap・jackknife | Clarke et al. (2024) |
@@ -31,5 +31,5 @@
 | 順列検定 | ADH 2010 Fig. 8 | ADH 予測子指定で p=1/39=0.0256 を再現 |
 | SDID | synthdid | −15.6046 vs −15.6038、重み相関 0.9998 |
 | Conformal | scinference | p=0.096774 完全一致 |
-| GSC | gsynth / fect | 正しく特定された DGP で 3.011 / 2.992 / 3.010（真値 3） |
+| GSC | gsynth / fect | `force` = unit/time/two-way は r=0,1,2 で ATT 1e-15 一致。`"none"` は gsynth が総平均 μ を持つ分だけ違う（Y から総平均を引けば一致）。共変量つき（Xu 式 3 の DGP、30 draws）で ATT 平均差 0.029 |
 | MC | MCPanel / fect | 2.9507 vs 2.9515 / 2.9138（真値 3） |

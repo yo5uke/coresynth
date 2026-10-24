@@ -20,13 +20,13 @@ $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{
 | 手法 | sharp 推論 | staggered 推論 |
 |---|---|---|
 | SCM | `mspe_ratio_pval()` | `scm_inference()`（jackknife 既定 / wild bootstrap） |
-| SDID | `sdid_inference()`（4 method 全て）/ `sdid_event_study()`（期間別効果＋クラスタ/ユニット bootstrap） | `sdid_inference()` のみ |
-| GSC | `gsc_boot()` / `gsc_inference()` | `gsc_inference()` |
+| SDID | `sdid_inference()`（4 method 全て。bootstrap・jackknife は N_tr ≥ 2、1 なら placebo）/ `sdid_event_study()`（期間別効果＋クラスタ/ユニット bootstrap） | `sdid_inference()` のみ |
+| GSC | `gsc_boot()`（Xu Algorithm 2、N_tr が少ないとき）/ `gsc_inference()`（N_tr ≥ 2） | `gsc_inference()` |
 | MC | — | — |
 | TASC | — | — （本パッケージで唯一、推論ツール自体なし） |
-| SI | `si_inference()`（multi-arm 含む） | 同左 |
+| SI | `si_inference()`（multi-arm 含む、N_tr ≥ 2。1 なら `conformal_inference()`） | 同左 |
 
-`jackknife_global` は staggered 専用。`conformal_inference()` は sharp fit 限定（staggered/multi-arm/tasc はエラーで上表へ誘導）。
+`jackknife_global` は staggered 専用。`conformal_inference()` は sharp fit 限定（staggered/multi-arm/tasc はエラーで上表へ誘導）。`sdid_inference()`・`gsc_inference()`・`si_inference()` の bootstrap・jackknife は処置ユニットも再抽出・削除する（共通ドライバ `.unit_inference()`、`object-model.md`）。staggered の jackknife はどのコホートにも処置 2 以上が必要（Clarke Algorithm 3）。
 
 ---
 
@@ -76,7 +76,7 @@ $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{
 
 ## 既知の制限・スコープ外
 
-- **SI**: 共変量未対応（sharp/staggered とも、原著が covariate なしの定式化）
+- **SI**: 共変量未対応（sharp/staggered とも）。原著 Appendix E の時不変共変量の拡張は未実装
 - **SCM staggered**: `predictors = NULL` 限定（`covariates` partial-out のみ）
 - **plot()**: staggered fit は未対応（明示エラー）。cohort 別の系列は `augment()` の long df を使う
 - **MC/TASC の staggered**: `control_group` を選べない。推論関数は sharp/staggered とも無し

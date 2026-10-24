@@ -72,10 +72,16 @@
   TT   <- nrow(Yco)
   N_co <- ncol(Yco)
   r <- as.integer(min(.conformal_tuning(fit[["r"]], "r", "gsc"), TT, N_co))
-  empty_co <- array(0.0, dim = c(TT, N_co, 0L))
-  empty_tr <- array(0.0, dim = c(TT, 1L, 0L))
-  res <- gsc_ife_cpp(Yco, matrix(y1, ncol = 1L), r, empty_co, empty_tr)
-  drop(res$Y_tr_hat)
+  # Covariates stay in the model: y1 is the treated units' average, whose
+  # covariate part under the linear term is the average covariate path.
+  X_co <- fit$covariate_array_co
+  X_tr <- NULL
+  if (!is.null(fit$covariate_array_tr)) {
+    p    <- dim(fit$covariate_array_tr)[3L]
+    X_tr <- array(apply(fit$covariate_array_tr, c(1L, 3L), mean), c(TT, 1L, p))
+  }
+  ctrl <- .gsc_fit_controls(Yco, X_co, r, fit[["force"]] %||% "none")
+  drop(.gsc_counterfactual(ctrl, matrix(y1, ncol = 1L), X_tr, TT)$Y_hat)
 }
 
 .conformal_refit.coresynth_mc <- function(fit, Yco, y1) {

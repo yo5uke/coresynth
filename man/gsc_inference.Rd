@@ -16,7 +16,8 @@ gsc_inference(
 \arguments{
 \item{fit}{A \code{coresynth} object from \code{\link[=scm_fit]{scm_fit()}} with \code{method = "gsc"}.}
 
-\item{method}{\code{"bootstrap"} (default) or \code{"jackknife"}.}
+\item{method}{\code{"bootstrap"} (default), \code{"jackknife"}, or
+\code{"jackknife_global"} (staggered fits only).}
 
 \item{n_boot}{Number of bootstrap replications (default 499L; ignored for jackknife).}
 
@@ -30,13 +31,29 @@ gsc_inference(
 A list of class \code{coresynth_inference}.
 }
 \description{
-Estimates SE and confidence intervals for the ATT via non-parametric cluster
-bootstrap or jackknife over control units. Works for both sharp and staggered
-GSC fits. For staggered fits, bootstrap resamples each cohort's control pool
-independently, and jackknife uses a per-cohort LOO with delta-method variance
-aggregation.
+Estimates SE and confidence intervals for the ATT by re-estimating the
+fit on resampled units: a bootstrap of the treated and the control units,
+drawn separately, or a jackknife that drops one unit at a time. Works for
+both sharp and staggered GSC fits.
 }
 \details{
+Xu (2017, S.3.2) notes that resampling units is valid when many units are
+treated and proposes the parametric bootstrap of \code{\link[=gsc_boot]{gsc_boot()}} for when few
+are: the treated units' own noise varies across replicates only through
+which treated units are drawn. With a single treated unit there is no such
+variation, so this function stops and points to \code{\link[=gsc_boot]{gsc_boot()}} and
+\code{\link[=conformal_inference]{conformal_inference()}}.
+
+On a staggered fit the bootstrap draws the treated units from all cohorts
+together, so cohort sizes vary across replicates, and draws the controls
+once per replicate for every cohort; cohorts are rebuilt from the draw and
+combined with their \code{N_treated * T_post} weights. \code{"jackknife"} drops each
+cohort's own donors and treated units and combines the per-cohort
+variances by the delta method, which ignores the covariance that shared
+donors induce between cohorts; \code{"jackknife_global"} drops every unit from
+the whole panel in turn and keeps it. Both jackknives drop treated units,
+so every cohort needs at least two (Clarke et al. 2024, Algorithm 3).
+
 Note: \code{gsc_boot()} performs a \emph{parametric} bootstrap under H0 (hypothesis
 testing). \code{gsc_inference()} provides \emph{non-parametric} SE and CIs suitable
 for inference about the ATT magnitude.

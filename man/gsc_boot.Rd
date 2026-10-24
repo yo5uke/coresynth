@@ -2,14 +2,15 @@
 % Please edit documentation in R/gsc.R
 \name{gsc_boot}
 \alias{gsc_boot}
-\title{Parametric Bootstrap Inference for GSC (Xu 2017 S.3)}
+\title{Parametric Bootstrap Inference for GSC (Xu 2017, Algorithm 2)}
 \usage{
 gsc_boot(fit, B = 499L, alpha = 0.05, seed = NULL)
 }
 \arguments{
 \item{fit}{A \code{coresynth} object from \code{\link[=scm_fit]{scm_fit()}} with \code{method = "gsc"}.}
 
-\item{B}{Bootstrap replications (default 499L).}
+\item{B}{Number of bootstrap replications, and of prediction errors
+drawn for the treated units (default 499L).}
 
 \item{alpha}{Significance level for the confidence interval (default 0.05).}
 
@@ -28,10 +29,20 @@ A list with:
 }
 }
 \description{
-Generates the null distribution of the ATT under H0 (no treatment effect)
-by parametric resampling from the estimated IFE factor model. Under H0,
-both the control panel and treated unit are generated from the fitted
-factor model with homoskedastic noise. When the fit includes covariate
-adjustment (beta), the covariate contribution is included in the simulated
-DGP and re-estimated in each bootstrap replicate.
+Uncertainty for the ATT of a sharp GSC fit, conditional on the covariates,
+factors and loadings, by resampling the residuals of the estimated IFE
+model (Xu 2017, S.3.2 and Algorithm 2). It is the procedure the paper
+proposes when few units are treated, where resampling the treated units
+themselves cannot reach their noise.
+}
+\details{
+Each replicate rebuilds the panel without a treatment effect from the
+fitted values and re-estimates it. Residuals are resampled as whole time
+series, which keeps their serial correlation. The control units take the
+in-sample residuals of the IFE fit. The treated units take prediction
+errors instead, which are larger: before the bootstrap, a control unit is
+set aside as if it were treated, the model is refitted on a resample of
+the remaining controls, and the left-out unit's observed series minus its
+predicted counterfactual is one prediction error. Covariates enter through
+the fitted values and are re-estimated in each replicate.
 }

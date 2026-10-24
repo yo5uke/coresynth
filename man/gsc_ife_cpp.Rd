@@ -4,14 +4,24 @@
 \alias{gsc_ife_cpp}
 \title{Fast Interactive Fixed Effects (IFE) for Generalized Synthetic Control}
 \usage{
-gsc_ife_cpp(Y_co, Y_tr_pre, r, X_co, X_tr_pre, max_iter = 50L, tol = 1e-06)
+gsc_ife_cpp(
+  Y_co,
+  Y_tr_pre,
+  r,
+  X_co,
+  X_tr_pre,
+  max_iter = 1000L,
+  tol = 1e-08,
+  force = "none"
+)
 }
 \arguments{
 \item{Y_co}{Control units outcome matrix (T x N_co)}
 
 \item{Y_tr_pre}{Treated units pre-treatment outcomes (T_pre x N_tr)}
 
-\item{r}{Number of latent factors (must be <= min(T, N_co))}
+\item{r}{Number of latent factors (must be <= min(T, N_co)); 0 is
+allowed with additive effects}
 
 \item{X_co}{Time-varying covariate cube (T x N_co x p). Pass an empty
 cube (0 slices) for the covariate-free estimator.}
@@ -23,9 +33,12 @@ is estimated from Y_tr_pre - X_tr_pre * beta (covariate-
 demeaned). Pass an empty cube (0 slices) to skip demeaning
 (backward-compatible, but biased when beta != 0).}
 
-\item{max_iter}{Maximum EM iterations (default 50)}
+\item{max_iter}{Maximum iterations of the covariate loop (default 1000)}
 
-\item{tol}{Convergence tolerance on relative beta change (default 1e-6)}
+\item{tol}{Convergence tolerance on relative beta change (default 1e-8)}
+
+\item{force}{Additive fixed effects: \code{"none"} (default), \code{"unit"},
+\code{"time"} or \code{"two-way"}.}
 }
 \value{
 A list with components:
@@ -33,16 +46,30 @@ A list with components:
 \item \code{F}: estimated time factors (T x r).
 \item \code{L_co}: control-unit factor loadings (N_co x r).
 \item \code{L_tr}: treated-unit factor loadings (N_tr x r).
-\item \code{Y_tr_hat}: estimated treated-unit counterfactual outcomes (T x N_tr).
+\item \code{Y_tr_hat}: estimated treated-unit counterfactual outcomes (T x N_tr),
+additive effects included, covariate contribution excluded.
+\item \code{Y_co_hat}: fitted control outcomes on the same basis (T x N_co).
 \item \code{singular_values}: singular values from the final truncated SVD.
 \item \code{beta}: estimated covariate coefficients (p x 1), empty when no
 covariates are supplied.
+\item \code{mu}, \code{alpha_co}, \code{alpha_tr}, \code{xi}: grand mean, unit effects of the
+control and treated units, and time effects (zero where \code{force}
+leaves them out).
+\item \code{n_iter}: iterations of the covariate loop (0 without covariates).
+\item \code{converged}: whether the covariate loop met \code{tol} within \code{max_iter}
+(always \code{TRUE} without covariates).
 }
 }
 \description{
-Implements Xu (2017) IFE model with optional covariate adjustment.
-When X_co has p > 0 slices, runs an EM loop alternating between:
-E-step: truncated SVD of Y_tilde = Y_co - X_co * beta
-M-step: panel OLS to update beta given current factors
+Implements Xu (2017) IFE model with optional covariate adjustment and
+optional additive fixed effects (Xu 2017, Remark 3).
+When X_co has p > 0 slices, alternates the two steps of Bai (2009):
+factors: truncated SVD of Y_tilde = Y_co - X_co * beta
+beta:    inverse(sum_i X_i' M_F X_i) sum_i X_i' M_F Y_i, with the loadings
+concentrated out through the annihilator M_F of the factors
 When X_co has 0 slices (default), falls back to the plain 3-step estimator.
+Additive effects are swept out of the control panel by the within
+transformation first; on a balanced panel this solves the joint least
+squares problem exactly, and the effects are recovered from the means of
+the residual.
 }

@@ -1,16 +1,65 @@
+# ── Internal: control-unit IFE fit and the treated-unit step ─────────────────
+# Xu (2017) estimates the factors and beta from the control units alone
+# (Step 1) and only then each treated unit's loadings from its own
+# pre-treatment periods (Step 2). Splitting the two lets one control-unit fit
+# serve every cohort of a staggered panel and every refit of the inference
+# routines. `X` arguments are T x N x p covariate cubes, or NULL. `force`
+# names the additive fixed effects of Xu (2017, Remark 3).
+.gsc_fit_controls <- function(Y_co, X_co, r, force = "none") {
+  TT <- nrow(Y_co)
+  p  <- if (is.null(X_co)) 0L else dim(X_co)[3L]
+  if (p == 0L) X_co <- array(0.0, c(TT, ncol(Y_co), 0L))
+  gsc_ife_cpp(Y_co, matrix(0.0, TT, 0L), r, X_co, array(0.0, c(TT, 0L, p)),
+              force = force)
+}
+
+# Whether `force` gives each unit its own effect, which the treated units
+# then estimate from their pre-treatment periods alongside their loadings.
+.gsc_unit_fe <- function(force) force %in% c("unit", "two-way")
+
+# Counterfactual over all T periods for treated columns Y_tr whose first
+# T_pre_g periods are untreated, covariate contribution included.
+.gsc_counterfactual <- function(ctrl, Y_tr, X_tr, T_pre_g) {
+  TT  <- nrow(Y_tr)
+  n   <- ncol(Y_tr)
+  p   <- length(ctrl$beta)
+  pre <- seq_len(T_pre_g)
+  X_pre <- if (p > 0L) X_tr[pre, , , drop = FALSE] else
+    array(0.0, c(T_pre_g, n, 0L))
+  force <- ctrl[["force"]] %||% "none"
+  tr <- gsc_treated_cpp(ctrl$F, ctrl$beta, Y_tr[pre, , drop = FALSE], X_pre,
+                        ctrl[["mu"]] %||% 0, ctrl[["xi"]] %||% numeric(0),
+                        .gsc_unit_fe(force))
+  Y_hat <- tr$Y_tr_hat
+  for (j in seq_len(p))
+    Y_hat <- Y_hat + matrix(X_tr[, , j], TT, n) * ctrl$beta[j]
+  list(Y_hat = Y_hat, L_tr = tr$L_tr, alpha_tr = drop(tr$alpha_tr))
+}
+
 # ── Internal: cohort-by-cohort GSC for staggered adoption ────────────────────
-# Clarke et al. (2024); Arkhangelsky et al. (2021) Appendix S.8.
-# Factors estimated independently per cohort (gsc_ife_cpp per cohort).
-# Y_co_g uses all T periods (pragmatic: future-treated contamination treated as
-# noise, same rationale as SDID staggered). Covariates handled via per-cohort
-# EM (subset of global T×N×p array).
+# Clarke et al. (2024). Each cohort's treated loadings come from its own
+# pre-treatment window; the factors come from the donors over all T periods.
+# Under the default "never_treated" every cohort has the same donors, so the
+# control-unit fit is done once. The deprecated "clean" adds the units
+# adopting later, which differ by cohort, so it fits per cohort.
 .fit_gsc_staggered <- function(pan, Y, r, covariate_array = NULL,
-                                control_group = "never_treated") {
+                                control_group = "never_treated",
+                                force = "none") {
   TT      <- nrow(Y)
   T_adopt <- pan$T_adopt
   idx_tr  <- pan$idx_treat
   idx_co  <- pan$idx_control
-  p       <- if (!is.null(covariate_array)) dim(covariate_array)[3L] else 0L
+  slice_X <- function(idx)
+    if (is.null(covariate_array)) NULL else covariate_array[, idx, , drop = FALSE]
+
+  shared <- NULL
+  if (control_group == "never_treated") {
+    shared <- tryCatch(
+      .gsc_fit_controls(Y[, idx_co, drop = FALSE], slice_X(idx_co), r, force),
+      error = function(e) stop("GSC staggered: the control-unit fit failed: ",
+                               conditionMessage(e), call. = FALSE))
+    .gsc_warn_unconverged(!isTRUE(shared$converged), "the control-unit fit")
+  }
 
   cohorts <- sort(unique(T_adopt[idx_tr]))
 
@@ -27,49 +76,32 @@
     }
 
     N_co_g <- length(idx_co_g)
-    if (N_co_g < r || T_pre_g < r) {
+    if (N_co_g < r || T_pre_g < r + .gsc_unit_fe(force)) {
       warning(sprintf(
         "GSC staggered: cohort g=%d skipped (T_pre=%d, N_co=%d, r=%d).",
         g, T_pre_g, N_co_g, r), call. = FALSE)
       return(NULL)
     }
 
-    pre_rows  <- seq_len(T_pre_g)
+    ctrl <- shared
+    if (is.null(ctrl)) {
+      ctrl <- tryCatch(
+        .gsc_fit_controls(Y[, idx_co_g, drop = FALSE], slice_X(idx_co_g), r,
+                          force),
+        error = function(e) {
+          warning(sprintf("GSC staggered: cohort g=%d failed: %s",
+                          g, conditionMessage(e)), call. = FALSE)
+          NULL
+        })
+      if (is.null(ctrl)) return(NULL)
+      .gsc_warn_unconverged(!isTRUE(ctrl$converged), sprintf("cohort g=%d", g))
+    }
+
+    Y_treat_g <- Y[, idx_tr_g, drop = FALSE]
+    cf        <- .gsc_counterfactual(ctrl, Y_treat_g, slice_X(idx_tr_g), T_pre_g)
     post_rows <- (T_pre_g + 1L):TT
-
-    Y_co_g     <- Y[, idx_co_g, drop = FALSE]
-    Y_tr_pre_g <- Y[pre_rows, idx_tr_g, drop = FALSE]
-    Y_treat_g  <- Y[, idx_tr_g, drop = FALSE]
-
-    if (p > 0L) {
-      X_co_g     <- covariate_array[, idx_co_g, , drop = FALSE]
-      X_tr_pre_g <- covariate_array[pre_rows, idx_tr_g, , drop = FALSE]
-    } else {
-      X_co_g     <- array(0.0, dim = c(TT, N_co_g, 0L))
-      X_tr_pre_g <- array(0.0, dim = c(T_pre_g, length(idx_tr_g), 0L))
-    }
-
-    res <- tryCatch(
-      gsc_ife_cpp(Y_co_g, Y_tr_pre_g, r, X_co_g, X_tr_pre_g),
-      error = function(e) {
-        warning(sprintf("GSC staggered: cohort g=%d failed: %s",
-                        g, conditionMessage(e)), call. = FALSE)
-        NULL
-      }
-    )
-    if (is.null(res)) return(NULL)
-
-    Y_tr_hat_g <- res$Y_tr_hat
-    if (p > 0L) {
-      X_tr_full_g <- covariate_array[, idx_tr_g, , drop = FALSE]
-      for (j in seq_len(p)) {
-        Y_tr_hat_g <- Y_tr_hat_g +
-          matrix(X_tr_full_g[,, j], TT, length(idx_tr_g)) * res$beta[j]
-      }
-    }
-
-    att_g <- mean(Y_treat_g[post_rows, , drop = FALSE] -
-                    Y_tr_hat_g[post_rows, , drop = FALSE])
+    att_g     <- mean(Y_treat_g[post_rows, , drop = FALSE] -
+                        cf$Y_hat[post_rows, , drop = FALSE])
 
     list(
       cohort    = g,
@@ -80,12 +112,13 @@
       weight    = as.numeric(length(idx_tr_g)) * T_post_g,
       idx_tr    = idx_tr_g,
       idx_co    = idx_co_g,
-      Y_tr_hat  = Y_tr_hat_g,
+      Y_tr_hat  = cf$Y_hat,
       Y_treat   = Y_treat_g,
-      F         = res$F,
-      L_co      = res$L_co,
-      L_tr      = res$L_tr,
-      beta      = res$beta
+      F         = ctrl$F,
+      L_co      = ctrl$L_co,
+      L_tr      = cf$L_tr,
+      alpha_tr  = cf$alpha_tr,
+      beta      = ctrl$beta
     )
   })
 
@@ -97,6 +130,17 @@
   .aggregate_cohorts(cohort_list[valid])
 }
 
+# gsc_ife_cpp() caps the covariate loop at max_iter. A fit that stops at the
+# cap carries a beta that has not settled, which moves the counterfactual, so
+# say so rather than return it silently. `n` counts the fits that hit the cap.
+.gsc_warn_unconverged <- function(n, where) {
+  if (n > 0L)
+    warning(sprintf(paste0(
+      "GSC: the covariate loop did not converge (%s); beta and the effect ",
+      "estimate may not have settled."), where), call. = FALSE)
+  invisible(NULL)
+}
+
 # ── Internal: Xu (2017) Algorithm 1 -- cross-validate the number of factors ──
 # Leave-one-period-out over the pre-treatment window. For each candidate r the
 # IFE model is estimated once on the control units; then each pre-treatment
@@ -104,47 +148,58 @@
 # OLS on the remaining pre-treatment periods, and period s is predicted from
 # them. The r with the smallest mean squared prediction error wins.
 #
-# The candidate set starts at 1: r = 0 (no factors, i.e. two-way fixed effects)
-# is what the C++ IFE solver cannot represent, since it takes a rank-r
-# truncated SVD.
+# With additive fixed effects the candidates start at r = 0, the effects
+# alone; the treated units' unit effects are refit alongside their loadings.
+# Without them r = 0 would leave nothing but the covariates, so the
+# candidates start at 1.
 #
 # Dividing by T_pre alone, rather than by T_pre * N_treated, follows the
 # paper's Step 3. The treated count is constant across candidates, so it does
 # not affect which r wins.
-.gsc_cv_r <- function(Y_co, Y_tr_pre, X_co, X_tr_pre, r_max = 5L) {
-  T_pre <- nrow(Y_tr_pre)
-  N_co  <- ncol(Y_co)
-  N_tr  <- ncol(Y_tr_pre)
-  p     <- dim(X_tr_pre)[3L]
+.gsc_cv_r <- function(Y_co, Y_tr_pre, X_co, X_tr_pre, r_max = 5L,
+                      force = "none") {
+  T_pre   <- nrow(Y_tr_pre)
+  N_co    <- ncol(Y_co)
+  N_tr    <- ncol(Y_tr_pre)
+  p       <- dim(X_tr_pre)[3L]
+  unit_fe <- .gsc_unit_fe(force)
 
-  # Holding out one period leaves T_pre - 1 to identify r loadings by OLS
-  hi <- min(as.integer(r_max), T_pre - 1L, N_co)
-  if (hi < 1L)
+  # Holding out one period leaves T_pre - 1 to identify the loadings, and the
+  # unit effect when there is one, by OLS
+  lo <- if (identical(force, "none")) 1L else 0L
+  hi <- min(as.integer(r_max), T_pre - 1L - unit_fe, N_co)
+  if (hi < lo)
     stop("GSC cannot cross-validate the number of factors with T_pre = ",
          T_pre, " pre-treatment period(s) and ", N_co, " control unit(s). ",
          "Supply r explicitly.", call. = FALSE)
 
-  cands <- seq_len(hi)
+  cands <- lo:hi
+  n_unconv <- 0L
   mspe  <- vapply(cands, function(r) {
-    res <- tryCatch(gsc_ife_cpp(Y_co, Y_tr_pre, r, X_co, X_tr_pre),
+    res <- tryCatch(gsc_ife_cpp(Y_co, Y_tr_pre, r, X_co, X_tr_pre,
+                                force = force),
                     error = function(e) NULL)
     if (is.null(res)) return(NA_real_)
-    F_pre <- res$F[seq_len(T_pre), , drop = FALSE]        # T_pre x r
+    if (!isTRUE(res$converged)) n_unconv <<- n_unconv + 1L
+    Z <- res$F[seq_len(T_pre), , drop = FALSE]           # T_pre x r
+    if (unit_fe) Z <- cbind(1, Z)
 
-    # Take the covariate part out of the treated pre-treatment outcomes, so
-    # what the held-out loadings have to explain is the factor structure.
-    R_tr <- Y_tr_pre
+    # Take the covariate part and the grand mean and time effects out of the
+    # treated pre-treatment outcomes, so what the held-out loadings have to
+    # explain is the unit-specific part.
+    R_tr <- Y_tr_pre - res$mu - drop(res$xi)[seq_len(T_pre)]
     if (p > 0L)
       for (j in seq_len(p))
         R_tr <- R_tr - matrix(X_tr_pre[, , j], T_pre, N_tr) * res$beta[j]
 
     err <- vapply(seq_len(T_pre), function(s) {
-      F_ms <- F_pre[-s, , drop = FALSE]
+      if (ncol(Z) == 0L) return(sum(R_tr[s, ]^2))
+      Z_ms <- Z[-s, , drop = FALSE]
       lam  <- tryCatch(
-        solve(crossprod(F_ms), crossprod(F_ms, R_tr[-s, , drop = FALSE])),
-        error = function(e) NULL)                         # r x N_tr
+        solve(crossprod(Z_ms), crossprod(Z_ms, R_tr[-s, , drop = FALSE])),
+        error = function(e) NULL)                         # ncol(Z) x N_tr
       if (is.null(lam)) return(NA_real_)
-      sum((R_tr[s, ] - drop(F_pre[s, , drop = FALSE] %*% lam))^2)
+      sum((R_tr[s, ] - drop(Z[s, , drop = FALSE] %*% lam))^2)
     }, numeric(1L))
 
     if (anyNA(err)) NA_real_ else sum(err) / T_pre
@@ -153,6 +208,9 @@
   if (all(is.na(mspe)))
     stop("GSC cross-validation failed for every candidate number of factors. ",
          "Supply r explicitly.", call. = FALSE)
+  .gsc_warn_unconverged(n_unconv, sprintf(
+    "%d of the %d candidate fits of the factor-count cross-validation",
+    n_unconv, length(cands)))
 
   list(r     = cands[which.min(mspe)],
        table = data.frame(r = cands, mspe = mspe))
@@ -161,11 +219,11 @@
 #' Fit Generalized Synthetic Control (Xu, 2017)
 #'
 #' Uses the Interactive Fixed Effects (IFE) model:
-#'   Y_it(0) = x_it'beta + lambda_i' f_t + eps_it
+#'   Y_it(0) = x_it'beta + lambda_i' f_t + (mu + alpha_i + xi_t) + eps_it
 #' Factors f_t and control loadings Lambda_co are extracted from control units
-#' via an EM loop that alternates truncated SVD (E-step) with panel OLS for
-#' beta (M-step). When no covariates are supplied (covariates = NULL), the
-#' plain 3-step SVD estimator (beta = 0) is used.
+#' by the iteration of Bai (2009), alternating a truncated SVD with the
+#' regression for beta. The additive effects in parentheses are those of the
+#' extended model in Xu (2017, Remark 3), chosen by `force`.
 #'
 #' @param y    Outcome vector (long format)
 #' @param d    Treatment indicator (long format)
@@ -178,6 +236,8 @@
 #' @param time_var Name of the time identifier column in `data`.
 #' @param covariates Character vector of time-varying covariate column names in
 #'   `data`. When non-NULL, `data`, `id_var`, and `time_var` must be supplied.
+#' @param force Additive fixed effects: `"none"` (default), `"unit"`, `"time"`
+#'   or `"two-way"`.
 #' @return A list of class `coresynth`.
 #' @noRd
 fit_gsc_cpp <- function(
@@ -191,17 +251,24 @@ fit_gsc_cpp <- function(
   time_var = NULL,
   covariates = NULL,
   control_group = c("never_treated", "clean"),
+  force = c("none", "unit", "time", "two-way"),
   ...
 ) {
   control_group <- match.arg(control_group)
+  force         <- match.arg(force)
   pan <- panel_to_matrices(y, d, id, time)
   .check_panel_complete(pan$Y, "GSC")
   .check_control_group(control_group, pan, "GSC")
 
-  if (!is.null(r) && (!is.numeric(r) || length(r) != 1L || r < 1 ||
+  r_min <- if (force == "none") 1L else 0L
+  if (!is.null(r) && (!is.numeric(r) || length(r) != 1L || r < r_min ||
                       r != as.integer(r)))
-    stop("r must be NULL (cross-validated) or a single positive integer.",
+    stop(if (r_min == 1L)
+           "r must be NULL (cross-validated) or a single positive integer."
+         else
+           "r must be NULL (cross-validated) or a single non-negative integer.",
          call. = FALSE)
+  unit_fe <- .gsc_unit_fe(force)
 
   # Xu (2017) Algorithm 1 picks the number of factors before the effect is
   # estimated. Every treated unit is untreated throughout the global
@@ -226,7 +293,7 @@ fit_gsc_cpp <- function(
       X_co_cv <- array(0.0, c(nrow(pan$Y), length(pan$idx_control), 0L))
       X_tr_cv <- array(0.0, c(T_pre_cv,    length(pan$idx_treat),   0L))
     }
-    cv   <- .gsc_cv_r(Y_co_cv, Y_tr_cv, X_co_cv, X_tr_cv)
+    cv   <- .gsc_cv_r(Y_co_cv, Y_tr_cv, X_co_cv, X_tr_cv, force = force)
     r    <- cv$r
     r_cv <- cv$table
   }
@@ -245,11 +312,13 @@ fit_gsc_cpp <- function(
     }
     res_st <- .fit_gsc_staggered(pan, pan$Y, r,
                                   covariate_array = X_all_arr,
-                                  control_group   = control_group)
+                                  control_group   = control_group,
+                                  force           = force)
     res_st$method              <- "gsc"
     res_st$staggered           <- TRUE
     res_st$r                   <- r
     res_st$r_cv                <- r_cv
+    res_st$force               <- force
     res_st$Y_treat             <- pan$Y[, pan$idx_treat, drop = FALSE]
     res_st$Y_synth             <- NULL
     res_st$gap                 <- NULL
@@ -261,6 +330,7 @@ fit_gsc_cpp <- function(
     res_st$idx_co              <- pan$idx_control
     res_st$idx_tr              <- pan$idx_treat
     res_st$covariate_array_all <- if (use_cov_st) X_all_arr else NULL
+    res_st$control_group       <- control_group
     return(res_st)
   }
 
@@ -272,8 +342,9 @@ fit_gsc_cpp <- function(
   if (length(idx_co) < r) {
     stop("Need at least r control units for GSC.")
   }
-  if (T_pre < r) {
-    stop("Need at least r pre-treatment periods for GSC.")
+  if (T_pre < r + unit_fe) {
+    stop("Need at least r pre-treatment periods for GSC, plus one for the ",
+         "unit effect when force includes it.")
   }
 
   Y_co_all <- Y[, idx_co, drop = FALSE] # T x N_co
@@ -324,12 +395,14 @@ fit_gsc_cpp <- function(
     X_tr_pre_arr <- array(0.0, dim = c(T_pre, N_tr_n, 0L))
   }
 
-  res <- gsc_ife_cpp(Y_co_all, Y_tr_pre, r, X_co_arr, X_tr_pre_arr)
+  res <- gsc_ife_cpp(Y_co_all, Y_tr_pre, r, X_co_arr, X_tr_pre_arr,
+                     force = force)
+  .gsc_warn_unconverged(!isTRUE(res$converged), "the fit")
   beta <- res$beta # numeric(0) when p=0
 
-  # ── Add beta contribution to Y_tr_hat and compute Y_hat_co ───────────────
-  Y_tr_hat <- res$Y_tr_hat # T x N_tr, factor part
-  Y_hat_co <- res$F %*% t(res$L_co) # T x N_co, factor part
+  # ── Add beta contribution to Y_tr_hat and Y_hat_co ───────────────────────
+  Y_tr_hat <- res$Y_tr_hat # T x N_tr, factors and additive effects
+  Y_hat_co <- res$Y_co_hat # T x N_co, on the same basis
 
   if (use_cov && p > 0L) {
     T_all <- nrow(Y_tr_hat)
@@ -353,9 +426,14 @@ fit_gsc_cpp <- function(
     method = "gsc",
     r = r,
     r_cv = r_cv,
+    force = force,
     F = res$F,
     L_co = res$L_co,
     L_tr = res$L_tr,
+    mu = res$mu,
+    alpha_co = drop(res$alpha_co),
+    alpha_tr = drop(res$alpha_tr),
+    xi = drop(res$xi),
     singular_values = res$singular_values,
     beta = beta, # numeric(0) when no covariates
     Y_tr_hat = Y_tr_hat, # T x N_tr (beta included if covariates)
@@ -373,17 +451,27 @@ fit_gsc_cpp <- function(
   )
 }
 
-#' Parametric Bootstrap Inference for GSC (Xu 2017 S.3)
+#' Parametric Bootstrap Inference for GSC (Xu 2017, Algorithm 2)
 #'
-#' Generates the null distribution of the ATT under H0 (no treatment effect)
-#' by parametric resampling from the estimated IFE factor model. Under H0,
-#' both the control panel and treated unit are generated from the fitted
-#' factor model with homoskedastic noise. When the fit includes covariate
-#' adjustment (beta), the covariate contribution is included in the simulated
-#' DGP and re-estimated in each bootstrap replicate.
+#' Uncertainty for the ATT of a sharp GSC fit, conditional on the covariates,
+#' factors and loadings, by resampling the residuals of the estimated IFE
+#' model (Xu 2017, S.3.2 and Algorithm 2). It is the procedure the paper
+#' proposes when few units are treated, where resampling the treated units
+#' themselves cannot reach their noise.
+#'
+#' Each replicate rebuilds the panel without a treatment effect from the
+#' fitted values and re-estimates it. Residuals are resampled as whole time
+#' series, which keeps their serial correlation. The control units take the
+#' in-sample residuals of the IFE fit. The treated units take prediction
+#' errors instead, which are larger: before the bootstrap, a control unit is
+#' set aside as if it were treated, the model is refitted on a resample of
+#' the remaining controls, and the left-out unit's observed series minus its
+#' predicted counterfactual is one prediction error. Covariates enter through
+#' the fitted values and are re-estimated in each replicate.
 #'
 #' @param fit   A `coresynth` object from [scm_fit()] with `method = "gsc"`.
-#' @param B     Bootstrap replications (default 499L).
+#' @param B     Number of bootstrap replications, and of prediction errors
+#'   drawn for the treated units (default 499L).
 #' @param alpha Significance level for the confidence interval (default 0.05).
 #' @param seed  RNG seed for reproducibility (default NULL).
 #' @return A list with:
@@ -410,95 +498,64 @@ gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
     set.seed(seed)
   }
 
-  F_hat <- fit$F
-  L_co_hat <- fit$L_co
-  L_tr_hat <- fit$L_tr
-  r <- fit$r
-  T_pre <- fit$T_pre
+  r       <- fit$r
+  force   <- fit[["force"]] %||% "none"
+  T_pre   <- fit$T_pre
   att_obs <- fit$estimate
-  Y_co_all <- fit$Y_co_all
-  beta <- fit$beta # numeric(0) if no covariates
-  X_tr_arr <- fit$covariate_array_tr # T x N_tr x p  or NULL
-  X_co_arr <- fit$covariate_array_co # T x N_co x p  or NULL
+  Y_co    <- fit$Y_co_all
+  X_co    <- fit$covariate_array_co      # T x N_co x p, or NULL
+  X_tr    <- fit$covariate_array_tr      # T x N_tr x p, or NULL
+  TT      <- nrow(Y_co)
+  N_co    <- ncol(Y_co)
+  N_tr    <- ncol(fit$Y_treat)
+  post    <- (T_pre + 1L):TT
+  slice_X <- function(X, idx) if (is.null(X)) NULL else X[, idx, , drop = FALSE]
 
-  T <- nrow(F_hat)
-  N_co <- ncol(Y_co_all)
-  N_tr <- nrow(L_tr_hat)
-  T_post <- T - T_pre
-  pre <- seq_len(T_pre)
-  post <- (T_pre + 1L):T
+  # Fitted values without a treatment effect, covariate part included
+  Y_hat_co <- fit$Y_hat_co %||% (fit$F %*% t(fit$L_co))
+  Y_hat_tr <- fit$Y_tr_hat
+  res_co   <- Y_co - Y_hat_co
 
-  # Full prediction for controls (includes beta contribution if covariates used)
-  Y_hat_co <- if (!is.null(fit$Y_hat_co)) {
-    fit$Y_hat_co
-  } else {
-    F_hat %*% t(L_co_hat)
+  n_unconverged <- 0L
+  fit_ctrl <- function(Y, X) {
+    ctrl <- tryCatch(.gsc_fit_controls(Y, X, r, force), error = function(e) NULL)
+    if (!is.null(ctrl) && !isTRUE(ctrl$converged))
+      n_unconverged <<- n_unconverged + 1L
+    ctrl
   }
 
-  sigma2_hat <- mean((Y_co_all - Y_hat_co)^2)
-  sd_hat <- sqrt(sigma2_hat)
-
-  # Full prediction for treated pre/post (includes beta contribution)
-  Y_hat_tr_pre <- F_hat[pre, , drop = FALSE] %*% t(L_tr_hat) # T_pre x N_tr
-  Y_hat_tr_post <- F_hat[post, , drop = FALSE] %*% t(L_tr_hat) # T_post x N_tr
-  if (length(beta) > 0L && !is.null(X_tr_arr)) {
-    T_pre_n <- length(pre)
-    T_post_n <- length(post)
-    for (j in seq_along(beta)) {
-      Y_hat_tr_pre <- Y_hat_tr_pre +
-        matrix(X_tr_arr[pre, , j], T_pre_n, N_tr) * beta[j]
-      Y_hat_tr_post <- Y_hat_tr_post +
-        matrix(X_tr_arr[post, , j], T_post_n, N_tr) * beta[j]
-    }
+  # Step 1: prediction errors, each from a control unit left out as if treated
+  pred_err <- matrix(NA_real_, TT, B)
+  for (m in seq_len(B)) {
+    i    <- sample.int(N_co, 1L)
+    rest <- seq_len(N_co)[-i]
+    co_m <- rest[sample.int(length(rest), N_co, replace = TRUE)]
+    ctrl <- fit_ctrl(Y_co[, co_m, drop = FALSE], slice_X(X_co, co_m))
+    if (is.null(ctrl)) next
+    cf <- tryCatch(
+      .gsc_counterfactual(ctrl, Y_co[, i, drop = FALSE], slice_X(X_co, i), T_pre),
+      error = function(e) NULL)
+    if (!is.null(cf)) pred_err[, m] <- Y_co[, i] - cf$Y_hat[, 1L]
   }
+  pred_err <- pred_err[, colSums(is.na(pred_err)) == 0L, drop = FALSE]
+  if (ncol(pred_err) == 0L)
+    stop("gsc_boot(): every leave-one-control-out fit failed, so there are ",
+         "no prediction errors to resample. Consider reducing r.",
+         call. = FALSE)
 
-  # Covariate cubes to pass to gsc_ife_cpp in each replicate
-  X_co_arr_boot <- if (!is.null(X_co_arr)) {
-    X_co_arr
-  } else {
-    array(0.0, dim = c(T, N_co, 0L))
-  }
-  # Pre-treatment slice of treated covariates (for Xu 2017 Step 2 demeaning)
-  X_tr_pre_boot <- if (!is.null(X_tr_arr)) {
-    # T_pre x N_tr x p
-    X_tr_arr[seq_len(T_pre), , , drop = FALSE]
-  } else {
-    array(0.0, dim = c(T_pre, N_tr, 0L))
-  }
-
+  # Steps 2-3: resample residual series onto the fitted values and re-estimate
   boot_dist <- numeric(B)
-
   for (b in seq_len(B)) {
-    eps_co_star <- matrix(rnorm(T * N_co, 0, sd_hat), T, N_co)
-    eps_tr_pre_star <- matrix(rnorm(T_pre * N_tr, 0, sd_hat), T_pre, N_tr)
-    eps_tr_post_star <- matrix(rnorm(T_post * N_tr, 0, sd_hat), T_post, N_tr)
-
-    Y_star_co <- Y_hat_co + eps_co_star
-    Y_star_tr_pre <- Y_hat_tr_pre + eps_tr_pre_star
-
-    res_star <- tryCatch(
-      gsc_ife_cpp(Y_star_co, Y_star_tr_pre, r, X_co_arr_boot, X_tr_pre_boot),
-      error = function(e) NULL
-    )
-    if (is.null(res_star)) {
-      boot_dist[b] <- NA_real_
-      next
-    }
-
-    Y_star_tr_post <- Y_hat_tr_post + eps_tr_post_star
-    Y_hat_star_post <- res_star$Y_tr_hat[post, , drop = FALSE] # factor part
-
-    # Add beta_star covariate contribution to Y_hat_star_post
-    beta_star <- res_star$beta
-    if (length(beta_star) > 0L && !is.null(X_tr_arr)) {
-      T_post_n <- length(post)
-      for (j in seq_along(beta_star)) {
-        Y_hat_star_post <- Y_hat_star_post +
-          matrix(X_tr_arr[post, , j], T_post_n, N_tr) * beta_star[j]
-      }
-    }
-
-    boot_dist[b] <- mean(Y_star_tr_post - Y_hat_star_post)
+    Y_star_co <- Y_hat_co + res_co[, sample.int(N_co, N_co, replace = TRUE),
+                                   drop = FALSE]
+    Y_star_tr <- Y_hat_tr + pred_err[, sample.int(ncol(pred_err), N_tr,
+                                                  replace = TRUE), drop = FALSE]
+    ctrl <- fit_ctrl(Y_star_co, X_co)
+    cf   <- if (is.null(ctrl)) NULL else tryCatch(
+      .gsc_counterfactual(ctrl, Y_star_tr, X_tr, T_pre),
+      error = function(e) NULL)
+    boot_dist[b] <- if (is.null(cf)) NA_real_ else
+      mean(Y_star_tr[post, , drop = FALSE] - cf$Y_hat[post, , drop = FALSE])
   }
 
   n_fail <- sum(is.na(boot_dist))
@@ -511,6 +568,8 @@ gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
       "Consider reducing r or checking model fit."
     )
   }
+  .gsc_warn_unconverged(n_unconverged, sprintf(
+    "%d of the bootstrap refits", n_unconverged))
 
   valid <- boot_dist[!is.na(boot_dist)]
   # Each replicate is generated with no effect, so ATT* is a draw of the
@@ -529,59 +588,118 @@ gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
   )
 }
 
-# ── Internal helper: re-estimate one GSC cohort with given control indices ─────
-.refit_gsc_cohort <- function(Y_all, cf, r, cov_array_all) {
-  TT        <- nrow(Y_all)
-  T_pre_g   <- cf$T_pre
-  pre_rows  <- seq_len(T_pre_g)
-  post_rows <- (T_pre_g + 1L):TT
-  N_co_g    <- length(cf$idx_co)
-
-  Y_co_g   <- Y_all[, cf$idx_co, drop = FALSE]
-  Y_tr_pre <- Y_all[pre_rows, cf$idx_tr, drop = FALSE]
-
-  p <- if (!is.null(cov_array_all)) dim(cov_array_all)[3L] else 0L
-  if (p > 0L) {
-    X_co_g     <- cov_array_all[, cf$idx_co, , drop = FALSE]
-    X_tr_pre_g <- cov_array_all[pre_rows, cf$idx_tr, , drop = FALSE]
-    X_tr_full  <- cov_array_all[, cf$idx_tr, , drop = FALSE]
-  } else {
-    X_co_g     <- array(0.0, dim = c(TT, N_co_g, 0L))
-    X_tr_pre_g <- array(0.0, dim = c(T_pre_g, length(cf$idx_tr), 0L))
-    X_tr_full  <- NULL
+# ── Internal: GSC effect for a draw of units ─────────────────────────────────
+# The estimator of fit_gsc_cpp() applied to never-treated columns `co` and
+# treated columns `tr` of ctx$Y; see .unit_inference(). Cohorts are rebuilt
+# from the treated units drawn and combined with the Clarke et al. (2024)
+# weights, and the treated units of each cohort get their loadings from that
+# cohort's pre-treatment window.
+.gsc_unit_estimate <- function(ctx, co, tr) {
+  TT      <- nrow(ctx$Y)
+  adopt   <- ctx$T_adopt[tr]
+  cohorts <- sort(unique(adopt))
+  slice_X <- function(idx)
+    if (is.null(ctx$X)) NULL else ctx$X[, idx, , drop = FALSE]
+  unconverged <- 0L
+  fit_ctrl <- function(idx) {
+    if (length(idx) < ctx$r) return(NULL)
+    ctrl <- tryCatch(
+      .gsc_fit_controls(ctx$Y[, idx, drop = FALSE], slice_X(idx), ctx$r,
+                        ctx$force),
+      error = function(e) NULL)
+    if (!is.null(ctrl) && !isTRUE(ctrl$converged))
+      unconverged <<- unconverged + 1L
+    ctrl
   }
 
-  res <- tryCatch(
-    gsc_ife_cpp(Y_co_g, Y_tr_pre, r, X_co_g, X_tr_pre_g),
-    error = function(e) NULL
-  )
-  if (is.null(res)) return(NA_real_)
-
-  Y_tr_hat <- res$Y_tr_hat  # T × N_tr_g (factor part)
-  if (p > 0L) {
-    for (j in seq_len(p))
-      Y_tr_hat <- Y_tr_hat +
-        matrix(X_tr_full[,, j], TT, length(cf$idx_tr)) * res$beta[j]
+  shared <- NULL
+  if (identical(ctx$control_group, "never_treated")) {
+    shared <- fit_ctrl(co)
+    if (is.null(shared)) return(NULL)
   }
+  est <- w <- numeric(length(cohorts))
+  for (k in seq_along(cohorts)) {
+    g    <- cohorts[k]
+    tr_g <- tr[adopt == g]
+    ctrl <- shared %||% fit_ctrl(c(co, tr[adopt > g]))
+    if (is.null(ctrl)) return(NULL)
+    cf <- tryCatch(
+      .gsc_counterfactual(ctrl, ctx$Y[, tr_g, drop = FALSE], slice_X(tr_g),
+                          g - 1L),
+      error = function(e) NULL)
+    if (is.null(cf)) return(NULL)
+    post   <- g:TT
+    est[k] <- mean(ctx$Y[post, tr_g, drop = FALSE] -
+                     cf$Y_hat[post, , drop = FALSE])
+    w[k]   <- length(tr_g) * length(post)
+  }
+  list(estimate = sum(w * est) / sum(w), cohort = cohorts,
+       cohort_estimate = est, cohort_weight = w, unconverged = unconverged)
+}
 
-  Y_treat_post <- Y_all[post_rows, cf$idx_tr, drop = FALSE]
-  mean(Y_treat_post - Y_tr_hat[post_rows, , drop = FALSE])
+# The panel a GSC fit was estimated on, laid out for .gsc_unit_estimate().
+.gsc_inference_context <- function(fit) {
+  if (inherits(fit, "coresynth_staggered")) {
+    if (is.null(fit$Y_all))
+      stop("fit does not contain Y_all. Re-estimate with the current version.",
+           call. = FALSE)
+    tr <- unlist(lapply(fit$cohort_fits, `[[`, "idx_tr"), use.names = FALSE)
+    return(list(
+      Y = fit$Y_all, X = fit$covariate_array_all, r = fit$r,
+      T_adopt = .adopt_from_cohorts(ncol(fit$Y_all), fit$cohort_fits),
+      co = fit$idx_co, tr = tr, control_group = .fit_control_group(fit),
+      force = fit[["force"]] %||% "none"))
+  }
+  if (is.null(fit$Y_co_all))
+    stop("fit does not contain Y_co_all. Re-estimate with the current version.",
+         call. = FALSE)
+  N_co <- ncol(fit$Y_co_all)
+  N_tr <- ncol(fit$Y_treat)
+  X <- NULL
+  if (!is.null(fit$covariate_array_co)) {
+    p <- dim(fit$covariate_array_co)[3L]
+    X <- array(0.0, c(nrow(fit$Y_co_all), N_co + N_tr, p))
+    X[, seq_len(N_co), ]        <- fit$covariate_array_co
+    X[, N_co + seq_len(N_tr), ] <- fit$covariate_array_tr
+  }
+  list(
+    Y = cbind(fit$Y_co_all, fit$Y_treat), X = X, r = fit$r,
+    T_adopt = c(rep(NA_integer_, N_co), rep(fit$T_pre + 1L, N_tr)),
+    co = seq_len(N_co), tr = N_co + seq_len(N_tr),
+    control_group = "never_treated", force = fit[["force"]] %||% "none")
 }
 
 #' Non-parametric Inference for GSC (Xu 2017)
 #'
-#' Estimates SE and confidence intervals for the ATT via non-parametric cluster
-#' bootstrap or jackknife over control units. Works for both sharp and staggered
-#' GSC fits. For staggered fits, bootstrap resamples each cohort's control pool
-#' independently, and jackknife uses a per-cohort LOO with delta-method variance
-#' aggregation.
+#' Estimates SE and confidence intervals for the ATT by re-estimating the
+#' fit on resampled units: a bootstrap of the treated and the control units,
+#' drawn separately, or a jackknife that drops one unit at a time. Works for
+#' both sharp and staggered GSC fits.
+#'
+#' Xu (2017, S.3.2) notes that resampling units is valid when many units are
+#' treated and proposes the parametric bootstrap of [gsc_boot()] for when few
+#' are: the treated units' own noise varies across replicates only through
+#' which treated units are drawn. With a single treated unit there is no such
+#' variation, so this function stops and points to [gsc_boot()] and
+#' [conformal_inference()].
+#'
+#' On a staggered fit the bootstrap draws the treated units from all cohorts
+#' together, so cohort sizes vary across replicates, and draws the controls
+#' once per replicate for every cohort; cohorts are rebuilt from the draw and
+#' combined with their `N_treated * T_post` weights. `"jackknife"` drops each
+#' cohort's own donors and treated units and combines the per-cohort
+#' variances by the delta method, which ignores the covariance that shared
+#' donors induce between cohorts; `"jackknife_global"` drops every unit from
+#' the whole panel in turn and keeps it. Both jackknives drop treated units,
+#' so every cohort needs at least two (Clarke et al. 2024, Algorithm 3).
 #'
 #' Note: `gsc_boot()` performs a *parametric* bootstrap under H0 (hypothesis
 #' testing). `gsc_inference()` provides *non-parametric* SE and CIs suitable
 #' for inference about the ATT magnitude.
 #'
 #' @param fit   A `coresynth` object from [scm_fit()] with `method = "gsc"`.
-#' @param method `"bootstrap"` (default) or `"jackknife"`.
+#' @param method `"bootstrap"` (default), `"jackknife"`, or
+#'   `"jackknife_global"` (staggered fits only).
 #' @param n_boot Number of bootstrap replications (default 499L; ignored for jackknife).
 #' @param level  Confidence level (default 0.95).
 #' @param alternative `"two.sided"` (default), `"greater"`, or `"less"`.
@@ -602,226 +720,16 @@ gsc_inference <- function(
   if (!inherits(fit, "coresynth_gsc"))
     stop("gsc_inference() requires a coresynth fit with method = 'gsc'.",
          call. = FALSE)
-
-  tau_hat   <- fit$estimate
-  alpha     <- 1 - level
-  staggered <- inherits(fit, "coresynth_staggered")
-
-  if (!is.null(seed)) set.seed(seed)
-
-  # ── Sharp path ──────────────────────────────────────────────────────────────
-  if (!staggered) {
-    if (method == "jackknife_global")
-      stop("gsc_inference() method='jackknife_global' requires a staggered fit.",
-           call. = FALSE)
-    if (is.null(fit$Y_co_all))
-      stop("fit does not contain Y_co_all. Re-estimate with the current version.",
-           call. = FALSE)
-
-    Y_co  <- fit$Y_co_all
-    r     <- fit$r
-    T_pre <- fit$T_pre
-    N_co  <- ncol(Y_co)
-    TT    <- nrow(Y_co)
-    post_rows  <- (T_pre + 1L):TT
-    Y_tr_pre   <- fit$Y_treat[seq_len(T_pre), , drop = FALSE]
-
-    X_co_arr   <- if (!is.null(fit$covariate_array_co)) fit$covariate_array_co else
-                    array(0.0, dim = c(TT, N_co, 0L))
-    X_tr_pre   <- if (!is.null(fit$covariate_array_tr))
-                    fit$covariate_array_tr[seq_len(T_pre), , , drop = FALSE] else
-                    array(0.0, dim = c(T_pre, ncol(fit$Y_treat), 0L))
-    X_tr_full  <- fit$covariate_array_tr
-    p          <- dim(X_co_arr)[3L]
-
-    .refit_sharp <- function(co_idx) {
-      N_b <- length(co_idx)
-      X_co_b <- if (p > 0L) X_co_arr[, co_idx, , drop = FALSE] else
-                  array(0.0, dim = c(TT, N_b, 0L))
-      res <- tryCatch(
-        gsc_ife_cpp(Y_co[, co_idx, drop = FALSE], Y_tr_pre, r, X_co_b, X_tr_pre),
-        error = function(e) NULL
-      )
-      if (is.null(res)) return(NA_real_)
-      Y_hat_post <- res$Y_tr_hat[post_rows, , drop = FALSE]
-      if (p > 0L && !is.null(X_tr_full)) {
-        N_tr <- ncol(Y_tr_pre)
-        T_post <- length(post_rows)
-        for (j in seq_len(p))
-          Y_hat_post <- Y_hat_post +
-            matrix(X_tr_full[post_rows,, j], T_post, N_tr) * res$beta[j]
-      }
-      mean(fit$Y_treat[post_rows, , drop = FALSE] - Y_hat_post)
-    }
-
-    if (method == "bootstrap") {
-      boot_ests <- replicate(n_boot, .refit_sharp(sample(N_co, replace = TRUE)))
-      n_fail <- sum(is.na(boot_ests))
-      if (n_fail > 0.1 * n_boot)
-        warning(sprintf("%.0f%% of bootstrap replications failed.", 100 * n_fail / n_boot))
-      valid    <- boot_ests[!is.na(boot_ests)]
-      se       <- sd(valid)
-      ci_lower <- unname(quantile(valid, alpha / 2))
-      ci_upper <- unname(quantile(valid, 1 - alpha / 2))
-      z        <- tau_hat / max(se, .Machine$double.eps)
-      p_value  <- switch(alternative,
-        two.sided = 2 * pnorm(-abs(z)),
-        greater   = pnorm(-z),
-        less      = pnorm(z)
-      )
-      return(structure(list(
-        estimate    = tau_hat, se = se, p_value = p_value,
-        ci_lower    = ci_lower, ci_upper = ci_upper,
-        method      = method, staggered = FALSE, n_controls = N_co,
-        alternative = alternative, boot_ests = boot_ests
-      ), class = "coresynth_inference"))
-    }
-
-    # jackknife
-    jack_ests <- vapply(seq_len(N_co),
-                        function(i) .refit_sharp(seq_len(N_co)[-i]),
-                        numeric(1))
-    jack_var <- (N_co - 1) / N_co * sum((jack_ests - mean(jack_ests))^2)
-    se       <- sqrt(jack_var)
-    z        <- tau_hat / max(se, .Machine$double.eps)
-    ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-    ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-    p_value  <- switch(alternative,
-      two.sided = 2 * pnorm(-abs(z)),
-      greater   = pnorm(-z),
-      less      = pnorm(z)
-    )
-    return(structure(list(
-      estimate    = tau_hat, se = se, p_value = p_value,
-      ci_lower    = ci_lower, ci_upper = ci_upper,
-      method      = method, staggered = FALSE, n_controls = N_co,
-      alternative = alternative, boot_ests = NULL
-    ), class = "coresynth_inference"))
-  }
-
-  # ── Staggered path ──────────────────────────────────────────────────────────
-  if (is.null(fit$Y_all))
-    stop("fit does not contain Y_all. Re-estimate with the current version.",
+  if (method == "jackknife_global" && !inherits(fit, "coresynth_staggered"))
+    stop("gsc_inference() method='jackknife_global' requires a staggered fit.",
          call. = FALSE)
 
-  Y_all       <- fit$Y_all
-  r           <- fit$r
-  cov_all     <- fit$covariate_array_all  # NULL if no covariates
-  cohort_fits <- fit$cohort_fits
-  w_g         <- vapply(cohort_fits, `[[`, numeric(1L), "weight")  # unnorm
-  W           <- sum(w_g)
-
-  .boot_one_gsc <- function() {
-    att_total <- 0
-    for (cf in cohort_fits) {
-      N_co_g  <- length(cf$idx_co)
-      idx_b   <- cf$idx_co[sample(N_co_g, replace = TRUE)]
-      cf_b    <- cf
-      cf_b$idx_co <- idx_b
-      att_g_b <- .refit_gsc_cohort(Y_all, cf_b, r, cov_all)
-      att_total <- att_total + cf$weight * att_g_b
-    }
-    att_total / W
-  }
-
-  if (method == "bootstrap") {
-    boot_ests <- replicate(n_boot, .boot_one_gsc())
-    n_fail <- sum(is.na(boot_ests))
-    if (n_fail > 0.1 * n_boot)
-      warning(sprintf("%.0f%% of staggered bootstrap replications failed.",
-                      100 * n_fail / n_boot))
-    valid    <- boot_ests[!is.na(boot_ests)]
-    se       <- sd(valid)
-    ci_lower <- unname(quantile(valid, alpha / 2))
-    ci_upper <- unname(quantile(valid, 1 - alpha / 2))
-    z        <- tau_hat / max(se, .Machine$double.eps)
-    p_value  <- switch(alternative,
-      two.sided = 2 * pnorm(-abs(z)),
-      greater   = pnorm(-z),
-      less      = pnorm(z)
-    )
-    n_co_mean <- round(mean(vapply(cohort_fits,
-                                   function(cf) length(cf$idx_co), numeric(1L))))
-    return(structure(list(
-      estimate    = tau_hat, se = se, p_value = p_value,
-      ci_lower    = ci_lower, ci_upper = ci_upper,
-      method      = method, staggered = TRUE, n_controls = n_co_mean,
-      alternative = alternative, boot_ests = boot_ests
-    ), class = "coresynth_inference"))
-  }
-
-  if (method == "jackknife_global") {
-    # Global jackknife: drop one unique control across ALL cohorts simultaneously.
-    # Captures cross-cohort correlation ignored by per-cohort LOO.
-    all_co    <- sort(unique(unlist(lapply(cohort_fits, `[[`, "idx_co"))))
-    orig_ests <- vapply(cohort_fits, `[[`, numeric(1L), "estimate")
-    jack_ests <- vapply(all_co, function(i) {
-      att_total <- 0
-      for (k in seq_along(cohort_fits)) {
-        cf <- cohort_fits[[k]]
-        if (i %in% cf$idx_co) {
-          keep <- cf$idx_co[cf$idx_co != i]
-          if (length(keep) < 2L) return(NA_real_)
-          cf_loo        <- cf
-          cf_loo$idx_co <- keep
-          att_g <- .refit_gsc_cohort(Y_all, cf_loo, r, cov_all)
-          if (is.na(att_g)) return(NA_real_)
-        } else {
-          att_g <- orig_ests[k]
-        }
-        att_total <- att_total + cf$weight * att_g
-      }
-      att_total / W
-    }, numeric(1L))
-    valid <- jack_ests[!is.na(jack_ests)]
-    N_v   <- length(valid)
-    se    <- sqrt((N_v - 1L) / N_v * sum((valid - mean(valid))^2))
-    z        <- tau_hat / max(se, .Machine$double.eps)
-    ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-    ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-    p_value  <- switch(alternative,
-      two.sided = 2 * pnorm(-abs(z)),
-      greater   = pnorm(-z),
-      less      = pnorm(z)
-    )
-    return(structure(list(
-      estimate    = tau_hat, se = se, p_value = p_value,
-      ci_lower    = ci_lower, ci_upper = ci_upper,
-      method      = method, staggered = TRUE, n_controls = length(all_co),
-      alternative = alternative, boot_ests = NULL
-    ), class = "coresynth_inference"))
-  }
-
-  # staggered jackknife: per-cohort LOO + delta-method
-  var_components <- vapply(cohort_fits, function(cf) {
-    N_co_g <- length(cf$idx_co)
-    if (N_co_g < 2L) return(0)
-    jack_g <- vapply(seq_len(N_co_g), function(i) {
-      cf_loo <- cf
-      cf_loo$idx_co <- cf$idx_co[-i]
-      .refit_gsc_cohort(Y_all, cf_loo, r, cov_all)
-    }, numeric(1))
-    valid_g <- jack_g[!is.na(jack_g)]
-    if (length(valid_g) < 2L) return(0)
-    (N_co_g - 1) / N_co_g * sum((valid_g - mean(valid_g))^2)
-  }, numeric(1))
-
-  var_st   <- sum((w_g / W)^2 * var_components)
-  se       <- sqrt(var_st)
-  z        <- tau_hat / max(se, .Machine$double.eps)
-  ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-  ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-  p_value  <- switch(alternative,
-    two.sided = 2 * pnorm(-abs(z)),
-    greater   = pnorm(-z),
-    less      = pnorm(z)
-  )
-  n_co_mean <- round(mean(vapply(cohort_fits,
-                                 function(cf) length(cf$idx_co), numeric(1L))))
-  structure(list(
-    estimate    = tau_hat, se = se, p_value = p_value,
-    ci_lower    = ci_lower, ci_upper = ci_upper,
-    method      = method, staggered = TRUE, n_controls = n_co_mean,
-    alternative = alternative, boot_ests = NULL
-  ), class = "coresynth_inference")
+  ctx <- .gsc_inference_context(fit)
+  if (!is.null(seed)) set.seed(seed)
+  .unit_inference(
+    fit, ctx, .gsc_unit_estimate, method, n_boot, level, alternative,
+    label = "gsc_inference()",
+    one_treated_hint = paste0(
+      "Use gsc_boot(), the parametric bootstrap of Xu (2017, Algorithm 2) ",
+      "for few treated units, or conformal_inference()."))
 }

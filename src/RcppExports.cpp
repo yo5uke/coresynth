@@ -11,9 +11,26 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
+// gsc_treated_cpp
+Rcpp::List gsc_treated_cpp(const arma::mat& F, const arma::vec& beta, const arma::mat& Y_tr_pre, const arma::cube& X_tr_pre, double mu, const arma::vec& xi, bool unit_fe);
+RcppExport SEXP _coresynth_gsc_treated_cpp(SEXP FSEXP, SEXP betaSEXP, SEXP Y_tr_preSEXP, SEXP X_tr_preSEXP, SEXP muSEXP, SEXP xiSEXP, SEXP unit_feSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type F(FSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type beta(betaSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Y_tr_pre(Y_tr_preSEXP);
+    Rcpp::traits::input_parameter< const arma::cube& >::type X_tr_pre(X_tr_preSEXP);
+    Rcpp::traits::input_parameter< double >::type mu(muSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type xi(xiSEXP);
+    Rcpp::traits::input_parameter< bool >::type unit_fe(unit_feSEXP);
+    rcpp_result_gen = Rcpp::wrap(gsc_treated_cpp(F, beta, Y_tr_pre, X_tr_pre, mu, xi, unit_fe));
+    return rcpp_result_gen;
+END_RCPP
+}
 // gsc_ife_cpp
-Rcpp::List gsc_ife_cpp(const arma::mat& Y_co, const arma::mat& Y_tr_pre, int r, const arma::cube& X_co, const arma::cube& X_tr_pre, int max_iter, double tol);
-RcppExport SEXP _coresynth_gsc_ife_cpp(SEXP Y_coSEXP, SEXP Y_tr_preSEXP, SEXP rSEXP, SEXP X_coSEXP, SEXP X_tr_preSEXP, SEXP max_iterSEXP, SEXP tolSEXP) {
+Rcpp::List gsc_ife_cpp(const arma::mat& Y_co, const arma::mat& Y_tr_pre, int r, const arma::cube& X_co, const arma::cube& X_tr_pre, int max_iter, double tol, std::string force);
+RcppExport SEXP _coresynth_gsc_ife_cpp(SEXP Y_coSEXP, SEXP Y_tr_preSEXP, SEXP rSEXP, SEXP X_coSEXP, SEXP X_tr_preSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP forceSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -24,7 +41,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::cube& >::type X_tr_pre(X_tr_preSEXP);
     Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
-    rcpp_result_gen = Rcpp::wrap(gsc_ife_cpp(Y_co, Y_tr_pre, r, X_co, X_tr_pre, max_iter, tol));
+    Rcpp::traits::input_parameter< std::string >::type force(forceSEXP);
+    rcpp_result_gen = Rcpp::wrap(gsc_ife_cpp(Y_co, Y_tr_pre, r, X_co, X_tr_pre, max_iter, tol, force));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -258,7 +276,8 @@ END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_coresynth_gsc_ife_cpp", (DL_FUNC) &_coresynth_gsc_ife_cpp, 7},
+    {"_coresynth_gsc_treated_cpp", (DL_FUNC) &_coresynth_gsc_treated_cpp, 7},
+    {"_coresynth_gsc_ife_cpp", (DL_FUNC) &_coresynth_gsc_ife_cpp, 8},
     {"_coresynth_sdid_placebo_cpp", (DL_FUNC) &_coresynth_sdid_placebo_cpp, 4},
     {"_coresynth_scm_placebo_cpp", (DL_FUNC) &_coresynth_scm_placebo_cpp, 6},
     {"_coresynth_scm_placebo_x_cpp", (DL_FUNC) &_coresynth_scm_placebo_x_cpp, 8},

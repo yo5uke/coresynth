@@ -32,7 +32,8 @@ scm_fit(
 
 \item{...}{Estimator-specific arguments forwarded to the chosen method:
 \code{lambda} plus \code{cv_folds}, \code{cv_nlambda} and \code{cv_seed} (\code{"mc"}), \code{r}
-(\code{"gsc"}, \code{"tasc"}), \code{em_iter} and \code{fix_A} (\code{"tasc"}), \code{zeta2} and
+(\code{"gsc"}, \code{"tasc"}), \code{force} (\code{"gsc"}), \code{em_iter}, \code{em_tol}, \code{fix_A} and
+\code{intercept} (\code{"tasc"}), \code{zeta2} and
 \code{zeta_t} (\code{"sdid"}), \code{k} (\code{"si"}), \code{control_group} (\code{"scm"}, \code{"sdid"},
 \code{"gsc"}, \code{"si"}), and \code{scale_predictors}, \code{cov_method} and \code{xi}
 (\code{"scm"}). A name the chosen
@@ -69,7 +70,27 @@ K-fold cross-validation of Athey et al. (2021), and \code{k} for \code{"si"} by 
 optimal hard threshold of Gavish & Donoho (2014). Supplying a value skips
 the search. The \code{r} of \code{"tasc"} is a different quantity -- the dimension
 of the state vector its Kalman smoother carries, not a factor count
-estimated from a donor block -- and keeps its fixed default of \code{2}.}
+estimated from a donor block -- and keeps its fixed default of \code{2}.
+
+\code{force} adds the additive fixed effects of the extended model in Xu
+(2017, Remark 3) to \code{"gsc"}: \code{"unit"} a unit effect, \code{"time"} a time
+effect, \code{"two-way"} both, alongside a grand mean. \code{"none"} (default)
+fits the factors and covariates alone, the model of Xu's Equation (1),
+whose factors then have to absorb any unit or time level. The control
+units are within-transformed before the factors are extracted, and each
+treated unit's own effect is estimated with its loadings from its
+pre-treatment periods. With additive effects the factor count \code{r} may be
+zero, and its cross-validation starts there.
+
+\code{"tasc"} runs the EM algorithm of Rho et al. (2026, Algorithm 7) until
+the fitted values settle, to a relative change of \code{em_tol} (default
+\code{1e-6}) within at most \code{em_iter} iterations (default \code{2000}), and warns
+if they do not. \code{intercept = TRUE} (default) gives each unit its own
+intercept in the observation equation. Without one the states have to
+carry each unit's level, and on panels far from zero the EM then drifts
+along directions the likelihood barely distinguishes, so the effect
+depends on when it stops; \code{intercept = FALSE} fits the paper's model as
+written.}
 
 \item{predictors}{A \code{list()} of \code{\link[=pred]{pred()}} specifications that define the
 predictor matrix for SCM (see Abadie et al. 2010, S.2.3). Each \code{\link[=pred]{pred()}}

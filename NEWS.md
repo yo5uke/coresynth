@@ -1,3 +1,120 @@
+# coresynth (development version)
+
+A review of the GSC, TASC, SI and SDID code against their papers and against
+gsynth/fect. Estimates from `method = "gsc"` with covariates, from
+`method = "tasc"`, and the intervals of `sdid_inference()`, `gsc_inference()`,
+`si_inference()` and `gsc_boot()` change.
+
+## Bug fixes
+
+- **GSC with covariates no longer stops before its estimates settle.** The
+  loop that alternates the factors and the covariate coefficients updated
+  `beta` by plain alternating least squares and stopped silently after 50
+  iterations. When the covariates move with the factors -- the design of Xu
+  (2017)'s own simulations -- that left `beta` at (0.79, 2.77) against a true
+  (1, 3) and biased the effect by +0.06. `beta` is now updated with the
+  loadings concentrated out (Bai 2009), which reaches the same fixed point in
+  a few dozen iterations; the loop runs to a tolerance of `1e-8` within at
+  most 1000 iterations and warns if it does not get there. `gsc_ife_cpp()`
+  reports `n_iter` and `converged`.
+
+- **`gsc_inference()` and `si_inference()` resample the treated units, not
+  only the controls.** Holding the treated units fixed left their own noise
+  out of the standard error: with one treated unit, a 95% interval covered
+  the truth 30% of the time for GSC, and 43% with five treated units for SI.
+  The bootstrap now draws treated and control units separately, and the
+  jackknife drops each of them in turn. A fit with a single treated unit (in
+  any arm) is an error that points to `gsc_boot()` or
+  `conformal_inference()`, since no resampling of units can reach that
+  unit's noise. Coverage in simulations is now 0.90-0.96 for GSC and
+  0.85-0.93 for SI.
+
+- **On staggered fits, the bootstrap draws the controls once for all
+  cohorts.** It used to redraw them independently for each cohort, although
+  under the default `control_group = "never_treated"` every cohort shares the
+  same donors, which dropped the correlation between the cohort effects (a
+  95% interval covered 42% of the time). Treated units are drawn from all
+  cohorts together, so the cohorts and their weights are rebuilt from each
+  draw, as in Clarke et al. (2024, Algorithm 2). Coverage is now 0.93-0.95.
+
+- **`sdid_inference()` follows Arkhangelsky et al. (2021) and Clarke et al.
+  (2024) for the bootstrap and the jackknife.** The bootstrap resampled the
+  controls only, holding the treated mean and `zeta2` fixed, and on staggered
+  fits redrew the controls separately for each cohort; the jackknife dropped
+  only controls and re-estimated the weights. Their 95% intervals covered
+  0.68-0.90 of the time. Now `method = "bootstrap"` (Algorithm 2) draws units
+  with replacement from the whole panel, treated and control alike, redraws
+  a sample without a treated unit or with fewer than two controls, and reruns
+  the whole estimator -- the covariate partial-out, `zeta2` (unless fixed in
+  `scm_fit()`) and both sets of weights -- with the cohorts rebuilt from the
+  treated units drawn. `method = "jackknife"` (Algorithm 3) drops every unit
+  in turn with the fitted unit and time weights held fixed. Coverage is now
+  0.88-0.97. Both need more than one treated unit and point to
+  `method = "placebo"` otherwise, which is unchanged. This is the same scheme
+  `sdid_event_study()` already used, so the two now agree.
+
+- **The jackknife of a staggered fit needs two treated units in every
+  cohort** for `sdid_inference()`, `gsc_inference()` and `si_inference()`:
+  dropping a cohort's only treated unit leaves its effect undefined (Clarke et
+  al. 2024, Algorithm 3), and such a fit now raises an error that points to
+  the bootstrap.
+
+- **The per-cohort jackknife of a staggered multi-arm SI fit no longer
+  inflates its standard error.** It took the variance of each cohort's
+  weighted sum over arms rather than of its weighted mean, which made the
+  standard error about 20 times too large.
+
+- **`gsc_boot()` follows Xu (2017, Algorithm 2).** It drew independent
+  normal errors with a single variance, which ignored serial correlation (an
+  interval covered 77% of the time when the errors had an autocorrelation of
+  0.5) and gave the treated units the in-sample error of the controls. It
+  now resamples whole residual series: the controls' in-sample residuals,
+  and for the treated units the prediction errors of control units left out
+  as if they were treated. Coverage is 0.92-0.93 in both cases.
+
+- **TASC estimates its state-space model by the exact EM algorithm.** The
+  M-step used the smoothed state means only, leaving out their covariances.
+  That understates the state noise, and the understatement compounded until
+  the state noise collapsed to zero within the 20 iterations the fit ran.
+  The M-step now follows Rho et al. (2026, Algorithm 7) -- smoothed
+  covariances included, the initial state learned, diagonal noise
+  covariances -- with the missing cells of Shumway & Stoffer (1982), and
+  runs until the fitted values settle. `em_iter` is now the maximum number
+  of iterations (default 2000), `em_tol` (default `1e-6`) sets the
+  tolerance, and a fit that does not converge warns.
+
+- **`conformal_inference()` keeps the covariates of a GSC fit.** It refitted
+  the factor model without them, so an interval for a fit with covariates was
+  computed on a different model.
+
+- **`scm_design()` uses the order-statistic quantile of Abadie & Zhao (2026,
+  Equation 18)** for its split-conformal intervals, instead of interpolating
+  below it, which narrowed the intervals when there were few blank periods.
+  When it samples permutations it no longer resets the random number
+  generator of the calling session.
+
+## New features
+
+- **`method = "gsc"` takes additive fixed effects through `force`**: `"unit"`,
+  `"time"` or `"two-way"` (default `"none"`), the extended model of Xu (2017,
+  Remark 3). With additive effects `r = 0` is allowed, and the
+  cross-validation of `r` starts from it. Estimates match gsynth to machine
+  precision for each of these choices.
+
+- **TASC gives each unit its own intercept** in the observation equation
+  (`intercept = TRUE`, the default). Without one, the states have to carry
+  each unit's level, and on panels far from zero the EM drifted for tens of
+  thousands of iterations, moving the effect by up to 0.4 depending on when
+  it stopped. `intercept = FALSE` fits the paper's model as written.
+
+## Internal
+
+- Staggered GSC fits the never-treated donors once rather than once per
+  cohort, and `sdid_inference()`, `gsc_inference()` and `si_inference()`
+  share one resampling routine. GSC and SI staggered fits record
+  `control_group`; SDID staggered fits record `zeta2_user` and `zeta_t`, and
+  the raw outcomes and covariates when they have covariates.
+
 # coresynth 1.1.0
 
 ## New features

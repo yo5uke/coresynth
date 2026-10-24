@@ -36,6 +36,12 @@ fit_scm  <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
 fit_sdid <- scm_fit(y ~ d | id + time, data = dat, method = "sdid")
 fit_gsc  <- scm_fit(y ~ d | id + time, data = dat, method = "gsc", r = 2)
 fit_si   <- scm_fit(y ~ d | id + time, data = dat, method = "si")
+
+# The same panel with four treated units, for the routines that resample them
+dat4 <- dat
+dat4$d <- as.integer(dat4$id %in% c("u1", "u2", "u3", "u4") & dat4$time > T_pre)
+dat4$y[dat4$d == 1 & dat4$id != "u1"] <-
+  dat4$y[dat4$d == 1 & dat4$id != "u1"] + 2.0
 ```
 
 ## SCM — MSPE ratio permutation test
@@ -107,13 +113,22 @@ see `?plot.scm_placebo`.
 
 ## SDID — four inference methods
 
-*Arkhangelsky et al. (2021); Clarke et al. (2024).* `sdid_inference()` supports
-`"placebo"`, `"bootstrap"`, `"jackknife"`, and `"jackknife_global"`. The result
-is `broom`-friendly.
+*Arkhangelsky et al. (2021); Clarke et al. (2024).* `sdid_inference()` follows
+the paper's three variance estimators. `"bootstrap"` (Algorithm 2) draws units
+with replacement from the whole panel, treated and control alike, and runs the
+whole estimator again on each draw; `"jackknife"` (Algorithm 3) drops one unit
+at a time with the fitted weights held fixed; `"placebo"` (Algorithm 4)
+reassigns the treatment to control units. The first two need more than one
+treated unit -- the paper notes the jackknife is not even defined with one --
+so a single treated unit calls for `"placebo"`, which assumes the treated and
+control units share a noise level. Staggered fits add `"jackknife_global"`.
+The result is `broom`-friendly.
 
 ```{r sdid-inf}
 inf_plac <- sdid_inference(fit_sdid, method = "placebo")
-inf_boot <- sdid_inference(fit_sdid, method = "bootstrap", n_boot = 100, seed = 1)
+
+fit_sdid4 <- scm_fit(y ~ d | id + time, data = dat4, method = "sdid")
+inf_boot  <- sdid_inference(fit_sdid4, method = "bootstrap", n_boot = 100, seed = 1)
 
 tidy(inf_plac)
 tidy(inf_boot)
@@ -129,25 +144,40 @@ glance(inf_boot)
 
 ## GSC — parametric and non-parametric
 
-*Xu (2017).* `gsc_boot()` is a parametric bootstrap under H0 (sharp fits only):
-its replicates are draws of the estimation error, so the interval is the
-estimate minus their quantiles;
-`gsc_inference()` offers non-parametric bootstrap / jackknife.
+*Xu (2017).* `gsc_boot()` is the paper's parametric bootstrap (Algorithm 2,
+sharp fits only), the procedure it proposes when few units are treated. Each
+replicate rebuilds the panel without an effect from the fitted values plus
+resampled residual series -- the controls' in-sample residuals, and for the
+treated units the prediction errors of control units left out as if they were
+treated -- so its replicates are draws of the estimation error, and the
+interval is the estimate minus their quantiles.
 
 ```{r gsc-inf}
 gb <- gsc_boot(fit_gsc, B = 100, alpha = 0.05)
 c(ci_lower = gb$ci_lower, ci_upper = gb$ci_upper, p_value = gb$p_value)
+```
 
-tidy(gsc_inference(fit_gsc, method = "jackknife"))
+`gsc_inference()` resamples units instead: a bootstrap of the treated and the
+control units drawn separately, or a jackknife that drops one unit at a time.
+Resampling reaches the treated units' own noise only through which treated
+units are drawn, so it needs several of them; with a single treated unit it
+stops and points back to `gsc_boot()`. On the panel with four treated units:
+
+```{r gsc-np}
+fit_gsc4 <- scm_fit(y ~ d | id + time, data = dat4, method = "gsc", r = 2)
+tidy(gsc_inference(fit_gsc4, method = "jackknife"))
 ```
 
 ## SI — bootstrap / jackknife
 
-*Agarwal et al. (2025).* `si_inference()` mirrors the GSC non-parametric API and
-also handles staggered and multi-arm fits.
+*Agarwal et al. (2025).* `si_inference()` resamples units in the same way and
+also handles staggered and multi-arm fits; each refit keeps the rank `k` the
+fit used. For a sharp fit with one treated unit, use `conformal_inference()`
+below.
 
 ```{r si-inf}
-tidy(si_inference(fit_si, method = "bootstrap", n_boot = 100, seed = 1))
+fit_si4 <- scm_fit(y ~ d | id + time, data = dat4, method = "si")
+tidy(si_inference(fit_si4, method = "bootstrap", n_boot = 100, seed = 1))
 ```
 
 ## Conformal inference (any sharp fit)

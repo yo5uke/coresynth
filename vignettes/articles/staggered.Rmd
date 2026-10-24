@@ -177,14 +177,26 @@ traded off.
 ## Inference under staggered adoption
 
 `sdid_inference()`, `gsc_inference()`, and `si_inference()` all extend to
-staggered fits. `jackknife_global` is the staggered-specific variant that
-removes each unique control unit across **all** cohorts at once, correctly
-capturing cross-cohort correlation.
+staggered fits, following Clarke et al. (2024). The bootstrap draws the
+treated units from all cohorts together along with the controls, rebuilds the
+cohorts from each draw, and lets the controls drawn serve every cohort. The
+jackknife drops one unit at a time, treated units included, so it needs at
+least two treated units in every cohort; `jackknife_global` is the
+staggered-specific variant that drops each unit from **all** cohorts at once,
+capturing the correlation that shared donors induce between them.
 
 ```{r stag-inf}
 library(broom)
 tidy(sdid_inference(fit, method = "bootstrap", n_boot = 100, seed = 1))
-tidy(sdid_inference(fit, method = "jackknife_global"))
+
+# Two treated units per cohort for the jackknife
+dat2 <- dat
+dat2$d[dat2$id == "u3" & dat2$time > 10] <- 1L
+dat2$d[dat2$id == "u4" & dat2$time > 15] <- 1L
+dat2$y[dat2$id %in% c("u3", "u4") & dat2$d == 1] <-
+  dat2$y[dat2$id %in% c("u3", "u4") & dat2$d == 1] + 2.0
+fit2 <- scm_fit(y ~ d | id + time, data = dat2, method = "sdid")
+tidy(sdid_inference(fit2, method = "jackknife_global"))
 ```
 
 Staggered **SCM** fits use `scm_inference()`. Its default is the

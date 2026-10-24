@@ -124,7 +124,7 @@ data.frame(
 #> sdid   sdid    2.150
 #> gsc     gsc    2.255
 #> mc       mc    2.198
-#> tasc   tasc    1.154
+#> tasc   tasc    1.883
 #> si       si    2.393
 ```
 
@@ -241,8 +241,10 @@ calls with different windows can be combined freely in the list.
 
 ### GSC: Time-Varying Covariates
 
-GSC supports time-varying covariate adjustment via the full EM algorithm
-of Xu (2017). Pass a character vector of column names as `covariates`:
+GSC supports time-varying covariate adjustment as in Xu (2017). Pass a
+character vector of column names as `covariates`, and `force = "unit"`,
+`"time"` or `"two-way"` for additive fixed effects alongside the
+factors:
 
 ``` r
 # Assume dat has a time-varying column: gdp_growth
@@ -256,11 +258,13 @@ fit_gsc_cov <- scm_fit(
 fit_gsc_cov$beta   # estimated beta coefficient(s)
 ```
 
-The EM loop alternates between:
+The estimation alternates the two steps of Bai (2009) until $\hat\beta$
+settles:
 
-- **E-step**: SVD of $\tilde{Y}_{it} = Y_{it} - x_{it}'\hat\beta$ to
-  update factors $\hat{F}$, $\hat\Lambda$
-- **M-step**: Ridge OLS of residuals on $x_{it}$ to update $\hat\beta$
+- **Factors**: SVD of $\tilde{Y}_{it} = Y_{it} - x_{it}'\hat\beta$ to
+  update $\hat{F}$, $\hat\Lambda$
+- **Coefficients**: regression of $Y$ on $x$ with the factor space
+  projected out, to update $\hat\beta$
 
 Treated unit loadings are estimated from covariate-demeaned
 pre-treatment data per Xu (2017) Step 2. When `covariates = NULL`
@@ -300,20 +304,22 @@ plot(scm_p, type = "ratios")
 ### Other Inference Methods
 
 ``` r
-# SDID: four inference methods — placebo, bootstrap, jackknife, jackknife_global
+# SDID: placebo for one treated unit; bootstrap and jackknife resample the
+# treated units too, so they need several -- the staggered fit above has two
 sdid_inf <- sdid_inference(fits$sdid, method = "placebo")
 tidy(sdid_inf)   # broom-style one-row data.frame
 
-sdid_boot <- sdid_inference(fits$sdid, method = "bootstrap", n_boot = 200, seed = 1)
+sdid_boot <- sdid_inference(fit_sdid, method = "bootstrap", n_boot = 200, seed = 1)
 tidy(sdid_boot)
 
-# GSC: parametric bootstrap under H0 (sharp only)
+# GSC: parametric bootstrap of Xu (2017, Algorithm 2) -- for few treated units
 gsc_ci <- gsc_boot(fits$gsc, B = 200, alpha = 0.05)
 cat("95% CI: [", gsc_ci$ci_lower, ",", gsc_ci$ci_upper, "]\n")
 
-# GSC / SI: non-parametric inference (sharp + staggered)
-gsc_inf <- gsc_inference(fits$gsc, method = "jackknife")
-si_inf  <- si_inference(fits$si,  method = "bootstrap", n_boot = 200, seed = 1)
+# GSC / SI: resampling of treated and control units (sharp + staggered);
+# needs at least two treated units -- the staggered fits above have two
+gsc_inf <- gsc_inference(fit_gsc, method = "jackknife")
+si_inf  <- si_inference(fit_si,  method = "bootstrap", n_boot = 200, seed = 1)
 tidy(gsc_inf)
 tidy(si_inf)
 

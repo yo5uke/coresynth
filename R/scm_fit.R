@@ -193,7 +193,8 @@
 #'   staggered panels only.
 #' @param ...     Estimator-specific arguments forwarded to the chosen method:
 #'   `lambda` plus `cv_folds`, `cv_nlambda` and `cv_seed` (`"mc"`), `r`
-#'   (`"gsc"`, `"tasc"`), `em_iter` and `fix_A` (`"tasc"`), `zeta2` and
+#'   (`"gsc"`, `"tasc"`), `force` (`"gsc"`), `em_iter`, `em_tol`, `fix_A` and
+#'   `intercept` (`"tasc"`), `zeta2` and
 #'   `zeta_t` (`"sdid"`), `k` (`"si"`), `control_group` (`"scm"`, `"sdid"`,
 #'   `"gsc"`, `"si"`), and `scale_predictors`, `cov_method` and `xi`
 #'   (`"scm"`). A name the chosen
@@ -231,6 +232,26 @@
 #'   the search. The `r` of `"tasc"` is a different quantity -- the dimension
 #'   of the state vector its Kalman smoother carries, not a factor count
 #'   estimated from a donor block -- and keeps its fixed default of `2`.
+#'
+#'   `force` adds the additive fixed effects of the extended model in Xu
+#'   (2017, Remark 3) to `"gsc"`: `"unit"` a unit effect, `"time"` a time
+#'   effect, `"two-way"` both, alongside a grand mean. `"none"` (default)
+#'   fits the factors and covariates alone, the model of Xu's Equation (1),
+#'   whose factors then have to absorb any unit or time level. The control
+#'   units are within-transformed before the factors are extracted, and each
+#'   treated unit's own effect is estimated with its loadings from its
+#'   pre-treatment periods. With additive effects the factor count `r` may be
+#'   zero, and its cross-validation starts there.
+#'
+#'   `"tasc"` runs the EM algorithm of Rho et al. (2026, Algorithm 7) until
+#'   the fitted values settle, to a relative change of `em_tol` (default
+#'   `1e-6`) within at most `em_iter` iterations (default `2000`), and warns
+#'   if they do not. `intercept = TRUE` (default) gives each unit its own
+#'   intercept in the observation equation. Without one the states have to
+#'   carry each unit's level, and on panels far from zero the EM then drifts
+#'   along directions the likelihood barely distinguishes, so the effect
+#'   depends on when it stops; `intercept = FALSE` fits the paper's model as
+#'   written.
 #'
 #' @return An object of classes `c("coresynth_<method>", "coresynth")`.
 #'   Fits with staggered adoption additionally inherit from

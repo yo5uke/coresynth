@@ -125,19 +125,19 @@ SDID series as a picture of the fit, and `fit$estimate` as the effect.
 *Xu (2017).* Interactive fixed effects estimated by SVD; `r` sets the number of
 latent factors, and `r=NULL` (the default) chooses it by the
 leave-one-period-out cross-validation of the paper's Algorithm 1, keeping the
-scoring table in `fit$r_cv`. With covariates the full EM algorithm is used
-(E-step SVD, M-step ridge OLS), and `fit$beta` holds the covariate
-coefficients.
+scoring table in `fit$r_cv`. With covariates the factors and the
+coefficients are estimated by the iteration of Bai (2009), run to
+convergence, and `fit$beta` holds the covariate coefficients.
 
-The model fitted is `Y_it(0) = x_it'beta + lambda_i'f_t + e_it`, with no
-additive unit or time effects beside the factors -- the counterpart of
-`force = "none"` in `gsynth`, whose own default adds a unit effect. A unit or
-time effect is a factor with a constant loading, so the factor structure
-absorbs it once `r` is large enough, and the cross-validation picks `r`
-accordingly: on a panel built from two factors *plus* unit and time effects
-it selects `r=4` and recovers the treatment effect. Estimates from this
-estimator do move with `r` on panels where the factor structure is weak,
-which is what `fit$r_cv` is there to show.
+By default the model fitted is `Y_it(0) = x_it'beta + lambda_i'f_t + e_it`,
+the paper's Equation (1), with no additive unit or time effects beside the
+factors. A unit or time effect is a factor with a constant loading, so the
+factor structure absorbs it once `r` is large enough. `force` adds them
+explicitly instead -- `"unit"`, `"time"` or `"two-way"`, the extended model of
+the paper's Remark 3 -- in which case `r=0` (the additive effects alone) is
+among the candidates the cross-validation considers. Estimates move with `r`
+and `force` on panels where the factor structure is weak, which is what
+`fit$r_cv` is there to show.
 
 ```{r gsc}
 fit_gsc <- scm_fit(y ~ d | id + time, data = dat, method = "gsc",
@@ -145,11 +145,15 @@ fit_gsc <- scm_fit(y ~ d | id + time, data = dat, method = "gsc",
 c(estimate = fit_gsc$estimate, beta = unname(fit_gsc$beta))
 ```
 
-`r` sensitivity is easy to sweep:
+`r` and `force` sensitivity is easy to sweep:
 
 ```{r gsc-r}
 sapply(1:3, function(rr)
   scm_fit(y ~ d | id + time, data = dat, method = "gsc", r = rr)$estimate)
+
+fit_gsc_fe <- scm_fit(y ~ d | id + time, data = dat, method = "gsc",
+                      force = "two-way")
+c(r = fit_gsc_fe$r, estimate = fit_gsc_fe$estimate)
 ```
 
 ## MC — Matrix Completion
@@ -169,15 +173,19 @@ c(auto = fit_mc_auto$estimate, manual = fit_mc_man$estimate)
 
 ## TASC — Time-Aware Synthetic Control
 
-*Rho et al. (2026).* A state-space model fitted by Kalman EM. `r` sets the latent
-state dimension, `em_iter` the EM iterations, and `fix_A = TRUE` constrains the
-transition matrix to be constant.
+*Rho et al. (2026).* A state-space model fitted by the paper's EM algorithm
+(Kalman filter and smoother, then the exact M-step), run until the fitted
+values settle: `em_tol` sets the tolerance and `em_iter` caps the iterations.
+`r` sets the latent state dimension and `fix_A = TRUE` fixes the transition
+matrix at the identity. Each unit has its own intercept in the observation
+equation (`intercept = TRUE`); without one the states have to carry every
+unit's level, and on panels far from zero the EM wanders along directions the
+likelihood barely tells apart, so the estimate depends on when it stops.
 
 ```{r tasc}
-fit_tasc      <- scm_fit(y ~ d | id + time, data = dat, method = "tasc",
-                         r = 2, em_iter = 10)
+fit_tasc      <- scm_fit(y ~ d | id + time, data = dat, method = "tasc", r = 2)
 fit_tasc_fixA <- scm_fit(y ~ d | id + time, data = dat, method = "tasc",
-                         r = 2, em_iter = 10, fix_A = TRUE)
+                         r = 2, fix_A = TRUE)
 c(free_A = fit_tasc$estimate, fixed_A = fit_tasc_fixA$estimate)
 ```
 

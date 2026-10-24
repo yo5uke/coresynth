@@ -22,6 +22,25 @@ make_panel <- function(N = 10, T = 20, T_pre = 10, effect = 2.0, seed = 42) {
 
 panel <- make_panel()
 
+# Unit resampling needs more than one treated unit, so the sharp inference
+# tests use a panel with three.
+make_panel_tr3 <- function(N = 15, T = 20, T_pre = 12, effect = 2.0, seed = 42) {
+  set.seed(seed)
+  f1   <- cumsum(rnorm(T, 0, 0.5))
+  f2   <- rnorm(T)
+  lam1 <- rnorm(N, 1, 0.3)
+  lam2 <- rnorm(N, 0, 0.5)
+  rows <- expand.grid(time = seq_len(T), id = paste0("u", seq_len(N)),
+                      stringsAsFactors = FALSE)
+  rows$y <- as.vector(outer(f1, lam1) + outer(f2, lam2)) +
+    rnorm(nrow(rows), 0, 0.3)
+  rows$d <- as.integer(rows$id %in% c("u1", "u2", "u3") & rows$time > T_pre)
+  rows$y[rows$d == 1] <- rows$y[rows$d == 1] + effect
+  rows[order(rows$id, rows$time), ]
+}
+
+panel_tr3 <- make_panel_tr3()
+
 # ── SCM ──────────────────────────────────────────────────────────────────────
 test_that("SCM weights lie on the unit simplex", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
@@ -182,7 +201,7 @@ test_that("TASC runs and returns valid output structure", {
     data = panel,
     method = "tasc",
     r = 2,
-    em_iter = 5
+    em_tol = 1e-5
   )
   expect_s3_class(fit, "coresynth")
   expect_true(is.finite(fit$estimate))
@@ -196,7 +215,7 @@ test_that("TASC general A: ATT is finite", {
     data = panel,
     method = "tasc",
     r = 2,
-    em_iter = 10
+    em_tol = 1e-5
   )
   expect_true(is.finite(fit$estimate))
 })
@@ -207,7 +226,7 @@ test_that("TASC A matrix has correct dimensions (r x r)", {
     data = panel,
     method = "tasc",
     r = 2,
-    em_iter = 5
+    em_tol = 1e-5
   )
   expect_equal(dim(fit$A), c(2L, 2L))
 })
@@ -218,7 +237,7 @@ test_that("TASC A deviates from identity after EM (learning occurred)", {
     data = panel,
     method = "tasc",
     r = 2,
-    em_iter = 20
+    em_tol = 1e-5
   )
   expect_true(max(abs(fit$A - diag(2))) > 1e-6)
 })
@@ -229,7 +248,7 @@ test_that("TASC fix_A=TRUE keeps A as identity", {
     data = panel,
     method = "tasc",
     r = 2,
-    em_iter = 10,
+    em_tol = 1e-5,
     fix_A = TRUE
   )
   expect_equal(fit$A, diag(2))
@@ -242,7 +261,7 @@ test_that("TASC fix_A=FALSE and fix_A=TRUE both return finite ATT", {
     data = panel,
     method = "tasc",
     r = 2,
-    em_iter = 10,
+    em_tol = 1e-5,
     fix_A = FALSE
   )
   fit_fix <- scm_fit(
@@ -250,7 +269,7 @@ test_that("TASC fix_A=FALSE and fix_A=TRUE both return finite ATT", {
     data = panel,
     method = "tasc",
     r = 2,
-    em_iter = 10,
+    em_tol = 1e-5,
     fix_A = TRUE
   )
   expect_true(is.finite(fit_free$estimate))
@@ -610,6 +629,25 @@ make_staggered_panel <- function(N = 12, TT = 24, seed = 7) {
 
 staggered <- make_staggered_panel()
 
+# The jackknife drops each treated unit in turn, so its staggered tests need
+# two treated units in every cohort (Clarke et al. 2024, Algorithm 3).
+make_staggered_panel2 <- function(N = 14, TT = 24, seed = 7) {
+  set.seed(seed)
+  f <- cumsum(rnorm(TT, 0, 0.5))
+  lam <- rnorm(N, 1, 0.3)
+  rows <- expand.grid(time = seq_len(TT), id = paste0("u", seq_len(N)),
+                      stringsAsFactors = FALSE)
+  rows$y <- as.vector(outer(f, lam)) + rnorm(nrow(rows), 0, 0.3)
+  rows$d <- as.integer(
+    (rows$id %in% c("u1", "u2") & rows$time >= 9) |
+      (rows$id %in% c("u3", "u4") & rows$time >= 15)
+  )
+  rows$y[rows$d == 1] <- rows$y[rows$d == 1] + 1.5
+  rows[order(rows$id, rows$time), ]
+}
+
+staggered2 <- make_staggered_panel2()
+
 test_that("panel_to_matrices detects staggered adoption correctly", {
   pan <- coresynth:::panel_to_matrices(
     staggered$y,
@@ -651,7 +689,7 @@ test_that("TASC handles staggered adoption and returns finite estimate", {
     data = staggered,
     method = "tasc",
     r = 2L,
-    em_iter = 5L
+    em_tol = 1e-5
   )
   expect_true(is.finite(fit$estimate))
 })
@@ -663,7 +701,7 @@ test_that("TASC handles staggered adoption and returns finite estimate", {
 # estimator, or the same panel silently yields a different estimand.
 .staggered_impute_fit <- function(method) {
   args <- list(y ~ d | id + time, data = staggered, method = method)
-  if (method == "tasc") args <- c(args, list(r = 2L, em_iter = 5L))
+  if (method == "tasc") args <- c(args, list(r = 2L, em_tol = 1e-5))
   do.call(scm_fit, args)
 }
 
@@ -730,7 +768,7 @@ test_that("MC/TASC staggered: plot() and the sharp accessors refuse", {
 test_that("MC/TASC sharp fits are untouched by the staggered path", {
   for (m in c("mc", "tasc")) {
     args <- list(y ~ d | id + time, data = panel, method = m)
-    if (m == "tasc") args <- c(args, list(r = 2L, em_iter = 5L))
+    if (m == "tasc") args <- c(args, list(r = 2L, em_tol = 1e-5))
     fit <- do.call(scm_fit, args)
     expect_false(inherits(fit, "coresynth_staggered"))
     expect_null(fit$cohort_estimates)
@@ -2111,7 +2149,7 @@ test_that("Phase 15a: sdid_inference(placebo) named placebo_effects", {
 })
 
 test_that("Phase 15a: sdid_inference(bootstrap) returns se and CI", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid")
   inf <- sdid_inference(fit, method = "bootstrap", n_boot = 50L, seed = 1L)
   expect_true(is.finite(inf$se) && inf$se > 0)
   expect_true(inf$p_value >= 0 && inf$p_value <= 1)
@@ -2120,7 +2158,7 @@ test_that("Phase 15a: sdid_inference(bootstrap) returns se and CI", {
 })
 
 test_that("Phase 15a: sdid_inference(bootstrap) is reproducible with seed", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid")
   inf1 <- sdid_inference(fit, method = "bootstrap", n_boot = 30L, seed = 99L)
   inf2 <- sdid_inference(fit, method = "bootstrap", n_boot = 30L, seed = 99L)
   expect_equal(inf1$se, inf2$se)
@@ -2128,7 +2166,7 @@ test_that("Phase 15a: sdid_inference(bootstrap) is reproducible with seed", {
 })
 
 test_that("Phase 15a: sdid_inference(jackknife) returns se and CI", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid")
   inf <- sdid_inference(fit, method = "jackknife")
   expect_true(is.finite(inf$se) && inf$se > 0)
   expect_true(inf$p_value >= 0 && inf$p_value <= 1)
@@ -2159,7 +2197,7 @@ test_that("Phase 15a: sdid_inference staggered placebo no longer errors (Phase 2
 })
 
 test_that("Phase 15a: print.sdid_inference produces output", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid")
   inf <- sdid_inference(fit, method = "jackknife")
   expect_output(print(inf), regexp = "Estimate")
   expect_output(print(inf), regexp = "p-value")
@@ -2703,16 +2741,68 @@ test_that("Phase 16b: SI staggered — tidy() returns cohort rows", {
 
 # ── Phase 17: GSC/SI 推論 API（Bootstrap/Jackknife）────────────────────────────
 
+test_that("unit-resampling inference stops with one treated unit and says where to go", {
+  fit_g <- scm_fit(y ~ d | id + time, data = panel, method = "gsc", r = 1L)
+  expect_error(gsc_inference(fit_g, method = "bootstrap"), "gsc_boot")
+  expect_error(gsc_inference(fit_g, method = "jackknife"), "conformal_inference")
+  fit_s <- scm_fit(y ~ d | id + time, data = panel, method = "si")
+  expect_error(si_inference(fit_s, method = "bootstrap"), "conformal_inference")
+})
+
+test_that("GSC unit engine reproduces the fit it resamples", {
+  est <- function(fit) {
+    ctx <- coresynth:::.gsc_inference_context(fit)
+    coresynth:::.gsc_unit_estimate(ctx, ctx$co, ctx$tr)$estimate
+  }
+  fit_sh <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc", r = 2L)
+  expect_equal(est(fit_sh), fit_sh$estimate, tolerance = 1e-10)
+  fit_st <- scm_fit(y ~ d | id + time, data = staggered, method = "gsc", r = 1L)
+  expect_equal(est(fit_st), fit_st$estimate, tolerance = 1e-10)
+  fit_cl <- suppressWarnings(scm_fit(y ~ d | id + time, data = staggered,
+                                     method = "gsc", r = 1L,
+                                     control_group = "clean"))
+  expect_equal(est(fit_cl), fit_cl$estimate, tolerance = 1e-10)
+})
+
+test_that("SI unit engine reproduces sharp, multi-arm and staggered fits", {
+  est <- function(fit) {
+    ctx <- coresynth:::.si_inference_context(fit)
+    coresynth:::.si_unit_estimate(ctx, ctx$co, ctx$tr)$estimate
+  }
+  for (fit in list(
+    scm_fit(y ~ d | id + time, data = panel_tr3, method = "si"),
+    scm_fit(y ~ d | id + time, data = tensor_panel, method = "si"),
+    scm_fit(y ~ d | id + time, data = staggered, method = "si")))
+    expect_equal(est(fit), fit$estimate, tolerance = 1e-10)
+})
+
+test_that("staggered GSC fits the never-treated donors once for every cohort", {
+  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "gsc", r = 1L)
+  expect_identical(fit$cohort_fits[[1]]$F, fit$cohort_fits[[2]]$F)
+  expect_identical(fit$control_group, "never_treated")
+  # Each cohort matches a stand-alone fit on its own pre-treatment window
+  cf  <- fit$cohort_fits[[2]]
+  Y   <- fit$Y_all
+  pre <- seq_len(cf$T_pre)
+  ref <- gsc_ife_cpp(Y[, cf$idx_co, drop = FALSE], Y[pre, cf$idx_tr, drop = FALSE],
+                     1L, array(0, c(nrow(Y), length(cf$idx_co), 0)),
+                     array(0, c(cf$T_pre, length(cf$idx_tr), 0)))
+  post <- (cf$T_pre + 1L):nrow(Y)
+  expect_equal(cf$estimate,
+               mean(Y[post, cf$idx_tr] - ref$Y_tr_hat[post, ]),
+               tolerance = 1e-10)
+})
+
 # ── Phase 17a: gsc_inference — sharp ─────────────────────────────────────────
 
 test_that("Phase 17a: gsc_inference sharp bootstrap — no error, class correct", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "gsc")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc")
   inf <- gsc_inference(fit, method = "bootstrap", n_boot = 99L, seed = 1L)
   expect_s3_class(inf, "coresynth_inference")
 })
 
 test_that("Phase 17a: gsc_inference sharp bootstrap — finite SE and p_value in [0,1]", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "gsc")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc")
   inf <- gsc_inference(fit, method = "bootstrap", n_boot = 99L, seed = 2L)
   expect_true(is.finite(inf$se))
   expect_gte(inf$p_value, 0)
@@ -2720,14 +2810,14 @@ test_that("Phase 17a: gsc_inference sharp bootstrap — finite SE and p_value in
 })
 
 test_that("Phase 17a: gsc_inference sharp bootstrap — CI contains estimate", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "gsc")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc")
   inf <- gsc_inference(fit, method = "bootstrap", n_boot = 99L, seed = 3L)
   expect_lte(inf$ci_lower, inf$estimate + 1e-8)
   expect_gte(inf$ci_upper, inf$estimate - 1e-8)
 })
 
 test_that("Phase 17a: gsc_inference sharp jackknife — finite SE and p_value in [0,1]", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "gsc")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc")
   inf <- gsc_inference(fit, method = "jackknife")
   expect_true(is.finite(inf$se))
   expect_gte(inf$p_value, 0)
@@ -2762,7 +2852,7 @@ test_that("Phase 17b: gsc_inference staggered bootstrap — CI contains estimate
 })
 
 test_that("Phase 17b: gsc_inference staggered jackknife — finite SE", {
-  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "gsc")
+  fit <- scm_fit(y ~ d | id + time, data = staggered2, method = "gsc")
   inf <- gsc_inference(fit, method = "jackknife")
   expect_true(is.finite(inf$se))
   expect_true(inf$staggered)
@@ -2771,13 +2861,13 @@ test_that("Phase 17b: gsc_inference staggered jackknife — finite SE", {
 # ── Phase 17c: si_inference — sharp ───────────────────────────────────────────
 
 test_that("Phase 17c: si_inference sharp bootstrap — no error, class correct", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "si")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "si")
   inf <- si_inference(fit, method = "bootstrap", n_boot = 99L, seed = 20L)
   expect_s3_class(inf, "coresynth_inference")
 })
 
 test_that("Phase 17c: si_inference sharp bootstrap — finite SE and p_value in [0,1]", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "si")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "si")
   inf <- si_inference(fit, method = "bootstrap", n_boot = 99L, seed = 21L)
   expect_true(is.finite(inf$se))
   expect_gte(inf$p_value, 0)
@@ -2785,14 +2875,14 @@ test_that("Phase 17c: si_inference sharp bootstrap — finite SE and p_value in 
 })
 
 test_that("Phase 17c: si_inference sharp bootstrap — CI contains estimate", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "si")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "si")
   inf <- si_inference(fit, method = "bootstrap", n_boot = 99L, seed = 22L)
   expect_lte(inf$ci_lower, inf$estimate + 1e-8)
   expect_gte(inf$ci_upper, inf$estimate - 1e-8)
 })
 
 test_that("Phase 17c: si_inference sharp jackknife — finite SE and p_value in [0,1]", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "si")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "si")
   inf <- si_inference(fit, method = "jackknife")
   expect_true(is.finite(inf$se))
   expect_gte(inf$p_value, 0)
@@ -2827,7 +2917,7 @@ test_that("Phase 17d: si_inference staggered bootstrap — CI contains estimate"
 })
 
 test_that("Phase 17d: si_inference staggered jackknife — finite SE", {
-  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "si")
+  fit <- scm_fit(y ~ d | id + time, data = staggered2, method = "si")
   inf <- si_inference(fit, method = "jackknife")
   expect_true(is.finite(inf$se))
   expect_true(inf$staggered)
@@ -2857,7 +2947,7 @@ test_that("Phase 18a: sdid_inference staggered bootstrap CI straddles estimate",
 })
 
 test_that("Phase 18a: sdid_inference staggered jackknife returns sdid_inference", {
-  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = staggered2, method = "sdid")
   inf <- sdid_inference(fit, method = "jackknife")
   expect_s3_class(inf, "sdid_inference")
   expect_true(isTRUE(inf$staggered))
@@ -2866,7 +2956,7 @@ test_that("Phase 18a: sdid_inference staggered jackknife returns sdid_inference"
 })
 
 test_that("Phase 18a: sdid_inference staggered jackknife CI straddles estimate", {
-  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = staggered2, method = "sdid")
   inf <- sdid_inference(fit, method = "jackknife")
   expect_true(inf$ci_lower <= inf$estimate && inf$estimate <= inf$ci_upper)
   expect_null(inf$boot_ests)
@@ -2875,7 +2965,7 @@ test_that("Phase 18a: sdid_inference staggered jackknife CI straddles estimate",
 # ── Phase 18b: jackknife_global for SDID / GSC / SI staggered ────────────────
 
 test_that("Phase 18b: sdid_inference jackknife_global staggered", {
-  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = staggered2, method = "sdid")
   inf <- sdid_inference(fit, method = "jackknife_global")
   expect_s3_class(inf, "sdid_inference")
   expect_true(isTRUE(inf$staggered))
@@ -2890,7 +2980,7 @@ test_that("Phase 18b: sdid_inference jackknife_global errors on sharp fit", {
 })
 
 test_that("Phase 18b: gsc_inference jackknife_global staggered", {
-  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "gsc")
+  fit <- scm_fit(y ~ d | id + time, data = staggered2, method = "gsc")
   inf <- gsc_inference(fit, method = "jackknife_global")
   expect_s3_class(inf, "coresynth_inference")
   expect_true(isTRUE(inf$staggered))
@@ -2899,7 +2989,7 @@ test_that("Phase 18b: gsc_inference jackknife_global staggered", {
 })
 
 test_that("Phase 18b: si_inference jackknife_global staggered", {
-  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "si")
+  fit <- scm_fit(y ~ d | id + time, data = staggered2, method = "si")
   inf <- si_inference(fit, method = "jackknife_global")
   expect_s3_class(inf, "coresynth_inference")
   expect_true(isTRUE(inf$staggered))
@@ -3191,7 +3281,7 @@ test_that("Phase 24: SCM oos + multiple pred() returns finite ATT", {
 # § B: tidy/glance.coresynth_inference ────────────────────────────────────────
 
 test_that("Phase 24: tidy.coresynth_inference SDID sharp returns expected columns", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid")
   inf <- sdid_inference(fit, method = "jackknife")
   td  <- broom::tidy(inf)
   expect_s3_class(td, "data.frame")
@@ -3205,14 +3295,14 @@ test_that("Phase 24: tidy.coresynth_inference SDID sharp returns expected column
 })
 
 test_that("Phase 24: tidy.coresynth_inference SDID staggered carries staggered=TRUE", {
-  fit <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = staggered2, method = "sdid")
   inf <- sdid_inference(fit, method = "jackknife")
   td  <- broom::tidy(inf)
   expect_true(td$staggered)
 })
 
 test_that("Phase 24: tidy.coresynth_inference GSC works", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "gsc", r = 2L)
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc", r = 2L)
   inf <- gsc_inference(fit, method = "jackknife")
   td  <- broom::tidy(inf)
   expect_equal(td$term, "ATT")
@@ -3221,7 +3311,7 @@ test_that("Phase 24: tidy.coresynth_inference GSC works", {
 })
 
 test_that("Phase 24: tidy.coresynth_inference SI works", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "si")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "si")
   inf <- si_inference(fit, method = "jackknife")
   td  <- broom::tidy(inf)
   expect_equal(td$term, "ATT")
@@ -3229,7 +3319,7 @@ test_that("Phase 24: tidy.coresynth_inference SI works", {
 })
 
 test_that("Phase 24: glance.coresynth_inference returns one-row summary", {
-  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid")
   inf <- sdid_inference(fit, method = "bootstrap", n_boot = 31L, seed = 1L)
   g   <- broom::glance(inf)
   expect_equal(nrow(g), 1L)
@@ -5021,8 +5111,8 @@ test_that("scm_fit routes MC's lambda past the SCM-only lambda_pen", {
 test_that("scm_fit still accepts each estimator's own arguments", {
   expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "mc",
                           lambda = 0.5), "coresynth")
-  expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "tasc",
-                          r = 2L, em_iter = 3L, fix_A = TRUE), "coresynth")
+  expect_s3_class(suppressWarnings(scm_fit(y ~ d | id + time, data = panel, method = "tasc",
+                          r = 2L, em_iter = 3L, fix_A = TRUE)), "coresynth")
   expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "gsc",
                           r = 2L), "coresynth")
   expect_s3_class(scm_fit(y ~ d | id + time, data = panel, method = "sdid",
@@ -6644,3 +6734,260 @@ test_that("unbalanced panel is rejected with a clear error message in SDID", {
   )
 })
 
+
+# ── GSC / TASC / SI 論文照合レビュー（2026-10）──────────────────────────────
+
+# Xu (2017, eq. 3): covariates correlated with the factors and the loadings,
+# the case in which plain alternating least squares crawls.
+.xu_cov_panel <- function(seed = 7, TT = 30, T0 = 20, Nco = 40, Ntr = 5) {
+  set.seed(seed)
+  N   <- Nco + Ntr
+  F   <- matrix(rnorm(TT * 2), TT, 2)
+  L   <- matrix(runif(N * 2, -sqrt(3), sqrt(3)), N, 2)
+  FL  <- F %*% t(L)
+  mkX <- function() 1 + FL + matrix(L[, 1] + L[, 2], TT, N, byrow = TRUE) +
+    matrix(F[, 1] + F[, 2], TT, N) + matrix(rnorm(TT * N), TT, N)
+  X1 <- mkX(); X2 <- mkX()
+  D  <- matrix(0L, TT, N); D[(T0 + 1):TT, seq_len(Ntr)] <- 1L
+  Y  <- X1 + 3 * X2 + FL + matrix(rnorm(TT * N), TT, N) + 2 * D
+  list(Y = Y, X1 = X1, X2 = X2, co = (Ntr + 1):N, tr = seq_len(Ntr), T0 = T0,
+       df = data.frame(id = rep(seq_len(N), each = TT), t = rep(seq_len(TT), N),
+                       y = as.vector(Y), d = as.vector(D),
+                       x1 = as.vector(X1), x2 = as.vector(X2)))
+}
+
+test_that("GSC covariate loop reaches the IFE fixed point", {
+  p   <- .xu_cov_panel()
+  TT  <- nrow(p$Y)
+  Xco <- array(c(p$X1[, p$co], p$X2[, p$co]), c(TT, length(p$co), 2))
+  Xtr <- array(c(p$X1[seq_len(p$T0), p$tr], p$X2[seq_len(p$T0), p$tr]),
+               c(p$T0, length(p$tr), 2))
+  res <- gsc_ife_cpp(p$Y[, p$co], p$Y[seq_len(p$T0), p$tr], 2L, Xco, Xtr)
+  ref <- gsc_ife_cpp(p$Y[, p$co], p$Y[seq_len(p$T0), p$tr], 2L, Xco, Xtr,
+                     max_iter = 20000L, tol = 1e-13)
+  expect_true(res$converged)
+  expect_equal(drop(res$beta), drop(ref$beta), tolerance = 1e-6)
+  expect_equal(drop(res$beta), c(1, 3), tolerance = 0.05)
+  # A loop stopped by its cap says so
+  capped <- gsc_ife_cpp(p$Y[, p$co], p$Y[seq_len(p$T0), p$tr], 2L, Xco, Xtr,
+                        max_iter = 2L)
+  expect_false(capped$converged)
+  expect_equal(capped$n_iter, 2L)
+})
+
+test_that("gsc_treated_cpp is the treated step of gsc_ife_cpp", {
+  p   <- .xu_cov_panel()
+  TT  <- nrow(p$Y)
+  Xco <- array(c(p$X1[, p$co], p$X2[, p$co]), c(TT, length(p$co), 2))
+  Xtr <- array(c(p$X1[seq_len(p$T0), p$tr], p$X2[seq_len(p$T0), p$tr]),
+               c(p$T0, length(p$tr), 2))
+  full <- gsc_ife_cpp(p$Y[, p$co], p$Y[seq_len(p$T0), p$tr], 2L, Xco, Xtr)
+  tr   <- coresynth:::gsc_treated_cpp(full$F, full$beta,
+                                      p$Y[seq_len(p$T0), p$tr], Xtr,
+                                      0, numeric(0), FALSE)
+  expect_equal(tr$L_tr, full$L_tr, tolerance = 1e-12)
+  expect_equal(tr$Y_tr_hat, full$Y_tr_hat, tolerance = 1e-12)
+})
+
+test_that("GSC with covariates recovers the effect on the Xu (2017) design", {
+  p   <- .xu_cov_panel()
+  fit <- scm_fit(y ~ d | id + t, data = p$df, method = "gsc", r = 2L,
+                 covariates = c("x1", "x2"))
+  expect_equal(drop(fit$beta), c(1, 3), tolerance = 0.05)
+  expect_lt(abs(fit$estimate - 2), 0.4)
+})
+
+test_that("gsc_boot resamples residual series and handles covariates", {
+  p   <- .xu_cov_panel(Ntr = 1)
+  fit <- scm_fit(y ~ d | id + t, data = p$df, method = "gsc", r = 2L,
+                 covariates = c("x1", "x2"))
+  b <- gsc_boot(fit, B = 49L, seed = 3L)
+  expect_true(is.finite(b$se) && b$se > 0)
+  expect_lte(b$ci_lower, fit$estimate)
+  expect_gte(b$ci_upper, fit$estimate)
+  expect_equal(gsc_boot(fit, B = 49L, seed = 3L)$boot_dist, b$boot_dist)
+})
+
+test_that("conformal_inference refits GSC with the covariates the fit used", {
+  set.seed(2)
+  TT <- 30; T0 <- 20; N <- 31
+  F <- matrix(rnorm(TT * 2), TT, 2); L <- matrix(rnorm(N * 2, 1, .5), N, 2)
+  X <- matrix(rnorm(TT * N), TT, N) + 2 * F[, 1] %*% t(L[, 1])
+  D <- matrix(0L, TT, N); D[(T0 + 1):TT, 1] <- 1L
+  Y <- F %*% t(L) + 3 * X + matrix(rnorm(TT * N, sd = .5), TT, N) + 2 * D
+  df <- data.frame(id = rep(seq_len(N), each = TT), t = rep(seq_len(TT), N),
+                   y = as.vector(Y), d = as.vector(D), x = as.vector(X))
+  fit <- scm_fit(y ~ d | id + t, data = df, method = "gsc", r = 2L,
+                 covariates = "x")
+  # Under the null tau0 = ATT the post-treatment outcomes are imputed net of
+  # the effect, so the refit over all periods matches the fit before it
+  y1  <- treated_outcomes(fit)
+  y1[-seq_len(T0)] <- y1[-seq_len(T0)] - fit$estimate
+  P   <- coresynth:::.conformal_refit.coresynth_gsc(fit, donor_outcomes(fit), y1)
+  rmse_refit <- sqrt(mean((y1 - P)[seq_len(T0)]^2))
+  rmse_fit   <- sqrt(mean(fit$gap[seq_len(T0)]^2))
+  expect_lt(rmse_refit, 2 * rmse_fit)
+})
+
+test_that("TASC EM keeps the state noise from collapsing and reports convergence", {
+  set.seed(1)
+  TT <- 24; N_co <- 22; N <- N_co + 2
+  F <- sapply(1:2, function(k) cumsum(rnorm(TT, sd = 0.4)))
+  Y <- F %*% t(matrix(rnorm(N * 2, sd = 0.6), N, 2)) +
+    matrix(rnorm(TT * N, sd = 0.3), TT, N)
+  D <- matrix(0L, TT, N); D[15:TT, (N_co + 1):N] <- 1L
+  df <- data.frame(id = rep(seq_len(N), each = TT), t = rep(seq_len(TT), N),
+                   y = as.vector(Y + 3 * D), d = as.vector(D))
+  fit <- scm_fit(y ~ d | id + t, data = df, method = "tasc", em_tol = 1e-5)
+  expect_true(fit$converged)
+  expect_true(all(diag(fit$Q) > 1e-6))
+  expect_lt(abs(fit$estimate - 3), 0.5)
+  expect_warning(scm_fit(y ~ d | id + t, data = df, method = "tasc",
+                         em_iter = 3L), "did not converge")
+})
+
+test_that("scm_design CI uses the order-statistic quantile of eq. (18)", {
+  df  <- make_design_panel()
+  res <- scm_design(df, "outcome", "unit", "time", T0 = 15L, T_fit = 10L)
+  q   <- res$ci_upper - res$tau_hat
+  expect_equal(unname(q[1]), unname(q[length(q)]))
+  expect_true(any(abs(q[1] - abs(res$u_blank)) < 1e-12))
+})
+
+test_that("scm_design leaves the caller's random number stream alone", {
+  df <- make_design_panel(TT = 40)
+  set.seed(123); invisible(runif(1)); before <- .Random.seed
+  res <- scm_design(df, "outcome", "unit", "time", T0 = 30L, T_fit = 10L)
+  expect_identical(.Random.seed, before)
+  expect_true(is.finite(res$p_value))
+})
+
+test_that("SI unit engine reproduces a staggered multi-arm fit", {
+  fit <- scm_fit(y ~ d | id + time, data = stag_tensor_panel, method = "si")
+  ctx <- coresynth:::.si_inference_context(fit)
+  expect_equal(coresynth:::.si_unit_estimate(ctx, ctx$co, ctx$tr)$estimate,
+               fit$estimate, tolerance = 1e-10)
+})
+
+test_that("staggered multi-arm SI jackknife SE is on the bootstrap's scale", {
+  # The per-cohort variance used to be taken of the weighted sum of the
+  # cohort's cells rather than of its mean, inflating the SE by the weight
+  # (0.78 against a bootstrap SE of 0.04 on this design).
+  p    <- make_stag_tensor_panel(N_co = 12L, TT = 14L)
+  fit  <- scm_fit(y ~ d | id + time, data = p, method = "si")
+  se_j <- si_inference(fit, method = "jackknife")$se
+  se_b <- si_inference(fit, method = "bootstrap", n_boot = 199L, seed = 1L)$se
+  expect_lt(se_j / se_b, 5)
+  expect_gt(se_j / se_b, 0.2)
+})
+
+test_that("GSC additive effects with r = 0 reduce to the imputation by fixed effects", {
+  fit_of <- function(force)
+    scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc", r = 0L,
+            force = force)
+
+  f    <- fit_of("two-way")
+  Y_co <- f$Y_co_all
+  Y_tr <- f$Y_treat
+  pre  <- seq_len(f$T_pre)
+  post <- (f$T_pre + 1L):nrow(Y_co)
+  c_t  <- rowMeans(Y_co)                # mu + xi_t from the controls
+  # two-way: the treated unit's level from its pre-treatment gap to c_t
+  cf_tw <- outer(c_t, colMeans(Y_tr[pre, , drop = FALSE] - c_t[pre]), `+`)
+  expect_equal(f$estimate, mean(Y_tr[post, ] - cf_tw[post, ]), tolerance = 1e-10)
+  # unit: the treated unit's own pre-treatment mean
+  expect_equal(fit_of("unit")$estimate,
+               mean(sweep(Y_tr[post, , drop = FALSE], 2, colMeans(Y_tr[pre, , drop = FALSE]))),
+               tolerance = 1e-10)
+  # time: the controls' mean path
+  expect_equal(fit_of("time")$estimate, mean(Y_tr[post, ] - c_t[post]),
+               tolerance = 1e-10)
+  expect_error(scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc",
+                       r = 0L), "positive integer")
+})
+
+test_that("GSC refits keep the additive effects the fit used", {
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc", r = 1L,
+                 force = "two-way")
+  expect_identical(fit$force, "two-way")
+  ctx <- coresynth:::.gsc_inference_context(fit)
+  expect_equal(coresynth:::.gsc_unit_estimate(ctx, ctx$co, ctx$tr)$estimate,
+               fit$estimate, tolerance = 1e-10)
+  # conformal at the null tau0 = ATT refits the same model over all periods
+  y1 <- treated_outcomes(fit)
+  y1[-seq_len(fit$T_pre)] <- y1[-seq_len(fit$T_pre)] - fit$estimate
+  P  <- coresynth:::.conformal_refit.coresynth_gsc(fit, donor_outcomes(fit), y1)
+  expect_lt(sqrt(mean((y1 - P)[seq_len(fit$T_pre)]^2)),
+            2 * sqrt(mean(rowMeans(fit$gap)[seq_len(fit$T_pre)]^2)) + 1e-8)
+  b <- gsc_boot(fit, B = 29L, seed = 1L)
+  expect_true(is.finite(b$se))
+  st <- scm_fit(y ~ d | id + time, data = staggered, method = "gsc", r = 1L,
+                force = "unit")
+  ctx_st <- coresynth:::.gsc_inference_context(st)
+  expect_equal(coresynth:::.gsc_unit_estimate(ctx_st, ctx_st$co, ctx_st$tr)$estimate,
+               st$estimate, tolerance = 1e-10)
+})
+
+# ── SDID 推論: Arkhangelsky et al. (2021) Algorithms 2-3（2026-10）────────────
+
+test_that("SDID unit engines reproduce sharp, covariate and staggered fits", {
+  check <- function(fit) {
+    ctx <- coresynth:::.sdid_inference_context(fit)
+    expect_equal(coresynth:::.sdid_unit_estimate(ctx, ctx$co, ctx$tr)$estimate,
+                 fit$estimate, tolerance = 1e-10)
+    expect_equal(coresynth:::.sdid_jack_estimate(ctx, ctx$co, ctx$tr)$estimate,
+                 fit$estimate, tolerance = 1e-10)
+  }
+  check(scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid"))
+  check(scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid", zeta2 = 2))
+  check(scm_fit(y ~ d | id + time, data = staggered2, method = "sdid"))
+  check(suppressWarnings(scm_fit(y ~ d | id + time, data = staggered2,
+                                 method = "sdid", control_group = "clean")))
+  check(scm_fit(y ~ d | id + time, data = stag_cov, method = "sdid",
+                covariates = "cov1"))
+})
+
+test_that("SDID jackknife holds the fitted weights", {
+  fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid")
+  ctx <- coresynth:::.sdid_inference_context(fit)
+  # Dropping the first donor: omega renormalised over the rest, lambda as
+  # fitted, the treated mean unchanged
+  om  <- fit$unit_weights[-1] / sum(fit$unit_weights[-1])
+  lam <- fit$time_weights
+  manual <- (mean(fit$Y_tr_post_mean) - sum(lam * fit$Y_tr_pre_mean)) -
+    (sum(om * colMeans(fit$Y_co_post[, -1, drop = FALSE])) -
+       sum(om * colSums(lam * fit$Y_co_pre[, -1, drop = FALSE])))
+  expect_equal(
+    coresynth:::.sdid_jack_estimate(ctx, ctx$co[-1], ctx$tr)$estimate,
+    manual, tolerance = 1e-10)
+})
+
+test_that("SDID bootstrap carries the treated units' own variation", {
+  # Two treated units with effects 0 and 4: resampling only the controls
+  # would see none of that spread
+  p <- panel_tr3
+  p$y[p$id == "u2" & p$d == 1] <- p$y[p$id == "u2" & p$d == 1] - 2
+  p$y[p$id == "u3" & p$d == 1] <- p$y[p$id == "u3" & p$d == 1] + 2
+  fit <- scm_fit(y ~ d | id + time, data = p, method = "sdid")
+  inf <- sdid_inference(fit, method = "bootstrap", n_boot = 99L, seed = 1L)
+  expect_gt(inf$se, 0.5)
+  expect_gt(sdid_inference(fit, method = "jackknife")$se, 0.5)
+})
+
+test_that("resampling inference needs two treated units, and two per cohort for the jackknife", {
+  fit1 <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  expect_error(sdid_inference(fit1, method = "bootstrap"), "placebo")
+  expect_error(sdid_inference(fit1, method = "jackknife"), "placebo")
+  expect_no_error(sdid_inference(fit1, method = "placebo"))
+  for (m in c("sdid", "gsc", "si")) {
+    args <- list(y ~ d | id + time, data = staggered, method = m)
+    if (m == "gsc") args$r <- 1L
+    fit <- do.call(scm_fit, args)
+    inf_fn <- switch(m, sdid = sdid_inference, gsc = gsc_inference,
+                     si = si_inference)
+    expect_error(inf_fn(fit, method = "jackknife"), "two treated units")
+    expect_error(inf_fn(fit, method = "jackknife_global"), "two treated units")
+    expect_true(is.finite(inf_fn(fit, method = "bootstrap", n_boot = 29L,
+                                 seed = 1L)$se))
+  }
+})

@@ -18,8 +18,7 @@ sdid_inference(
 \item{fit}{A \code{coresynth} object with \code{method = "sdid"} (sharp or staggered).}
 
 \item{method}{Inference method: \code{"placebo"} (permutation), \code{"bootstrap"}
-(resamples control units only; see Details and \code{\link[=sdid_event_study]{sdid_event_study()}} for
-unit- or cluster-level resampling of all units), \code{"jackknife"}, or
+(resamples treated and control units), \code{"jackknife"}, or
 \code{"jackknife_global"} (staggered only).}
 
 \item{n_boot}{Number of bootstrap replications (only for \code{method = "bootstrap"}).}
@@ -50,20 +49,35 @@ A list with:
 }
 \description{
 Computes standard errors and p-values for a SDID estimate using one of
-four methods: permutation placebo test (Clarke et al. 2024, Algorithm 4),
-control-unit bootstrap, leave-one-control-out jackknife (Algorithm 3), or
-(staggered fits only) a global jackknife across the unique control units of
-all cohorts.
+the procedures of Arkhangelsky et al. (2021) and Clarke et al. (2024):
+the unit bootstrap (Algorithm 2), the jackknife (Algorithm 3), or the
+placebo permutation (Algorithm 4), plus, for staggered fits, a global
+jackknife across every unit of all cohorts.
 }
 \details{
-\strong{What \code{method = "bootstrap"} resamples:} \code{sdid_inference()} resamples
-\strong{control (donor) units only} with replacement, holding the treated mean
-series (\code{Y_tr_pre_mean}, \code{Y_tr_post_mean}) and the regularisation penalty
-\code{zeta2} fixed at their original-fit values. To resample \strong{both treated and
-control units} (at the unit or cluster level, e.g. prefectures or states),
-re-estimating \eqn{\hat\sigma^2}, \eqn{\zeta^2}, \eqn{\hat\omega}, and \eqn{\hat\lambda} on
-every draw and obtaining period-by-period event-study confidence intervals
-alongside the ATT standard error, use \code{\link[=sdid_event_study]{sdid_event_study()}} instead.
+\strong{\code{method = "bootstrap"}} draws N units with replacement from the whole
+panel, treated and control alike, redrawing a sample with no treated unit
+or fewer than two controls, and runs the whole estimator again on it: the
+covariate partial-out when the fit has covariates, \eqn{\hat\sigma^2},
+\eqn{\zeta^2} (unless fixed in \code{\link[=scm_fit]{scm_fit()}}), \eqn{\hat\omega} and
+\eqn{\hat\lambda}. A unit drawn twice enters as two units. On a staggered
+fit the cohorts are rebuilt from the treated units drawn, so their sizes
+vary across draws.
+
+\strong{\code{method = "jackknife"}} drops one unit at a time, treated or control,
+and recomputes the weighted difference-in-differences with the fitted
+\eqn{\hat\omega} (renormalised over the remaining donors) and
+\eqn{\hat\lambda} held fixed; on a staggered fit it does so cohort by cohort
+and combines the cohort variances by the delta method, while
+\code{"jackknife_global"} drops each unit from the whole panel at once and keeps
+the covariance between cohorts.
+
+Both resample the treated units, so they need more than one: with a single
+treated unit its own noise never varies across replicates (the jackknife is
+not even defined), and the function stops. The jackknife on a staggered fit
+further needs two treated units in every cohort. Use \code{"placebo"} for a
+single treated unit; it learns the noise level from the controls and so
+assumes their noise matches the treated units'.
 
 For \code{method = "placebo"}, the p-value is the permutation p-value, while
 the standard error is the dispersion of the placebo distribution
@@ -71,8 +85,11 @@ the standard error is the dispersion of the placebo distribution
 normal approximation around the estimate with that SE. The placebo SE
 assumes the treated unit's noise is comparable to the control units';
 interpret it with caution when the donor pool is small.
+
+\code{\link[=sdid_event_study]{sdid_event_study()}} runs the same bootstrap at the level of clusters of
+units and reports period-by-period effects alongside the ATT.
 }
 \seealso{
 \code{\link[=sdid_event_study]{sdid_event_study()}} for period-by-period event-study effects and
-cluster (or unit) bootstrap resampling over both treated and control units.
+cluster bootstrap resampling.
 }

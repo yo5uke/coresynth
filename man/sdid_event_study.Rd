@@ -92,11 +92,12 @@ approximation and percentile) for every period and for the overall ATT from
 the same bootstrap draws.
 }
 \details{
-\strong{Resampling scheme:} Unlike \code{\link[=sdid_inference]{sdid_inference()}} with \code{method = "bootstrap"},
-which resamples control units only while holding the treated mean and
-\eqn{\zeta^2} fixed, \code{sdid_event_study()} resamples \strong{both treated and
-control units} with replacement (at the cluster level when \code{cluster} is
-supplied, or at the unit level when \code{cluster = NULL}). Duplicated units in a
+\strong{Resampling scheme:} As in \code{\link[=sdid_inference]{sdid_inference()}} with \code{method = "bootstrap"}
+(Arkhangelsky et al. 2021, Algorithm 2), \code{sdid_event_study()} resamples
+\strong{both treated and control units} with replacement -- here at the cluster
+level when \code{cluster} is supplied, or at the unit level when
+\code{cluster = NULL} -- and reports period-by-period effects as well as the
+ATT. Duplicated units in a
 bootstrap draw enter as distinct unit columns (equivalent to assigning fresh
 unit IDs per draw), and \eqn{\hat\sigma^2}, \eqn{\zeta^2} (unless user-fixed in
 \code{scm_fit()}), unit weights \eqn{\hat\omega}, and time weights \eqn{\hat\lambda} are

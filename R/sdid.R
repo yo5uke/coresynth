@@ -198,26 +198,138 @@
   )
 }
 
-# ── Internal: re-estimate one SDID cohort with given control indices ──────────
-# Used by sdid_inference() staggered bootstrap/jackknife.
-# zeta2 = NULL: recompute from resampled data (bootstrap).
-# zeta2 = cf$zeta2: fixed from original fit (jackknife).
-.refit_sdid_cohort <- function(Y_mat, cf, zeta2 = NULL) {
-  TT        <- nrow(Y_mat)
-  pre_rows  <- seq_len(cf$T_pre)
-  post_rows <- (cf$T_pre + 1L):TT
-  res <- tryCatch(
-    .fit_sdid_matrices(
-      Y_co_pre       = Y_mat[pre_rows,  cf$idx_co, drop = FALSE],
-      Y_co_post      = Y_mat[post_rows, cf$idx_co, drop = FALSE],
-      Y_tr_pre_mean  = rowMeans(Y_mat[pre_rows,  cf$idx_tr, drop = FALSE]),
-      Y_tr_post_mean = rowMeans(Y_mat[post_rows, cf$idx_tr, drop = FALSE]),
-      N_tr  = length(cf$idx_tr),
-      zeta2 = zeta2
-    ),
-    error = function(e) NULL
-  )
-  if (is.null(res)) NA_real_ else res$estimate
+# ── Internal: SDID effect for a draw of units (bootstrap) ────────────────────
+# Arkhangelsky et al. (2021, Algorithm 2) and Clarke et al. (2024, Algorithm
+# 2): the whole procedure runs again on the drawn panel -- the covariate
+# partial-out when the fit has covariates, sigma_hat, zeta2 (unless the user
+# fixed it), and both sets of weights. `co` and `tr` index the never-treated
+# and treated columns of ctx$Y and may repeat; a unit drawn twice enters as
+# two columns. Cohorts are rebuilt from the treated units drawn. See
+# .unit_inference() for the return value.
+.sdid_unit_estimate <- function(ctx, co, tr) {
+  TT    <- nrow(ctx$Y)
+  n_co  <- length(co)
+  adopt <- ctx$T_adopt[tr]
+  cols  <- c(co, tr)
+  if (!is.null(ctx$Y_raw) && !is.null(ctx$X_arr)) {
+    pan_b <- list(idx_control = seq_len(n_co),
+                  idx_treat   = n_co + seq_along(tr),
+                  T_adopt     = c(rep(NA_integer_, n_co), adopt))
+    po <- tryCatch(
+      suppressWarnings(.sdid_partial_out_staggered(
+        ctx$Y_raw[, cols, drop = FALSE], ctx$X_arr[, cols, , drop = FALSE],
+        pan_b)),
+      error = function(e) NULL)
+    if (is.null(po)) return(NULL)
+    Y <- po$Y_tilde
+  } else {
+    Y <- ctx$Y[, cols, drop = FALSE]
+  }
+
+  cohorts <- sort(unique(adopt))
+  est <- w <- numeric(length(cohorts))
+  for (k in seq_along(cohorts)) {
+    g      <- cohorts[k]
+    pre    <- seq_len(g - 1L)
+    post   <- g:TT
+    tr_pos <- n_co + which(adopt == g)
+    donors <- if (identical(ctx$control_group, "never_treated")) seq_len(n_co)
+              else c(seq_len(n_co), n_co + which(adopt > g))
+    m <- tryCatch(
+      .fit_sdid_matrices(
+        Y_co_pre       = Y[pre,  donors, drop = FALSE],
+        Y_co_post      = Y[post, donors, drop = FALSE],
+        Y_tr_pre_mean  = rowMeans(Y[pre,  tr_pos, drop = FALSE]),
+        Y_tr_post_mean = rowMeans(Y[post, tr_pos, drop = FALSE]),
+        N_tr = length(tr_pos), zeta2 = ctx$zeta2, zeta_t = ctx$zeta_t),
+      error = function(e) NULL)
+    if (is.null(m)) return(NULL)
+    est[k] <- m$estimate
+    w[k]   <- length(tr_pos) * length(post)
+  }
+  list(estimate = sum(w * est) / sum(w), cohort = cohorts,
+       cohort_estimate = est, cohort_weight = w)
+}
+
+# ── Internal: SDID effect without a unit, weights held fixed (jackknife) ─────
+# Arkhangelsky et al. (2021, Algorithm 3) and Clarke et al. (2024, Algorithm
+# 3) keep each cohort's unit weights omega and time weights lambda from the
+# fit and only recompute the weighted difference-in-differences: dropping a
+# donor renormalises omega over the donors that remain, dropping a treated
+# unit removes it from the treated mean and from the cohort weight. The
+# covariate adjustment stays as fitted.
+.sdid_jack_estimate <- function(ctx, co, tr) {
+  TT      <- nrow(ctx$Y)
+  kept    <- c(co, tr)
+  adopt   <- ctx$T_adopt[tr]
+  cohorts <- sort(unique(adopt))
+  est <- w <- numeric(length(cohorts))
+  for (k in seq_along(cohorts)) {
+    g  <- cohorts[k]
+    cw <- ctx$weights[[as.character(g)]]
+    if (is.null(cw)) return(NULL)
+    pre   <- seq_len(g - 1L)
+    post  <- g:TT
+    tr_g  <- tr[adopt == g]
+    in_d  <- cw$idx_co %in% kept
+    omega <- cw$omega[in_d]
+    if (sum(omega) <= 0) return(NULL)
+    don <- cw$idx_co[in_d]
+    est[k] <- sdid_estimate_cpp(
+      ctx$Y[pre,  don, drop = FALSE], ctx$Y[post, don, drop = FALSE],
+      rowMeans(ctx$Y[pre,  tr_g, drop = FALSE]),
+      rowMeans(ctx$Y[post, tr_g, drop = FALSE]),
+      omega / sum(omega), cw$lambda)
+    w[k] <- length(tr_g) * length(post)
+  }
+  list(estimate = sum(w * est) / sum(w), cohort = cohorts,
+       cohort_estimate = est, cohort_weight = w)
+}
+
+# The panel an SDID fit was estimated on, laid out for .sdid_unit_estimate()
+# and .sdid_jack_estimate(): the outcome matrix on the scale the weights were
+# fitted on, the raw outcomes and covariates when the fit partialled them out,
+# and each cohort's weights keyed by its adoption row.
+.sdid_inference_context <- function(fit) {
+  if (inherits(fit, "coresynth_staggered")) {
+    if (is.null(fit$Y_mat))
+      stop("fit$Y_mat not found. Re-estimate with the current version of ",
+           "coresynth.", call. = FALSE)
+    cfs <- fit$cohort_fits
+    co  <- Reduce(intersect, lapply(cfs, `[[`, "idx_co"))
+    weights <- lapply(cfs, function(cf)
+      list(idx_co = cf$idx_co, omega = unname(cf$unit_weights),
+           lambda = cf$time_weights))
+    names(weights) <- vapply(cfs, function(cf) as.character(cf$cohort),
+                             character(1L))
+    same <- vapply(cfs, function(cf) setequal(cf$idx_co, co), logical(1L))
+    return(list(
+      Y = fit$Y_mat, Y_raw = fit[["Y_raw"]], X_arr = fit[["X_arr"]],
+      T_adopt = .adopt_from_cohorts(ncol(fit$Y_mat), cfs),
+      co = co, tr = unlist(lapply(cfs, `[[`, "idx_tr"), use.names = FALSE),
+      control_group = fit[["control_group"]] %||%
+        (if (all(same)) "never_treated" else "clean"),
+      zeta2 = fit[["zeta2_user"]], zeta_t = fit[["zeta_t"]] %||% 1e-6,
+      weights = weights, pooled = TRUE))
+  }
+  if (is.null(fit$Y_co_pre) || is.null(fit$Y_tr_pre))
+    stop("fit does not contain Y_co_pre. Re-estimate with the current version ",
+         "of coresynth to enable inference.", call. = FALSE)
+  TT <- length(fit$times)
+  Y  <- matrix(NA_real_, TT, length(fit$units))
+  Y[, fit$idx_co] <- rbind(fit$Y_co_pre, fit$Y_co_post)
+  Y[, fit$idx_tr] <- rbind(fit$Y_tr_pre, fit$Y_tr_post)
+  T_adopt <- rep(NA_integer_, ncol(Y))
+  T_adopt[fit$idx_tr] <- fit$T_pre + 1L
+  weights <- stats::setNames(
+    list(list(idx_co = fit$idx_co, omega = unname(fit$unit_weights),
+              lambda = fit$time_weights)),
+    as.character(fit$T_pre + 1L))
+  list(
+    Y = Y, Y_raw = fit[["Y_raw"]], X_arr = fit[["X_arr"]], T_adopt = T_adopt,
+    co = fit$idx_co, tr = fit$idx_tr, control_group = "never_treated",
+    zeta2 = fit[["zeta2_user"]], zeta_t = fit[["zeta_t"]] %||% 1e-6,
+    weights = weights, pooled = TRUE)
 }
 
 # ── Internal: cohort-by-cohort SDID for staggered adoption ───────────────────
@@ -314,6 +426,7 @@ fit_sdid_cpp <- function(y, d, id, time,
   if (!pan$is_sharp) {
     Y_work   <- pan$Y
     beta_hat <- numeric(0)
+    X_arr    <- NULL
     if (use_cov) {
       X_arr    <- build_covariate_array(data, id_var, time_var,
                                        covariates, pan$units, pan$times)
@@ -345,7 +458,12 @@ fit_sdid_cpp <- function(y, d, id, time,
       times            = pan$times,
       T_pre            = pan$T_pre,
       beta_hat         = beta_hat,
-      covariates       = covariates
+      covariates       = covariates,
+      # What sdid_inference() needs to rerun the fit on a bootstrap draw
+      zeta2_user       = zeta2,
+      zeta_t           = zeta_t,
+      Y_raw            = if (use_cov) pan$Y,
+      X_arr            = X_arr
     ))
   }
 
@@ -431,19 +549,34 @@ fit_sdid_cpp <- function(y, d, id, time,
 #' Inference for Synthetic Difference-in-Differences
 #'
 #' Computes standard errors and p-values for a SDID estimate using one of
-#' four methods: permutation placebo test (Clarke et al. 2024, Algorithm 4),
-#' control-unit bootstrap, leave-one-control-out jackknife (Algorithm 3), or
-#' (staggered fits only) a global jackknife across the unique control units of
-#' all cohorts.
+#' the procedures of Arkhangelsky et al. (2021) and Clarke et al. (2024):
+#' the unit bootstrap (Algorithm 2), the jackknife (Algorithm 3), or the
+#' placebo permutation (Algorithm 4), plus, for staggered fits, a global
+#' jackknife across every unit of all cohorts.
 #'
-#' **What `method = "bootstrap"` resamples:** `sdid_inference()` resamples
-#' **control (donor) units only** with replacement, holding the treated mean
-#' series (`Y_tr_pre_mean`, `Y_tr_post_mean`) and the regularisation penalty
-#' `zeta2` fixed at their original-fit values. To resample **both treated and
-#' control units** (at the unit or cluster level, e.g. prefectures or states),
-#' re-estimating \eqn{\hat\sigma^2}, \eqn{\zeta^2}, \eqn{\hat\omega}, and \eqn{\hat\lambda} on
-#' every draw and obtaining period-by-period event-study confidence intervals
-#' alongside the ATT standard error, use [sdid_event_study()] instead.
+#' **`method = "bootstrap"`** draws N units with replacement from the whole
+#' panel, treated and control alike, redrawing a sample with no treated unit
+#' or fewer than two controls, and runs the whole estimator again on it: the
+#' covariate partial-out when the fit has covariates, \eqn{\hat\sigma^2},
+#' \eqn{\zeta^2} (unless fixed in [scm_fit()]), \eqn{\hat\omega} and
+#' \eqn{\hat\lambda}. A unit drawn twice enters as two units. On a staggered
+#' fit the cohorts are rebuilt from the treated units drawn, so their sizes
+#' vary across draws.
+#'
+#' **`method = "jackknife"`** drops one unit at a time, treated or control,
+#' and recomputes the weighted difference-in-differences with the fitted
+#' \eqn{\hat\omega} (renormalised over the remaining donors) and
+#' \eqn{\hat\lambda} held fixed; on a staggered fit it does so cohort by cohort
+#' and combines the cohort variances by the delta method, while
+#' `"jackknife_global"` drops each unit from the whole panel at once and keeps
+#' the covariance between cohorts.
+#'
+#' Both resample the treated units, so they need more than one: with a single
+#' treated unit its own noise never varies across replicates (the jackknife is
+#' not even defined), and the function stops. The jackknife on a staggered fit
+#' further needs two treated units in every cohort. Use `"placebo"` for a
+#' single treated unit; it learns the noise level from the controls and so
+#' assumes their noise matches the treated units'.
 #'
 #' For `method = "placebo"`, the p-value is the permutation p-value, while
 #' the standard error is the dispersion of the placebo distribution
@@ -452,10 +585,12 @@ fit_sdid_cpp <- function(y, d, id, time,
 #' assumes the treated unit's noise is comparable to the control units';
 #' interpret it with caution when the donor pool is small.
 #'
+#' [sdid_event_study()] runs the same bootstrap at the level of clusters of
+#' units and reports period-by-period effects alongside the ATT.
+#'
 #' @param fit A `coresynth` object with `method = "sdid"` (sharp or staggered).
 #' @param method Inference method: `"placebo"` (permutation), `"bootstrap"`
-#'   (resamples control units only; see Details and [sdid_event_study()] for
-#'   unit- or cluster-level resampling of all units), `"jackknife"`, or
+#'   (resamples treated and control units), `"jackknife"`, or
 #'   `"jackknife_global"` (staggered only).
 #' @param n_boot Number of bootstrap replications (only for `method = "bootstrap"`).
 #' @param level Confidence level for the interval (all methods).
@@ -477,7 +612,7 @@ fit_sdid_cpp <- function(y, d, id, time,
 #' * `boot_ests`: Bootstrap estimate distribution (bootstrap only).
 #'
 #' @seealso [sdid_event_study()] for period-by-period event-study effects and
-#'   cluster (or unit) bootstrap resampling over both treated and control units.
+#'   cluster bootstrap resampling.
 #' @export
 sdid_inference <- function(
   fit,
@@ -497,7 +632,7 @@ sdid_inference <- function(
            "cluster bootstrap inference.", call. = FALSE)
     }
     stop("sdid_inference() does not accept `cluster` (its bootstrap resamples ",
-         "control units only). Use sdid_event_study(fit, cluster = ...) to ",
+         "individual units). Use sdid_event_study(fit, cluster = ...) to ",
          "resample clusters of treated and control units.", call. = FALSE)
   }
   if (length(dots) > 0L) {
@@ -514,198 +649,87 @@ sdid_inference <- function(
   tau_hat   <- fit$estimate
   alpha     <- 1 - level
   staggered <- inherits(fit, "coresynth_staggered")
+  if (method == "jackknife_global" && !staggered)
+    stop("sdid_inference() method='jackknife_global' requires a staggered fit.",
+         call. = FALSE)
 
-  # ── Staggered path ────────────────────────────────────────────────────────────
+  # ── Bootstrap and jackknife: resampling of units ────────────────────────────
+  if (method != "placebo") {
+    ctx <- .sdid_inference_context(fit)
+    if (!is.null(seed)) set.seed(seed)
+    res <- .unit_inference(
+      fit, ctx, .sdid_unit_estimate, method, n_boot, level, alternative,
+      label = "sdid_inference()",
+      one_treated_hint = paste0(
+        "Use method = \"placebo\" (Arkhangelsky et al. 2021, Algorithm 4), ",
+        "which learns the noise level from the control units."),
+      jack_fn = .sdid_jack_estimate)
+    res["placebo_effects"] <- list(NULL)
+    class(res) <- c("sdid_inference", "coresynth_inference")
+    return(res)
+  }
+
+  # ── Placebo (Clarke et al. 2024, Algorithm 4) ───────────────────────────────
   if (staggered) {
     if (is.null(fit$Y_mat))
       stop("fit$Y_mat not found. Re-estimate with the current version of coresynth.",
            call. = FALSE)
 
     cohort_fits <- fit$cohort_fits
-    W    <- sum(vapply(cohort_fits, `[[`, numeric(1L), "weight"))
-    w_g  <- vapply(cohort_fits, `[[`, numeric(1L), "weight")
+    W     <- sum(vapply(cohort_fits, `[[`, numeric(1L), "weight"))
     Y_mat <- fit$Y_mat
+    TT    <- nrow(Y_mat)
 
-    if (!is.null(seed)) set.seed(seed)
+    # never-treated controls: intersection of all cohort control pools.
+    # future-treated units appear in early cohorts only; the intersection
+    # yields the set that is untreated throughout all cohorts.
+    never_co <- Reduce(intersect, lapply(cohort_fits, `[[`, "idx_co"))
+    if (length(never_co) < 2L)
+      stop("sdid_inference() staggered placebo: fewer than 2 never-treated ",
+           "controls available. Use method='bootstrap' or 'jackknife'.",
+           call. = FALSE)
 
-    if (method == "placebo") {
-      # never-treated controls: intersection of all cohort control pools.
-      # future-treated units appear in early cohorts only; the intersection
-      # yields the set that is untreated throughout all cohorts.
-      never_co <- Reduce(intersect, lapply(cohort_fits, `[[`, "idx_co"))
-      if (length(never_co) < 2L)
-        stop("sdid_inference() staggered placebo: fewer than 2 never-treated ",
-             "controls available. Use method='bootstrap' or 'jackknife'.",
-             call. = FALSE)
-
-      TT <- nrow(Y_mat)
-
-      # Call sdid_placebo_cpp once per cohort (K calls total).
-      # lambda (time_weights) and zeta2 are fixed from the original cohort fit.
-      plac_by_cohort <- lapply(cohort_fits, function(cf) {
-        pre_rows  <- seq_len(cf$T_pre)
-        post_rows <- (cf$T_pre + 1L):TT
-        sdid_placebo_cpp(
-          Y_mat[pre_rows,  cf$idx_co, drop = FALSE],
-          Y_mat[post_rows, cf$idx_co, drop = FALSE],
-          cf$time_weights,
-          cf$zeta2
-        )
-      })
-
-      # For each never-treated unit j, aggregate per-cohort placebos with
-      # the same cohort weights used for the staggered ATT.
-      placebo_effects <- vapply(never_co, function(j) {
-        att_total <- 0
-        for (k in seq_along(cohort_fits)) {
-          cf    <- cohort_fits[[k]]
-          pos_j <- which(cf$idx_co == j)   # length 1: j always in idx_co_k
-          att_total <- att_total + cf$weight * plac_by_cohort[[k]][pos_j]
-        }
-        att_total / W
-      }, numeric(1L))
-
-      nm <- colnames(Y_mat)
-      names(placebo_effects) <-
-        if (!is.null(nm)) nm[never_co] else as.character(never_co)
-
-      p_value <- switch(alternative,
-        two.sided = (1 + sum(abs(placebo_effects) >= abs(tau_hat))) / (length(never_co) + 1),
-        greater   = (1 + sum(placebo_effects >= tau_hat))           / (length(never_co) + 1),
-        less      = (1 + sum(placebo_effects <= tau_hat))           / (length(never_co) + 1)
+    # Call sdid_placebo_cpp once per cohort (K calls total).
+    # lambda (time_weights) and zeta2 are fixed from the original cohort fit.
+    plac_by_cohort <- lapply(cohort_fits, function(cf) {
+      pre_rows  <- seq_len(cf$T_pre)
+      post_rows <- (cf$T_pre + 1L):TT
+      sdid_placebo_cpp(
+        Y_mat[pre_rows,  cf$idx_co, drop = FALSE],
+        Y_mat[post_rows, cf$idx_co, drop = FALSE],
+        cf$time_weights,
+        cf$zeta2
       )
+    })
 
-      # Placebo variance (Clarke et al. 2024 Alg. 4): dispersion of the
-      # placebo distribution, 1/B normalization
-      se       <- sqrt(mean((placebo_effects - mean(placebo_effects))^2))
-      ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-      ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-
-      return(structure(list(
-        estimate        = tau_hat,
-        se              = se,
-        p_value         = p_value,
-        ci_lower        = ci_lower,
-        ci_upper        = ci_upper,
-        method          = method,
-        n_controls      = length(never_co),
-        alternative     = alternative,
-        placebo_effects = placebo_effects,
-        boot_ests       = NULL,
-        staggered       = TRUE
-      ), class = c("sdid_inference", "coresynth_inference")))
-    }
-
-    if (method == "bootstrap") {
-      boot_ests <- replicate(n_boot, {
-        att_total <- 0
-        for (cf in cohort_fits) {
-          N_co_g <- length(cf$idx_co)
-          idx_b  <- cf$idx_co[sample(N_co_g, replace = TRUE)]
-          cf_b   <- cf; cf_b$idx_co <- idx_b
-          att_g  <- tryCatch(.refit_sdid_cohort(Y_mat, cf_b),
-                             error = function(e) NA_real_)
-          att_total <- att_total + cf$weight * att_g
-        }
-        att_total / W
-      })
-      valid    <- boot_ests[!is.na(boot_ests)]
-      se       <- sd(valid)
-      ci_lower <- unname(quantile(valid, alpha / 2))
-      ci_upper <- unname(quantile(valid, 1 - alpha / 2))
-      z        <- tau_hat / max(se, .Machine$double.eps)
-      p_value  <- switch(alternative,
-        two.sided = 2 * pnorm(-abs(z)),
-        greater   = pnorm(-z),
-        less      = pnorm(z)
-      )
-      return(structure(list(
-        estimate        = tau_hat,
-        se              = se,
-        p_value         = p_value,
-        ci_lower        = ci_lower,
-        ci_upper        = ci_upper,
-        method          = method,
-        n_controls      = mean(vapply(cohort_fits, function(cf) length(cf$idx_co), numeric(1L))),
-        alternative     = alternative,
-        placebo_effects = NULL,
-        boot_ests       = boot_ests,
-        staggered       = TRUE
-      ), class = c("sdid_inference", "coresynth_inference")))
-    }
-
-    if (method == "jackknife_global") {
-      # Global jackknife: drop one unique control across ALL cohorts simultaneously.
-      # Captures cross-cohort correlation ignored by per-cohort LOO.
-      all_co    <- sort(unique(unlist(lapply(cohort_fits, `[[`, "idx_co"))))
-      orig_ests <- vapply(cohort_fits, `[[`, numeric(1L), "estimate")
-      jack_ests <- vapply(all_co, function(i) {
-        att_total <- 0
-        for (k in seq_along(cohort_fits)) {
-          cf   <- cohort_fits[[k]]
-          if (i %in% cf$idx_co) {
-            keep <- cf$idx_co[cf$idx_co != i]
-            if (length(keep) < 2L) return(NA_real_)
-            cf_loo        <- cf
-            cf_loo$idx_co <- keep
-            att_g <- .refit_sdid_cohort(Y_mat, cf_loo, zeta2 = cf$zeta2)
-            if (is.na(att_g)) return(NA_real_)
-          } else {
-            att_g <- orig_ests[k]
-          }
-          att_total <- att_total + cf$weight * att_g
-        }
-        att_total / W
-      }, numeric(1L))
-      valid <- jack_ests[!is.na(jack_ests)]
-      N_v   <- length(valid)
-      se    <- sqrt((N_v - 1L) / N_v * sum((valid - mean(valid))^2))
-      z        <- tau_hat / max(se, .Machine$double.eps)
-      ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-      ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-      p_value  <- switch(alternative,
-        two.sided = 2 * pnorm(-abs(z)),
-        greater   = pnorm(-z),
-        less      = pnorm(z)
-      )
-      return(structure(list(
-        estimate        = tau_hat,
-        se              = se,
-        p_value         = p_value,
-        ci_lower        = ci_lower,
-        ci_upper        = ci_upper,
-        method          = method,
-        n_controls      = length(all_co),
-        alternative     = alternative,
-        placebo_effects = NULL,
-        boot_ests       = NULL,
-        staggered       = TRUE
-      ), class = c("sdid_inference", "coresynth_inference")))
-    }
-
-    # jackknife (per-cohort LOO + delta-method; Clarke et al. 2024 Alg 3)
-    var_components <- vapply(cohort_fits, function(cf) {
-      N_co_g <- length(cf$idx_co)
-      if (N_co_g < 2L) return(0)
-      jack_g <- vapply(seq_len(N_co_g), function(i) {
-        cf_loo        <- cf
-        cf_loo$idx_co <- cf$idx_co[-i]
-        .refit_sdid_cohort(Y_mat, cf_loo, zeta2 = cf$zeta2)
-      }, numeric(1L))
-      valid_g <- jack_g[!is.na(jack_g)]
-      if (length(valid_g) < 2L) return(0)
-      (N_co_g - 1L) / N_co_g * sum((valid_g - mean(valid_g))^2)
+    # For each never-treated unit j, aggregate per-cohort placebos with
+    # the same cohort weights used for the staggered ATT.
+    placebo_effects <- vapply(never_co, function(j) {
+      att_total <- 0
+      for (k in seq_along(cohort_fits)) {
+        cf    <- cohort_fits[[k]]
+        pos_j <- which(cf$idx_co == j)   # length 1: j always in idx_co_k
+        att_total <- att_total + cf$weight * plac_by_cohort[[k]][pos_j]
+      }
+      att_total / W
     }, numeric(1L))
-    var_st   <- sum((w_g / W)^2 * var_components)
-    se       <- sqrt(var_st)
-    z        <- tau_hat / max(se, .Machine$double.eps)
+
+    nm <- colnames(Y_mat)
+    names(placebo_effects) <-
+      if (!is.null(nm)) nm[never_co] else as.character(never_co)
+
+    p_value <- switch(alternative,
+      two.sided = (1 + sum(abs(placebo_effects) >= abs(tau_hat))) / (length(never_co) + 1),
+      greater   = (1 + sum(placebo_effects >= tau_hat))           / (length(never_co) + 1),
+      less      = (1 + sum(placebo_effects <= tau_hat))           / (length(never_co) + 1)
+    )
+
+    # Placebo variance (Clarke et al. 2024 Alg. 4): dispersion of the
+    # placebo distribution, 1/B normalization
+    se       <- sqrt(mean((placebo_effects - mean(placebo_effects))^2))
     ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
     ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-    p_value  <- switch(alternative,
-      two.sided = 2 * pnorm(-abs(z)),
-      greater   = pnorm(-z),
-      less      = pnorm(z)
-    )
+
     return(structure(list(
       estimate        = tau_hat,
       se              = se,
@@ -713,124 +737,46 @@ sdid_inference <- function(
       ci_lower        = ci_lower,
       ci_upper        = ci_upper,
       method          = method,
-      n_controls      = mean(vapply(cohort_fits, function(cf) length(cf$idx_co), numeric(1L))),
+      n_controls      = length(never_co),
       alternative     = alternative,
-      placebo_effects = NULL,
+      placebo_effects = placebo_effects,
       boot_ests       = NULL,
       staggered       = TRUE
     ), class = c("sdid_inference", "coresynth_inference")))
   }
 
-  # ── Sharp path ───────────────────────────────────────────────────────────────
-  if (method == "jackknife_global")
-    stop("sdid_inference() method='jackknife_global' requires a staggered fit.",
-         call. = FALSE)
   if (is.null(fit$Y_co_pre))
     stop("fit does not contain Y_co_pre. Re-estimate with the current version of ",
          "coresynth to enable inference.", call. = FALSE)
 
   N_co    <- ncol(fit$Y_co_pre)
+  effects <- drop(sdid_placebo_cpp(fit$Y_co_pre, fit$Y_co_post,
+                                   fit$time_weights, fit$zeta2))
+  names(effects) <- colnames(fit$Y_co_pre)
 
-  # ── Method dispatch ─────────────────────────────────────────────────────────
-  if (method == "placebo") {
-    effects <- drop(sdid_placebo_cpp(fit$Y_co_pre, fit$Y_co_post,
-                                     fit$time_weights, fit$zeta2))
-    names(effects) <- colnames(fit$Y_co_pre)
+  p_value <- switch(alternative,
+    two.sided = (1 + sum(abs(effects) >= abs(tau_hat))) / (N_co + 1),
+    greater   = (1 + sum(effects >= tau_hat))           / (N_co + 1),
+    less      = (1 + sum(effects <= tau_hat))           / (N_co + 1)
+  )
 
-    p_value <- switch(alternative,
-      two.sided = (1 + sum(abs(effects) >= abs(tau_hat))) / (N_co + 1),
-      greater   = (1 + sum(effects >= tau_hat))           / (N_co + 1),
-      less      = (1 + sum(effects <= tau_hat))           / (N_co + 1)
-    )
-
-    # Placebo variance (Clarke et al. 2024 Alg. 4): dispersion of the
-    # placebo distribution, 1/B normalization
-    se       <- sqrt(mean((effects - mean(effects))^2))
-    ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-    ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-
-    return(structure(list(
-      estimate        = tau_hat,
-      se              = se,
-      p_value         = p_value,
-      ci_lower        = ci_lower,
-      ci_upper        = ci_upper,
-      method          = method,
-      n_controls      = N_co,
-      alternative     = alternative,
-      placebo_effects = effects,
-      boot_ests       = NULL
-    ), class = c("sdid_inference", "coresynth_inference")))
-  }
-
-  # bootstrap / jackknife share re-estimation via .fit_sdid_matrices()
-  .refit <- function(Y_co_pre, Y_co_post) {
-    .fit_sdid_matrices(
-      Y_co_pre       = Y_co_pre,
-      Y_co_post      = Y_co_post,
-      Y_tr_pre_mean  = fit$Y_tr_pre_mean,
-      Y_tr_post_mean = fit$Y_tr_post_mean,
-      N_tr           = fit$N_tr,
-      zeta2          = fit$zeta2
-    )$estimate
-  }
-
-  if (method == "bootstrap") {
-    if (!is.null(seed)) set.seed(seed)
-    boot_ests <- replicate(n_boot, {
-      idx <- sample(N_co, replace = TRUE)
-      .refit(fit$Y_co_pre[, idx, drop = FALSE],
-             fit$Y_co_post[, idx, drop = FALSE])
-    })
-    se       <- sd(boot_ests)
-    ci_lower <- unname(quantile(boot_ests, alpha / 2))
-    ci_upper <- unname(quantile(boot_ests, 1 - alpha / 2))
-    z        <- tau_hat / max(se, .Machine$double.eps)
-    p_value  <- switch(alternative,
-      two.sided = 2 * pnorm(-abs(z)),
-      greater   = pnorm(-z),
-      less      = pnorm(z)
-    )
-    return(structure(list(
-      estimate   = tau_hat,
-      se         = se,
-      p_value    = p_value,
-      ci_lower   = ci_lower,
-      ci_upper   = ci_upper,
-      method     = method,
-      n_controls = N_co,
-      alternative = alternative,
-      placebo_effects = NULL,
-      boot_ests  = boot_ests
-    ), class = c("sdid_inference", "coresynth_inference")))
-  }
-
-  # jackknife
-  jack_ests <- vapply(seq_len(N_co), function(i) {
-    .refit(fit$Y_co_pre[, -i, drop = FALSE],
-           fit$Y_co_post[, -i, drop = FALSE])
-  }, numeric(1))
-  jack_var <- (N_co - 1) / N_co * sum((jack_ests - mean(jack_ests))^2)
-  se       <- sqrt(jack_var)
-  z        <- tau_hat / max(se, .Machine$double.eps)
+  # Placebo variance (Clarke et al. 2024 Alg. 4): dispersion of the
+  # placebo distribution, 1/B normalization
+  se       <- sqrt(mean((effects - mean(effects))^2))
   ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
   ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-  p_value  <- switch(alternative,
-    two.sided = 2 * pnorm(-abs(z)),
-    greater   = pnorm(-z),
-    less      = pnorm(z)
-  )
+
   structure(list(
-    estimate    = tau_hat,
-    se          = se,
-    p_value     = p_value,
-    ci_lower    = ci_lower,
-    ci_upper    = ci_upper,
-    method      = method,
-    n_controls  = N_co,
-    alternative = alternative,
-    placebo_effects = NULL,
-    boot_ests   = NULL
+    estimate        = tau_hat,
+    se              = se,
+    p_value         = p_value,
+    ci_lower        = ci_lower,
+    ci_upper        = ci_upper,
+    method          = method,
+    n_controls      = N_co,
+    alternative     = alternative,
+    placebo_effects = effects,
+    boot_ests       = NULL
   ), class = c("sdid_inference", "coresynth_inference"))
 }
 
@@ -973,11 +919,12 @@ print.sdid_inference <- function(x, digits = 4, ...) {
 #' approximation and percentile) for every period and for the overall ATT from
 #' the same bootstrap draws.
 #'
-#' **Resampling scheme:** Unlike [sdid_inference()] with `method = "bootstrap"`,
-#' which resamples control units only while holding the treated mean and
-#' \eqn{\zeta^2} fixed, `sdid_event_study()` resamples **both treated and
-#' control units** with replacement (at the cluster level when `cluster` is
-#' supplied, or at the unit level when `cluster = NULL`). Duplicated units in a
+#' **Resampling scheme:** As in [sdid_inference()] with `method = "bootstrap"`
+#' (Arkhangelsky et al. 2021, Algorithm 2), `sdid_event_study()` resamples
+#' **both treated and control units** with replacement -- here at the cluster
+#' level when `cluster` is supplied, or at the unit level when
+#' `cluster = NULL` -- and reports period-by-period effects as well as the
+#' ATT. Duplicated units in a
 #' bootstrap draw enter as distinct unit columns (equivalent to assigning fresh
 #' unit IDs per draw), and \eqn{\hat\sigma^2}, \eqn{\zeta^2} (unless user-fixed in
 #' `scm_fit()`), unit weights \eqn{\hat\omega}, and time weights \eqn{\hat\lambda} are

@@ -423,16 +423,27 @@ scm_design <- function(
         combs, function(idx) mean(abs(all_vals[idx])), numeric(1L)
       )
     } else {
+      # A fixed stream keeps the p-value reproducible without consuming or
+      # resetting the caller's RNG state.
+      old_seed <- if (exists(".Random.seed", envir = globalenv(),
+                             inherits = FALSE))
+        get(".Random.seed", envir = globalenv()) else NULL
       set.seed(42L)
       S_perms <- replicate(
         10000L,
         mean(abs(all_vals[sample.int(n_periods, T_post_n)]))
       )
+      if (is.null(old_seed))
+        suppressWarnings(rm(".Random.seed", envir = globalenv()))
+      else assign(".Random.seed", old_seed, envir = globalenv())
     }
     p_value <- mean(S_perms >= S_obs)
 
-    # Split-conformal CI: eq. (18)-(19)
-    q_alpha  <- as.numeric(quantile(abs(u_blank), 1 - alpha))
+    # Split-conformal CI: eq. (18)-(19). Eq. (18) takes the infimum of the
+    # empirical distribution, an order statistic, which is quantile type 1;
+    # the default type 7 interpolates below it and narrows the interval when
+    # there are few blank periods.
+    q_alpha  <- as.numeric(quantile(abs(u_blank), 1 - alpha, type = 1))
     ci_lower <- tau_hat - q_alpha
     ci_upper <- tau_hat + q_alpha
   }

@@ -16,7 +16,8 @@ si_inference(
 \arguments{
 \item{fit}{A \code{coresynth} object from \code{\link[=scm_fit]{scm_fit()}} with \code{method = "si"}.}
 
-\item{method}{\code{"bootstrap"} (default) or \code{"jackknife"}.}
+\item{method}{\code{"bootstrap"} (default), \code{"jackknife"}, or
+\code{"jackknife_global"} (staggered fits only).}
 
 \item{n_boot}{Number of bootstrap replications (default 499L; ignored for jackknife).}
 
@@ -30,9 +31,28 @@ si_inference(
 A list of class \code{coresynth_inference}.
 }
 \description{
-Estimates SE and confidence intervals for the ATT via non-parametric cluster
-bootstrap or jackknife over control units. Works for both sharp and staggered
-SI fits. For staggered fits, bootstrap resamples each cohort's control pool
-independently, and jackknife uses a per-cohort LOO with delta-method variance
-aggregation.
+Estimates SE and confidence intervals for the ATT by re-estimating the
+fit on resampled units: a bootstrap of the treated and the control units,
+drawn separately, or a jackknife that drops one unit at a time. Works for
+sharp, staggered and multi-arm SI fits. Each refit keeps the rank \code{k} the
+fit used.
+}
+\details{
+Holding the treated units fixed would leave out their own noise, which is
+most of the variance when few units are treated, so they are resampled
+too; with a single treated unit (in any arm) there is nothing to resample
+and the function stops. For a sharp fit with one treated unit,
+\code{\link[=conformal_inference]{conformal_inference()}} gives a valid interval.
+
+The controls are drawn once per replicate and shared by every arm and
+every cohort, as the SVD basis is a property of the shared donor pool.
+Treated units are drawn within their arm. On a staggered fit they are
+pooled across cohorts, so cohort sizes vary across replicates, and the
+cohorts are rebuilt from the draw and combined with their
+\code{N_treated * T_post} weights. \code{"jackknife"} drops each cohort's own donors
+and treated units and combines the per-cohort variances by the delta
+method, which ignores the covariance that shared donors induce between
+cohorts; \code{"jackknife_global"} (staggered fits only) drops every unit from
+the whole panel in turn and keeps it. Both jackknives drop treated units,
+so every cohort needs at least two (Clarke et al. 2024, Algorithm 3).
 }

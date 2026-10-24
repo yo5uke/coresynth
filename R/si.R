@@ -221,8 +221,8 @@
 # Handles the combination of staggered adoption and multiple treatment arms.
 # Within each cohort g, the SVD basis (from Y_pre_co_g) is shared across all
 # arms because unit factors v_il are arm-invariant (Agarwal et al. 2025 S.2).
-# cohort_fits is a flat list of (cohort, arm) cells -- each compatible with
-# .refit_si_cohort() since they carry T_pre, idx_co, idx_tr, k.
+# cohort_fits is a flat list of (cohort, arm) cells, each carrying T_pre,
+# idx_co, idx_tr and k, which si_inference() reads to refit them.
 .fit_si_staggered_multi <- function(tensor, k = NULL, control_group = "never_treated") {
   Y          <- tensor$Y
   TT         <- nrow(Y)
@@ -350,6 +350,7 @@
     cohort_fits          = cf_list,
     Y_all                = Y,
     idx_co               = idx_co_all,
+    control_group        = control_group,
     times                = tensor$times,
     T_pre                = tensor$T_pre,
     Y_treat              = NULL,
@@ -434,6 +435,7 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
     res_st$Y_all        <- pan$Y             # T x N -- needed by si_inference()
     res_st$idx_co       <- pan$idx_control
     res_st$idx_tr       <- pan$idx_treat
+    res_st$control_group <- control_group
     return(res_st)
   }
 
@@ -498,251 +500,110 @@ fit_si_cpp <- function(y, d, id, time, k = NULL,
   )
 }
 
-# -- Internal helper: re-estimate one SI cohort with given control indices ----
-.refit_si_cohort <- function(Y_all, cf) {
-  TT        <- nrow(Y_all)
-  T_pre_g   <- cf$T_pre
-  pre_rows  <- seq_len(T_pre_g)
-  post_rows <- (T_pre_g + 1L):TT
-
-  Y_pre_co_g  <- Y_all[pre_rows,  cf$idx_co, drop = FALSE]
-  Y_post_co_g <- Y_all[post_rows, cf$idx_co, drop = FALSE]
-  Y_pre_tr_g  <- Y_all[pre_rows,  cf$idx_tr, drop = FALSE]
-
-  res <- tryCatch(
-    si_pcr_cpp(Y_pre_co_g, Y_post_co_g, Y_pre_tr_g, cf$k),
-    error = function(e) NULL
-  )
-  if (is.null(res)) return(NA_real_)
-
-  Y_treat_post <- Y_all[post_rows, cf$idx_tr, drop = FALSE]
-  mean(Y_treat_post - res$Y_hat)
+# -- Internal: SI effect for a draw of units ----------------------------------
+# The estimator of fit_si_cpp() applied to never-treated columns `co` and
+# treated columns `tr` of ctx$Y; see .unit_inference(). Cohorts are rebuilt
+# from the treated units drawn. Within a cohort every arm shares the SVD
+# basis of the donor block, so one PCR fit covers all of its treated
+# columns; the rank of each cohort is the one the fit used. Since T_post is
+# common within a cohort, its arm-weighted effect is the mean over its
+# treated units, and the cohorts combine with the Clarke et al. (2024)
+# weights.
+.si_unit_estimate <- function(ctx, co, tr) {
+  TT      <- nrow(ctx$Y)
+  adopt   <- ctx$T_adopt[tr]
+  cohorts <- sort(unique(adopt))
+  est <- w <- numeric(length(cohorts))
+  for (k in seq_along(cohorts)) {
+    g      <- cohorts[k]
+    tr_g   <- tr[adopt == g]
+    pre    <- seq_len(g - 1L)
+    post   <- g:TT
+    donors <- if (identical(ctx$control_group, "never_treated")) co else
+      c(co, tr[adopt > g])
+    res <- tryCatch(
+      si_pcr_cpp(ctx$Y[pre, donors, drop = FALSE],
+                 ctx$Y[post, donors, drop = FALSE],
+                 ctx$Y[pre, tr_g, drop = FALSE],
+                 ctx$k[[as.character(g)]]),
+      error = function(e) NULL)
+    if (is.null(res)) return(NULL)
+    est[k] <- mean(ctx$Y[post, tr_g, drop = FALSE] - res$Y_hat)
+    w[k]   <- length(tr_g) * length(post)
+  }
+  list(estimate = sum(w * est) / sum(w), cohort = cohorts,
+       cohort_estimate = est, cohort_weight = w)
 }
 
-# -- Internal: inference for staggered + multi-arm SI -------------------------
-# Bootstrap: per-cohort resampling -- same resampled controls applied to all arms
-#   within a cohort (shared SVD basis requires shared donor bootstrap indices).
-# Jackknife: per-cohort LOO refitting all arms simultaneously + delta-method.
-# jackknife_global: drop one unique control from ALL cohorts and ALL arms.
-.si_inference_staggered_multi <- function(fit, method, n_boot, level,
-                                          alternative, seed) {
-  if (!is.null(seed)) set.seed(seed)
-  alpha      <- 1 - level
-  tau_hat    <- fit$estimate
-  Y_all      <- fit$Y_all
-  cf_list    <- fit$cohort_fits
-  ws         <- vapply(cf_list, `[[`, numeric(1L), "weight")
-  W_total    <- sum(ws)
-  cohort_ids <- vapply(cf_list, `[[`, integer(1L), "cohort")
-  uc         <- sort(unique(cohort_ids))
-
-  .p_from_z <- function(z) switch(alternative,
-    two.sided = 2 * pnorm(-abs(z)),
-    greater   = pnorm(-z),
-    less      = pnorm(z))
-
-  .n_co_mean <- round(mean(vapply(uc, function(g) {
-    length(cf_list[cohort_ids == g][[1L]]$idx_co)
-  }, numeric(1L))))
-
-  if (method == "bootstrap") {
-    .boot_one <- function() {
-      att_total <- 0
-      for (g in uc) {
-        cells    <- cf_list[cohort_ids == g]
-        idx_co_g <- cells[[1L]]$idx_co
-        boot_idx <- idx_co_g[sample(length(idx_co_g), replace = TRUE)]
-        for (cf in cells) {
-          cf_b <- cf; cf_b$idx_co <- boot_idx
-          att_gd <- .refit_si_cohort(Y_all, cf_b)
-          att_total <- att_total + cf$weight * att_gd
-        }
-      }
-      att_total / W_total
-    }
-    boot_ests <- replicate(n_boot, .boot_one())
-    n_fail <- sum(is.na(boot_ests))
-    if (n_fail > 0.1 * n_boot)
-      warning(sprintf("%.0f%% of staggered-multi bootstrap replications failed.",
-                      100 * n_fail / n_boot))
-    valid    <- boot_ests[!is.na(boot_ests)]
-    se       <- sd(valid)
-    ci_lower <- unname(quantile(valid, alpha / 2))
-    ci_upper <- unname(quantile(valid, 1 - alpha / 2))
-    z        <- tau_hat / max(se, .Machine$double.eps)
-    return(structure(list(
-      estimate    = tau_hat, se = se, p_value = .p_from_z(z),
-      ci_lower    = ci_lower, ci_upper = ci_upper,
-      method      = method, staggered = TRUE, n_controls = .n_co_mean,
-      alternative = alternative, boot_ests = boot_ests
-    ), class = "coresynth_inference"))
+# The panel an SI fit was estimated on, laid out for .si_unit_estimate().
+# `strata` carries the arm of each treated column, so the bootstrap keeps
+# every arm's size.
+.si_inference_context <- function(fit) {
+  if (inherits(fit, "coresynth_staggered")) {
+    if (is.null(fit$Y_all))
+      stop("fit does not contain Y_all. Re-estimate with the current version.",
+           call. = FALSE)
+    cells <- fit$cohort_fits
+    tr    <- unlist(lapply(cells, `[[`, "idx_tr"), use.names = FALSE)
+    arm   <- unlist(lapply(cells, function(cf)
+      rep(cf[["arm"]] %||% 1L, length(cf$idx_tr))), use.names = FALSE)
+    return(list(
+      Y = fit$Y_all, k = as.list(.si_k_by_cohort(cells)),
+      T_adopt = .adopt_from_cohorts(ncol(fit$Y_all), cells),
+      co = fit$idx_co, tr = tr, strata = arm,
+      control_group = .fit_control_group(fit)))
   }
-
-  if (method == "jackknife_global") {
-    all_co    <- sort(unique(unlist(lapply(cf_list, `[[`, "idx_co"))))
-    orig_ests <- vapply(cf_list, `[[`, numeric(1L), "estimate")
-    jack_ests <- vapply(all_co, function(i) {
-      att_total <- 0
-      for (ki in seq_along(cf_list)) {
-        cf <- cf_list[[ki]]
-        if (i %in% cf$idx_co) {
-          keep <- cf$idx_co[cf$idx_co != i]
-          if (length(keep) < 2L) return(NA_real_)
-          cf_loo <- cf; cf_loo$idx_co <- keep
-          att_gd <- .refit_si_cohort(Y_all, cf_loo)
-          if (is.na(att_gd)) return(NA_real_)
-        } else {
-          att_gd <- orig_ests[ki]
-        }
-        att_total <- att_total + cf$weight * att_gd
-      }
-      att_total / W_total
-    }, numeric(1L))
-    valid <- jack_ests[!is.na(jack_ests)]
-    N_v   <- length(valid)
-    se    <- sqrt((N_v - 1L) / N_v * sum((valid - mean(valid))^2))
-    z     <- tau_hat / max(se, .Machine$double.eps)
-    ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-    ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-    return(structure(list(
-      estimate    = tau_hat, se = se, p_value = .p_from_z(z),
-      ci_lower    = ci_lower, ci_upper = ci_upper,
-      method      = method, staggered = TRUE, n_controls = length(all_co),
-      alternative = alternative, boot_ests = NULL
-    ), class = "coresynth_inference"))
+  if (is.null(fit$Y_pre_co))
+    stop("fit does not contain Y_pre_co. Re-estimate with the current version.",
+         call. = FALSE)
+  Y_co <- rbind(fit$Y_pre_co, fit$Y_post_co)
+  if (inherits(fit, "coresynth_multiarm")) {
+    Y_tr <- do.call(cbind, lapply(fit$arm_fits, `[[`, "Y_treat"))
+    arm  <- unlist(lapply(fit$arm_fits, function(af)
+      rep(af$arm, ncol(af$Y_treat))), use.names = FALSE)
+  } else {
+    Y_tr <- fit$Y_treat
+    arm  <- rep(1L, ncol(Y_tr))
   }
-
-  # jackknife: per-cohort LOO refitting all arms simultaneously + delta-method
-  var_components <- vapply(uc, function(g) {
-    cells    <- cf_list[cohort_ids == g]
-    idx_co_g <- cells[[1L]]$idx_co
-    N_co_g   <- length(idx_co_g)
-    if (N_co_g < 2L) return(0)
-    jack_g <- vapply(seq_len(N_co_g), function(i) {
-      keep <- idx_co_g[-i]
-      cohort_agg <- 0
-      for (cf in cells) {
-        cf_loo <- cf; cf_loo$idx_co <- keep
-        att_gd_loo <- .refit_si_cohort(Y_all, cf_loo)
-        if (is.na(att_gd_loo)) return(NA_real_)
-        cohort_agg <- cohort_agg + cf$weight * att_gd_loo
-      }
-      cohort_agg
-    }, numeric(1L))
-    valid_g <- jack_g[!is.na(jack_g)]
-    if (length(valid_g) < 2L) return(0)
-    (N_co_g - 1L) / N_co_g * sum((valid_g - mean(valid_g))^2)
-  }, numeric(1L))
-
-  w_g_totals <- vapply(uc, function(g) {
-    sum(vapply(cf_list[cohort_ids == g], `[[`, numeric(1L), "weight"))
-  }, numeric(1L))
-  var_st   <- sum((w_g_totals / W_total)^2 * var_components)
-  se       <- sqrt(var_st)
-  z        <- tau_hat / max(se, .Machine$double.eps)
-  ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-  ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-  structure(list(
-    estimate    = tau_hat, se = se, p_value = .p_from_z(z),
-    ci_lower    = ci_lower, ci_upper = ci_upper,
-    method      = method, staggered = TRUE, n_controls = .n_co_mean,
-    alternative = alternative, boot_ests = NULL
-  ), class = "coresynth_inference")
-}
-
-# -- Internal: inference for multi-arm SI -------------------------------------
-# Bootstrap: resample control columns (shared across all arms, since arms share
-#   the same donor pool). Jackknife: LOO over control columns.
-.si_inference_multi <- function(fit, method, n_boot, level, alternative, seed) {
-  if (!is.null(seed)) set.seed(seed)
-  alpha     <- 1 - level
-  tau_hat   <- fit$estimate
-  Y_pre_co  <- fit$Y_pre_co
-  Y_post_co <- fit$Y_post_co
-  k         <- fit$k
-  arm_fits  <- fit$arm_fits
-  T_pre     <- fit$T_pre
-  N_co      <- ncol(Y_pre_co)
-
-  .refit_multi <- function(co_idx) {
-    Ypc  <- Y_pre_co[,  co_idx, drop = FALSE]
-    Ypoc <- Y_post_co[, co_idx, drop = FALSE]
-    post_rows_local <- (T_pre + 1L):nrow(arm_fits[[1L]]$Y_treat)
-    ws <- taus <- numeric(length(arm_fits))
-    for (i in seq_along(arm_fits)) {
-      af  <- arm_fits[[i]]
-      Ytr_pre <- af$Y_treat[seq_len(T_pre), , drop = FALSE]
-      res <- tryCatch(si_pcr_cpp(Ypc, Ypoc, Ytr_pre, k),
-                      error = function(e) NULL)
-      ws[i] <- af$weight
-      if (is.null(res)) {
-        taus[i] <- af$estimate
-      } else {
-        taus[i] <- mean(
-          af$Y_treat[post_rows_local, , drop = FALSE] - res$Y_hat,
-          na.rm = TRUE
-        )
-      }
-    }
-    sum(ws * taus) / sum(ws)
-  }
-
-  if (method == "bootstrap") {
-    boot_ests <- replicate(n_boot, .refit_multi(sample(N_co, replace = TRUE)))
-    n_fail <- sum(is.na(boot_ests))
-    if (n_fail > 0.1 * n_boot)
-      warning(sprintf("%.0f%% of multi-arm bootstrap replications failed.",
-                      100 * n_fail / n_boot))
-    valid    <- boot_ests[!is.na(boot_ests)]
-    se       <- sd(valid)
-    ci_lower <- unname(quantile(valid, alpha / 2))
-    ci_upper <- unname(quantile(valid, 1 - alpha / 2))
-    z        <- tau_hat / max(se, .Machine$double.eps)
-    p_value  <- switch(alternative,
-      two.sided = 2 * pnorm(-abs(z)),
-      greater   = pnorm(-z),
-      less      = pnorm(z)
-    )
-    return(structure(list(
-      estimate    = tau_hat, se = se, p_value = p_value,
-      ci_lower    = ci_lower, ci_upper = ci_upper,
-      method      = method, staggered = FALSE, n_controls = N_co,
-      alternative = alternative, boot_ests = boot_ests
-    ), class = "coresynth_inference"))
-  }
-
-  # jackknife
-  jack_ests <- vapply(seq_len(N_co),
-                      function(i) .refit_multi(seq_len(N_co)[-i]),
-                      numeric(1L))
-  jack_var <- (N_co - 1) / N_co * sum((jack_ests - mean(jack_ests, na.rm = TRUE))^2)
-  se       <- sqrt(jack_var)
-  z        <- tau_hat / max(se, .Machine$double.eps)
-  ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-  ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-  p_value  <- switch(alternative,
-    two.sided = 2 * pnorm(-abs(z)),
-    greater   = pnorm(-z),
-    less      = pnorm(z)
-  )
-  structure(list(
-    estimate    = tau_hat, se = se, p_value = p_value,
-    ci_lower    = ci_lower, ci_upper = ci_upper,
-    method      = method, staggered = FALSE, n_controls = N_co,
-    alternative = alternative, boot_ests = NULL
-  ), class = "coresynth_inference")
+  N_co <- ncol(Y_co)
+  N_tr <- ncol(Y_tr)
+  list(
+    Y = cbind(Y_co, Y_tr),
+    k = stats::setNames(list(fit$k), as.character(fit$T_pre + 1L)),
+    T_adopt = c(rep(NA_integer_, N_co), rep(fit$T_pre + 1L, N_tr)),
+    co = seq_len(N_co), tr = N_co + seq_len(N_tr), strata = arm,
+    control_group = "never_treated")
 }
 
 #' Non-parametric Inference for SI (Agarwal et al. 2025)
 #'
-#' Estimates SE and confidence intervals for the ATT via non-parametric cluster
-#' bootstrap or jackknife over control units. Works for both sharp and staggered
-#' SI fits. For staggered fits, bootstrap resamples each cohort's control pool
-#' independently, and jackknife uses a per-cohort LOO with delta-method variance
-#' aggregation.
+#' Estimates SE and confidence intervals for the ATT by re-estimating the
+#' fit on resampled units: a bootstrap of the treated and the control units,
+#' drawn separately, or a jackknife that drops one unit at a time. Works for
+#' sharp, staggered and multi-arm SI fits. Each refit keeps the rank `k` the
+#' fit used.
+#'
+#' Holding the treated units fixed would leave out their own noise, which is
+#' most of the variance when few units are treated, so they are resampled
+#' too; with a single treated unit (in any arm) there is nothing to resample
+#' and the function stops. For a sharp fit with one treated unit,
+#' [conformal_inference()] gives a valid interval.
+#'
+#' The controls are drawn once per replicate and shared by every arm and
+#' every cohort, as the SVD basis is a property of the shared donor pool.
+#' Treated units are drawn within their arm. On a staggered fit they are
+#' pooled across cohorts, so cohort sizes vary across replicates, and the
+#' cohorts are rebuilt from the draw and combined with their
+#' `N_treated * T_post` weights. `"jackknife"` drops each cohort's own donors
+#' and treated units and combines the per-cohort variances by the delta
+#' method, which ignores the covariance that shared donors induce between
+#' cohorts; `"jackknife_global"` (staggered fits only) drops every unit from
+#' the whole panel in turn and keeps it. Both jackknives drop treated units,
+#' so every cohort needs at least two (Clarke et al. 2024, Algorithm 3).
 #'
 #' @param fit   A `coresynth` object from [scm_fit()] with `method = "si"`.
-#' @param method `"bootstrap"` (default) or `"jackknife"`.
+#' @param method `"bootstrap"` (default), `"jackknife"`, or
+#'   `"jackknife_global"` (staggered fits only).
 #' @param n_boot Number of bootstrap replications (default 499L; ignored for jackknife).
 #' @param level  Confidence level (default 0.95).
 #' @param alternative `"two.sided"` (default), `"greater"`, or `"less"`.
@@ -763,219 +624,18 @@ si_inference <- function(
   if (!inherits(fit, "coresynth_si"))
     stop("si_inference() requires a coresynth fit with method = 'si'.",
          call. = FALSE)
+  if (method == "jackknife_global" && !inherits(fit, "coresynth_staggered"))
+    stop("si_inference() method='jackknife_global' requires a staggered fit; ",
+         "use jackknife instead.", call. = FALSE)
 
-  tau_hat   <- fit$estimate
-  alpha     <- 1 - level
-  staggered <- inherits(fit, "coresynth_staggered")
-
-  # -- Multi-arm path ----------------------------------------------------------
-  if (inherits(fit, "coresynth_multiarm")) {
-    if (inherits(fit, "coresynth_staggered")) {
-      return(.si_inference_staggered_multi(fit, method, n_boot, level, alternative, seed))
-    }
-    if (method == "jackknife_global")
-      stop("jackknife_global is not supported for sharp multi-arm fits; use jackknife instead.",
-           call. = FALSE)
-    return(.si_inference_multi(fit, method, n_boot, level, alternative, seed))
-  }
-
+  ctx <- .si_inference_context(fit)
   if (!is.null(seed)) set.seed(seed)
-
-  # -- Sharp path --------------------------------------------------------------
-  if (!staggered) {
-    if (method == "jackknife_global")
-      stop("si_inference() method='jackknife_global' requires a staggered fit.",
-           call. = FALSE)
-    if (is.null(fit$Y_pre_co))
-      stop("fit does not contain Y_pre_co. Re-estimate with the current version.",
-           call. = FALSE)
-
-    Y_pre_co  <- fit$Y_pre_co
-    Y_post_co <- fit$Y_post_co
-    Y_pre_tr  <- fit$Y_treat[seq_len(fit$T_pre), , drop = FALSE]
-    k         <- fit$k
-    N_co      <- ncol(Y_pre_co)
-    post_rows <- (fit$T_pre + 1L):nrow(fit$Y_treat)
-
-    .refit_sharp <- function(co_idx) {
-      res <- tryCatch(
-        si_pcr_cpp(Y_pre_co[, co_idx, drop = FALSE],
-                   Y_post_co[, co_idx, drop = FALSE],
-                   Y_pre_tr, k),
-        error = function(e) NULL
-      )
-      if (is.null(res)) return(NA_real_)
-      mean(fit$Y_treat[post_rows, , drop = FALSE] - res$Y_hat)
-    }
-
-    if (method == "bootstrap") {
-      boot_ests <- replicate(n_boot, {
-        .refit_sharp(sample(N_co, replace = TRUE))
-      })
-      n_fail <- sum(is.na(boot_ests))
-      if (n_fail > 0.1 * n_boot)
-        warning(sprintf("%.0f%% of bootstrap replications failed.", 100 * n_fail / n_boot))
-      valid <- boot_ests[!is.na(boot_ests)]
-      se       <- sd(valid)
-      ci_lower <- unname(quantile(valid, alpha / 2))
-      ci_upper <- unname(quantile(valid, 1 - alpha / 2))
-      z        <- tau_hat / max(se, .Machine$double.eps)
-      p_value  <- switch(alternative,
-        two.sided = 2 * pnorm(-abs(z)),
-        greater   = pnorm(-z),
-        less      = pnorm(z)
-      )
-      return(structure(list(
-        estimate    = tau_hat, se = se, p_value = p_value,
-        ci_lower    = ci_lower, ci_upper = ci_upper,
-        method      = method, staggered = FALSE, n_controls = N_co,
-        alternative = alternative, boot_ests = boot_ests
-      ), class = "coresynth_inference"))
-    }
-
-    # jackknife
-    jack_ests <- vapply(seq_len(N_co),
-                        function(i) .refit_sharp(seq_len(N_co)[-i]),
-                        numeric(1))
-    jack_var <- (N_co - 1) / N_co * sum((jack_ests - mean(jack_ests))^2)
-    se       <- sqrt(jack_var)
-    z        <- tau_hat / max(se, .Machine$double.eps)
-    ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-    ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-    p_value  <- switch(alternative,
-      two.sided = 2 * pnorm(-abs(z)),
-      greater   = pnorm(-z),
-      less      = pnorm(z)
-    )
-    return(structure(list(
-      estimate    = tau_hat, se = se, p_value = p_value,
-      ci_lower    = ci_lower, ci_upper = ci_upper,
-      method      = method, staggered = FALSE, n_controls = N_co,
-      alternative = alternative, boot_ests = NULL
-    ), class = "coresynth_inference"))
-  }
-
-  # -- Staggered path ----------------------------------------------------------
-  if (is.null(fit$Y_all))
-    stop("fit does not contain Y_all. Re-estimate with the current version.",
-         call. = FALSE)
-
-  Y_all       <- fit$Y_all
-  cohort_fits <- fit$cohort_fits
-  w_g         <- vapply(cohort_fits, `[[`, numeric(1L), "weight")  # unnorm
-  W           <- sum(w_g)
-
-  .boot_one <- function() {
-    att_total <- 0
-    for (cf in cohort_fits) {
-      N_co_g <- length(cf$idx_co)
-      idx_b  <- cf$idx_co[sample(N_co_g, replace = TRUE)]
-      cf_b   <- cf
-      cf_b$idx_co <- idx_b
-      att_g_b <- .refit_si_cohort(Y_all, cf_b)
-      att_total <- att_total + cf$weight * att_g_b
-    }
-    att_total / W
-  }
-
-  if (method == "bootstrap") {
-    boot_ests <- replicate(n_boot, .boot_one())
-    n_fail <- sum(is.na(boot_ests))
-    if (n_fail > 0.1 * n_boot)
-      warning(sprintf("%.0f%% of staggered bootstrap replications failed.",
-                      100 * n_fail / n_boot))
-    valid    <- boot_ests[!is.na(boot_ests)]
-    se       <- sd(valid)
-    ci_lower <- unname(quantile(valid, alpha / 2))
-    ci_upper <- unname(quantile(valid, 1 - alpha / 2))
-    z        <- tau_hat / max(se, .Machine$double.eps)
-    p_value  <- switch(alternative,
-      two.sided = 2 * pnorm(-abs(z)),
-      greater   = pnorm(-z),
-      less      = pnorm(z)
-    )
-    n_co_mean <- round(mean(vapply(cohort_fits, function(cf) length(cf$idx_co), numeric(1L))))
-    return(structure(list(
-      estimate    = tau_hat, se = se, p_value = p_value,
-      ci_lower    = ci_lower, ci_upper = ci_upper,
-      method      = method, staggered = TRUE, n_controls = n_co_mean,
-      alternative = alternative, boot_ests = boot_ests
-    ), class = "coresynth_inference"))
-  }
-
-  if (method == "jackknife_global") {
-    # Global jackknife: drop one unique control across ALL cohorts simultaneously.
-    # Captures cross-cohort correlation ignored by per-cohort LOO.
-    all_co    <- sort(unique(unlist(lapply(cohort_fits, `[[`, "idx_co"))))
-    orig_ests <- vapply(cohort_fits, `[[`, numeric(1L), "estimate")
-    jack_ests <- vapply(all_co, function(i) {
-      att_total <- 0
-      for (k in seq_along(cohort_fits)) {
-        cf <- cohort_fits[[k]]
-        if (i %in% cf$idx_co) {
-          keep <- cf$idx_co[cf$idx_co != i]
-          if (length(keep) < 2L) return(NA_real_)
-          cf_loo        <- cf
-          cf_loo$idx_co <- keep
-          att_g <- .refit_si_cohort(Y_all, cf_loo)
-          if (is.na(att_g)) return(NA_real_)
-        } else {
-          att_g <- orig_ests[k]
-        }
-        att_total <- att_total + cf$weight * att_g
-      }
-      att_total / W
-    }, numeric(1L))
-    valid <- jack_ests[!is.na(jack_ests)]
-    N_v   <- length(valid)
-    se    <- sqrt((N_v - 1L) / N_v * sum((valid - mean(valid))^2))
-    z        <- tau_hat / max(se, .Machine$double.eps)
-    ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-    ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-    p_value  <- switch(alternative,
-      two.sided = 2 * pnorm(-abs(z)),
-      greater   = pnorm(-z),
-      less      = pnorm(z)
-    )
-    return(structure(list(
-      estimate    = tau_hat, se = se, p_value = p_value,
-      ci_lower    = ci_lower, ci_upper = ci_upper,
-      method      = method, staggered = TRUE, n_controls = length(all_co),
-      alternative = alternative, boot_ests = NULL
-    ), class = "coresynth_inference"))
-  }
-
-  # staggered jackknife: per-cohort LOO + delta-method
-  var_components <- vapply(cohort_fits, function(cf) {
-    N_co_g <- length(cf$idx_co)
-    if (N_co_g < 2L) return(0)
-    jack_g <- vapply(seq_len(N_co_g), function(i) {
-      cf_loo <- cf
-      cf_loo$idx_co <- cf$idx_co[-i]
-      .refit_si_cohort(Y_all, cf_loo)
-    }, numeric(1))
-    valid_g <- jack_g[!is.na(jack_g)]
-    if (length(valid_g) < 2L) return(0)
-    (N_co_g - 1) / N_co_g * sum((valid_g - mean(valid_g))^2)
-  }, numeric(1))
-
-  var_st  <- sum((w_g / W)^2 * var_components)
-  se      <- sqrt(var_st)
-  z       <- tau_hat / max(se, .Machine$double.eps)
-  ci_lower <- tau_hat - qnorm(1 - alpha / 2) * se
-  ci_upper <- tau_hat + qnorm(1 - alpha / 2) * se
-  p_value  <- switch(alternative,
-    two.sided = 2 * pnorm(-abs(z)),
-    greater   = pnorm(-z),
-    less      = pnorm(z)
-  )
-  n_co_mean <- round(mean(vapply(cohort_fits, function(cf) length(cf$idx_co), numeric(1L))))
-  structure(list(
-    estimate    = tau_hat, se = se, p_value = p_value,
-    ci_lower    = ci_lower, ci_upper = ci_upper,
-    method      = method, staggered = TRUE, n_controls = n_co_mean,
-    alternative = alternative, boot_ests = NULL
-  ), class = "coresynth_inference")
+  .unit_inference(
+    fit, ctx, .si_unit_estimate, method, n_boot, level, alternative,
+    label = "si_inference()",
+    one_treated_hint = paste0(
+      "For a sharp fit with one treated unit, conformal_inference() gives ",
+      "a valid interval."))
 }
 
 #' @export

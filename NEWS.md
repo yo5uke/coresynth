@@ -1,11 +1,36 @@
 # coresynth (development version)
 
-A review of the GSC, TASC, SI and SDID code against their papers and against
-gsynth/fect. Estimates from `method = "gsc"` with covariates, from
-`method = "tasc"`, and the intervals of `sdid_inference()`, `gsc_inference()`,
-`si_inference()` and `gsc_boot()` change.
+A review of the GSC, TASC, SI, SDID and MC (Matrix Completion) code against
+their papers and against gsynth/fect/MCPanel. Estimates from `method = "gsc"`
+with covariates, from `method = "tasc"`, and the intervals of
+`sdid_inference()`, `gsc_inference()`, `si_inference()` and `gsc_boot()` change.
+
+## Performance and computational improvements
+
+- **Matrix Completion (`method = "mc"`, `soft_impute_fe_cpp()`) eliminates
+  redundant matrix allocations.** Two-way fixed effects back-fitting sweeps
+  now precompute residual row and column sums outside the sweep loop and update
+  via matrix-vector products, eliminating 20 temporary $T \times N$ matrix
+  allocations per SVD iteration. Low-rank reconstruction truncates to singular
+  vectors with positive thresholded singular values rather than forming dense
+  diagonal matrices and multiplying zeroed components. In-place matrix updates
+  eliminate intermediate `repmat` matrices.
 
 ## Bug fixes
+
+- **`conformal_inference()` supports Matrix Completion panels with missing values.**
+  When a panel contains unobserved or `NA` cells outside treatment, the refit
+  under the null now marks them as unobserved (`O = 0`) instead of assuming a
+  dense observation mask.
+
+- **`fit_mc_cpp()` adds comprehensive argument validation.** `fixedeff`,
+  `lambda`, `cv_folds`, `cv_nlambda`, `cv_seed`, infinite outcome values, and
+  degenerate all-missing masks are now validated with informative error messages.
+  The CV spectral norm fallback masks post-treatment cells consistently.
+
+- **Documentation cites the published JASA 2021 formulation of Matrix Completion.**
+  Parameter documentation and internal rules reflect the unpenalised two-way fixed
+  effects estimator in Section 4 (Equation 4.3) and Mazumder et al. (2010, JMLR).
 
 - **GSC with covariates no longer stops before its estimates settle.** The
   loop that alternates the factors and the covariate coefficients updated

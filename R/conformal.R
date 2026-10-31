@@ -89,11 +89,16 @@
   N_co <- ncol(Yco)
   M <- cbind(Yco, y1)                       # T x (N_co + 1), treated last
   O <- matrix(1.0, nrow = TT, ncol = N_co + 1L)  # fully observed under null
+  na_mask <- is.na(M)
+  if (any(na_mask)) {
+    O[na_mask] <- 0.0
+    M[na_mask] <- 0.0
+  }
   lambda <- .conformal_tuning(fit[["lambda"]], "lambda", "mc")
   # Refit under the same model the fit used: leaving the fixed effects out
   # here would score the null against a differently specified counterfactual.
   L <- soft_impute_fe_cpp(M, O, lambda,
-                          estimate_fe = isTRUE(fit$fixedeff %||% FALSE))$M
+                          estimate_fe = isTRUE(fit[["fixedeff"]] %||% FALSE))$M
   drop(L[, N_co + 1L])
 }
 
@@ -114,9 +119,9 @@
   Sstat <- function(v) {
     up <- v[post]
     if (alternative == "two.sided") {
-      mean(abs(up)^q)^(1 / q)
+      mean(abs(up)^q, na.rm = TRUE)^(1 / q)
     } else {
-      mean(up)                                   # signed: average post residual
+      mean(up, na.rm = TRUE)                     # signed: average post residual
     }
   }
   S0 <- Sstat(u)
@@ -125,9 +130,9 @@
     Sstat(u[((base + j) %% TT) + 1L])
   }, numeric(1L))
   switch(alternative,
-    two.sided = mean(S_perm >= S0),
-    greater   = mean(S_perm >= S0),
-    less      = mean(S_perm <= S0)
+    two.sided = mean(S_perm >= S0, na.rm = TRUE),
+    greater   = mean(S_perm >= S0, na.rm = TRUE),
+    less      = mean(S_perm <= S0, na.rm = TRUE)
   )
 }
 
@@ -230,7 +235,7 @@ conformal_inference <- function(
   if (isTRUE(ci)) {
     if (is.null(grid)) {
       gap_pre <- (y1_obs - .conformal_refit(fit, Yco, y1_obs))[seq_len(T_pre)]
-      s <- stats::sd(gap_pre)
+      s <- stats::sd(gap_pre, na.rm = TRUE)
       if (!is.finite(s) || s < 1e-8) s <- max(abs(fit$estimate), 1)
       half <- grid_mult * s
       grid_used <- seq(fit$estimate - half, fit$estimate + half, length.out = n_grid)

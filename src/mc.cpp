@@ -7,14 +7,16 @@
 //' Solves
 //'   `min over L, a, b of (1/2) * squaredFrobenius(O o (Y - L - a1' - 1b')) + lambda * nuclearNorm(L)`
 //' by alternating a back-fitting update of the fixed effects with one
-//' soft-thresholded SVD step for `L` (Mazumder, Hastie & Tibshirani 2010).
+//' soft-thresholded SVD step for `L` (Mazumder, Hastie & Tibshirani 2010;
+//' Athey et al. 2021, S.4 Eq. 4.3).
 //'
-//' The row and column effects are the unpenalised fixed effects of Athey et
-//' al. (2021, S.8.1): "we regularize the estimates of L*, but do not wish to
-//' regularize the estimates of the fixed effects". Leaving them inside `L`
-//' shrinks the panel's level towards zero along with its factor structure,
-//' which biases the imputed counterfactual whenever the level is far from
-//' zero. `estimate_fe = false` reproduces the S.4 baseline model `Y = L + e`.
+//' The row and column effects are the unpenalised time and unit fixed effects
+//' of Athey et al. (2021, S.4 Eq. 4.3; see also S.8.1): "we regularize the
+//' estimates of L*, but do not wish to regularize the estimates of the fixed
+//' effects". Leaving them inside `L` shrinks the panel's level towards zero
+//' along with its factor structure, which biases the imputed counterfactual
+//' whenever the level is far from zero. `estimate_fe = false` reproduces the
+//' pure low-rank baseline `Y = L + e` (Mazumder et al. 2010, Eq. 2).
 //'
 //' Both effects absorb an additive constant, so `a` and `b` are identified
 //' only up to a shift between them; their sum, which is what enters the
@@ -36,6 +38,25 @@ Rcpp::List soft_impute_fe_cpp(const arma::mat& Y, const arma::mat& O,
                               double lambda, bool estimate_fe = true,
                               int max_iter = 1000, double tol = 1e-5,
                               int fe_sweeps = 5) {
+  if (Y.n_rows == 0 || Y.n_cols == 0) {
+    Rcpp::stop("Y must have at least 1 row and 1 column.");
+  }
+  if (O.n_rows != Y.n_rows || O.n_cols != Y.n_cols) {
+    Rcpp::stop("O must have the same dimensions as Y.");
+  }
+  if (!std::isfinite(lambda) || lambda < 0.0) {
+    Rcpp::stop("lambda must be a non-negative finite number.");
+  }
+  if (max_iter < 1) {
+    Rcpp::stop("max_iter must be >= 1.");
+  }
+  if (!std::isfinite(tol) || tol <= 0.0) {
+    Rcpp::stop("tol must be a positive finite number.");
+  }
+  if (fe_sweeps < 0) {
+    Rcpp::stop("fe_sweeps must be >= 0.");
+  }
+
   const arma::uword T = Y.n_rows, N = Y.n_cols;
   arma::mat L = arma::zeros(T, N);
   arma::vec a = arma::zeros(T);
@@ -43,35 +64,50 @@ Rcpp::List soft_impute_fe_cpp(const arma::mat& Y, const arma::mat& O,
 
   // Observation counts per row and column; guarded so an all-missing row or
   // column leaves its effect at zero instead of dividing by zero.
-  arma::vec  n_row = arma::sum(O, 1);
-  arma::rowvec n_col = arma::sum(O, 0);
-  arma::vec  n_row_s = arma::clamp(n_row, 1.0, arma::datum::inf);
-  arma::rowvec n_col_s = arma::clamp(n_col, 1.0, arma::datum::inf);
+  arma::vec n_row_s = arma::clamp(arma::sum(O, 1), 1.0, arma::datum::inf);
+  arma::vec n_col_s = arma::clamp(arma::sum(O, 0).t(), 1.0, arma::datum::inf);
+  arma::mat Ot;
+  if (estimate_fe && fe_sweeps > 0) {
+    Ot = O.t();
+  }
+
+  arma::mat Z(T, N);
+  arma::mat L_new(T, N);
+  arma::mat U;
+  arma::vec D;
+  arma::mat V;
 
   for (int iter = 0; iter < max_iter; iter++) {
     if (estimate_fe) {
       arma::mat R = O % (Y - L);
+      arma::vec r_row = arma::sum(R, 1);
+      arma::vec r_col = arma::sum(R, 0).t();
       for (int s = 0; s < fe_sweeps; s++) {
-        a = arma::sum(R - (O.each_row() % b.t()), 1) / n_row_s;
-        b = (arma::sum(R - (O.each_col() % a), 0) / n_col_s).t();
+        a = (r_row - O * b) / n_row_s;
+        b = (r_col - Ot * a) / n_col_s;
       }
+      Z = Y;
+      Z.each_col() -= a;
+      Z.each_row() -= b.t();
+      Z = O % Z + (1.0 - O) % L;
+    } else {
+      Z = O % Y + (1.0 - O) % L;
     }
-    arma::mat FE = arma::repmat(a, 1, N) + arma::repmat(b.t(), T, 1);
 
-    // Fill-in: observed cells carry Y net of the fixed effects, missing cells
-    // carry the current L
-    arma::mat Z = O % (Y - FE) + (1.0 - O) % L;
-
-    arma::mat U;
-    arma::vec D;
-    arma::mat V;
     if (!arma::svd_econ(U, D, V, Z)) {
       Rcpp::warning("SVD failed to converge in soft_impute; returning current estimate.");
       break;
     }
 
-    arma::vec D_thresh = arma::max(D - lambda, arma::zeros<arma::vec>(D.n_elem));
-    arma::mat L_new = U * arma::diagmat(D_thresh) * V.t();
+    arma::vec D_thresh = arma::clamp(D - lambda, 0.0, arma::datum::inf);
+    arma::uword r_pos = arma::accu(D_thresh > 0.0);
+    if (r_pos == 0) {
+      L_new.zeros();
+    } else {
+      arma::mat U_scaled = U.head_cols(r_pos);
+      U_scaled.each_row() %= D_thresh.head(r_pos).t();
+      L_new = U_scaled * V.head_cols(r_pos).t();
+    }
 
     double denom = std::max(arma::norm(L, "fro"), 1e-12);
     double rel_change = arma::norm(L_new - L, "fro") / denom;
@@ -80,12 +116,16 @@ Rcpp::List soft_impute_fe_cpp(const arma::mat& Y, const arma::mat& O,
     if (iter > 0 && rel_change < tol) break;
   }
 
-  arma::mat FE = arma::repmat(a, 1, N) + arma::repmat(b.t(), T, 1);
+  arma::mat M = L;
+  if (estimate_fe) {
+    M.each_col() += a;
+    M.each_row() += b.t();
+  }
   return Rcpp::List::create(
     Rcpp::Named("L") = L,
     Rcpp::Named("a") = a,
     Rcpp::Named("b") = b,
-    Rcpp::Named("M") = L + FE
+    Rcpp::Named("M") = M
   );
 }
 

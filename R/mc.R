@@ -14,8 +14,9 @@
 #' @param cv_seed Seed for the fold draw, so the selected penalty is
 #'   reproducible without consuming the caller's RNG state.
 #' @param fixedeff Estimate unpenalised unit and time fixed effects alongside
-#'   the low-rank matrix (Athey et al. 2021, S.8.1). `FALSE` recovers the
-#'   S.4 baseline model `Y = L + e`.
+#'   the low-rank matrix (Athey et al. 2021, S.4 Eq. 4.3; see also S.8.1).
+#'   `FALSE` recovers the pure low-rank baseline model `Y = L + e`
+#'   (Mazumder, Hastie & Tibshirani 2010, Eq. 2).
 #' @return A list of class `coresynth`.
 #' @noRd
 # ── Internal: Athey et al. (2021) S.4 -- cross-validate the nuclear norm penalty
@@ -57,9 +58,10 @@
   }, add = TRUE)
 
   err <- matrix(NA_real_, nrow = as.integer(n_folds), ncol = length(lambdas))
+  O_k <- matrix(0.0, nrow(O), ncol(O))
   for (k in seq_len(as.integer(n_folds))) {
     keep_idx <- sample(obs_idx, fold_size)
-    O_k <- matrix(0.0, nrow(O), ncol(O))
+    O_k[] <- 0.0
     O_k[keep_idx] <- 1.0
     held <- setdiff(obs_idx, keep_idx)
     if (length(held) == 0L) next
@@ -81,9 +83,35 @@
 fit_mc_cpp <- function(y, d, id, time, lambda = NULL,
                        cv_folds = 5L, cv_nlambda = 20L, cv_seed = 1L,
                        fixedeff = TRUE, ...) {
+  if (!is.logical(fixedeff) || length(fixedeff) != 1L || is.na(fixedeff)) {
+    stop("`fixedeff` must be TRUE or FALSE.", call. = FALSE)
+  }
+  if (!is.null(lambda)) {
+    if (!is.numeric(lambda) || length(lambda) != 1L || !is.finite(lambda) || lambda < 0) {
+      stop("`lambda` must be NULL or a single non-negative finite number.", call. = FALSE)
+    }
+  } else {
+    if (!is.numeric(cv_folds) || length(cv_folds) != 1L || !is.finite(cv_folds) ||
+        cv_folds < 1L || cv_folds != trunc(cv_folds)) {
+      stop("`cv_folds` must be a positive integer.", call. = FALSE)
+    }
+    if (!is.numeric(cv_nlambda) || length(cv_nlambda) != 1L || !is.finite(cv_nlambda) ||
+        cv_nlambda < 1L || cv_nlambda != trunc(cv_nlambda)) {
+      stop("`cv_nlambda` must be a positive integer.", call. = FALSE)
+    }
+    if (!is.null(cv_seed) &&
+        (!is.numeric(cv_seed) || length(cv_seed) != 1L || !is.finite(cv_seed))) {
+      stop("`cv_seed` must be NULL or a single finite number.", call. = FALSE)
+    }
+  }
+
   pan <- panel_to_matrices(y, d, id, time)
   Y   <- pan$Y; T_pre <- pan$T_pre
   idx_tr <- pan$idx_treat; idx_co <- pan$idx_control
+
+  if (any(is.infinite(Y))) {
+    stop("Outcome contains infinite values (Inf/-Inf).", call. = FALSE)
+  }
 
   TT <- nrow(Y); N <- ncol(Y)
 
@@ -98,6 +126,10 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL,
   # treated post-adoption cells: mask them out, then zero-fill so the masked
   # positions carry no weight in the C++ solver.
   O[is.na(Y)] <- 0.0
+  if (!any(O > 0)) {
+    stop("No observed outcome cells remain after masking treatment and missing values.",
+         call. = FALSE)
+  }
   Y_obs <- Y; Y_obs[is.na(Y_obs)] <- 0.0
 
   # Athey et al. (2021) select lambda by cross-validation. Fall back to the
@@ -109,7 +141,10 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL,
                             n_lambda = cv_nlambda, seed = cv_seed,
                             fixedeff = fixedeff)
     lambda_cv <- !is.null(lambda)
-    if (!lambda_cv) lambda <- 0.01 * svd(Y_obs, nu = 0, nv = 0)$d[1L]
+    if (!lambda_cv) {
+      d1 <- svd(Y_obs * O, nu = 0, nv = 0)$d[1L]
+      lambda <- if (is.finite(d1) && d1 > 0) 0.01 * d1 else 0.0
+    }
   }
 
   mc  <- soft_impute_fe_cpp(Y_obs, O, lambda, estimate_fe = fixedeff)

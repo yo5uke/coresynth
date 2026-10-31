@@ -244,8 +244,9 @@ date is shared.}
 
 \item{fixedeff}{Unpenalised additive level terms. For \code{method = "mc"} it
 estimates unit and time fixed effects outside the nuclear norm, as in
-Athey et al. (2021, S.8.1), and defaults to \code{TRUE}; \code{FALSE} recovers the
-S.4 baseline where the level is absorbed into the penalised matrix.
+Athey et al. (2021, S.4 Eq. 4.3; see also S.8.1), and defaults to \code{TRUE};
+\code{FALSE} recovers the pure low-rank baseline where the level is absorbed
+into the penalised matrix (Mazumder, Hastie & Tibshirani 2010, Eq. 2).
 For \code{method = "scm"} it defaults to \code{TRUE} on staggered panels, matching
 \code{augsynth} and the S.6 finding that the intercept-shifted estimator
 "dominates either of the alternatives"; it does not apply to sharp fits.

@@ -38,15 +38,17 @@ A list with \code{L} (the penalised low-rank part), \code{a} (row effects),
 Solves
 \verb{min over L, a, b of (1/2) * squaredFrobenius(O o (Y - L - a1' - 1b')) + lambda * nuclearNorm(L)}
 by alternating a back-fitting update of the fixed effects with one
-soft-thresholded SVD step for \code{L} (Mazumder, Hastie & Tibshirani 2010).
+soft-thresholded SVD step for \code{L} (Mazumder, Hastie & Tibshirani 2010;
+Athey et al. 2021, S.4 Eq. 4.3).
 }
 \details{
-The row and column effects are the unpenalised fixed effects of Athey et
-al. (2021, S.8.1): "we regularize the estimates of L*, but do not wish to
-regularize the estimates of the fixed effects". Leaving them inside \code{L}
-shrinks the panel's level towards zero along with its factor structure,
-which biases the imputed counterfactual whenever the level is far from
-zero. \code{estimate_fe = false} reproduces the S.4 baseline model \code{Y = L + e}.
+The row and column effects are the unpenalised time and unit fixed effects
+of Athey et al. (2021, S.4 Eq. 4.3; see also S.8.1): "we regularize the
+estimates of L*, but do not wish to regularize the estimates of the fixed
+effects". Leaving them inside \code{L} shrinks the panel's level towards zero
+along with its factor structure, which biases the imputed counterfactual
+whenever the level is far from zero. \code{estimate_fe = false} reproduces the
+pure low-rank baseline \code{Y = L + e} (Mazumder et al. 2010, Eq. 2).
 
 Both effects absorb an additive constant, so \code{a} and \code{b} are identified
 only up to a shift between them; their sum, which is what enters the

@@ -6991,3 +6991,44 @@ test_that("resampling inference needs two treated units, and two per cohort for 
                                  seed = 1L)$se))
   }
 })
+
+
+test_that("MC validates estimator-specific arguments and C++ inputs", {
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       fixedeff = NA), "`fixedeff` must be TRUE or FALSE")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       lambda = -1), "`lambda` must be NULL or a single non-negative")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       lambda = c(0.1, 0.2)), "`lambda` must be NULL or a single non-negative")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       cv_folds = 0), "`cv_folds` must be a positive integer")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       cv_nlambda = 0), "`cv_nlambda` must be a positive integer")
+  expect_error(scm_fit(y ~ d | id + time, data = panel, method = "mc",
+                       cv_seed = NA), "`cv_seed` must be NULL or a single finite number")
+
+  p_inf <- panel
+  p_inf$y[1] <- Inf
+  expect_error(scm_fit(y ~ d | id + time, data = p_inf, method = "mc"),
+               "infinite values")
+
+  expect_error(soft_impute_fe_cpp(matrix(0, 4, 3), matrix(1, 4, 2), 1.0),
+               "same dimensions")
+  expect_error(soft_impute_fe_cpp(matrix(0, 4, 3), matrix(1, 4, 3), -0.5),
+               "non-negative finite")
+  expect_error(soft_impute_fe_cpp(matrix(0, 4, 3), matrix(1, 4, 3), 1.0,
+                                  max_iter = 0L), "max_iter must be >= 1")
+})
+
+test_that("conformal_inference handles missing observations in MC panels", {
+  p_na <- panel
+  # Drop a control cell and a pre-treatment cell
+  p_na$y[p_na$id == "u2" & p_na$time == 5] <- NA_real_
+  fit_mc_na <- scm_fit(y ~ d | id + time, data = p_na, method = "mc",
+                       lambda = 0.5)
+  ci_res <- conformal_inference(fit_mc_na, ci = TRUE, n_grid = 25L)
+  expect_s3_class(ci_res, "conformal_inference")
+  expect_true(is.finite(ci_res$p_value))
+  expect_gte(ci_res$p_value, 0)
+  expect_lte(ci_res$p_value, 1)
+})

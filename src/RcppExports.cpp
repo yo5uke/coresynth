@@ -111,6 +111,21 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// mc_cv_cpp
+arma::mat mc_cv_cpp(const arma::mat& Y_obs, const Rcpp::List& keep_list, const Rcpp::List& held_list, const arma::vec& lambdas, bool estimate_fe);
+RcppExport SEXP _coresynth_mc_cv_cpp(SEXP Y_obsSEXP, SEXP keep_listSEXP, SEXP held_listSEXP, SEXP lambdasSEXP, SEXP estimate_feSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type Y_obs(Y_obsSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::List& >::type keep_list(keep_listSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::List& >::type held_list(held_listSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type lambdas(lambdasSEXP);
+    Rcpp::traits::input_parameter< bool >::type estimate_fe(estimate_feSEXP);
+    rcpp_result_gen = Rcpp::wrap(mc_cv_cpp(Y_obs, keep_list, held_list, lambdas, estimate_fe));
+    return rcpp_result_gen;
+END_RCPP
+}
 // soft_impute_cpp
 arma::mat soft_impute_cpp(const arma::mat& Y, const arma::mat& O, double lambda, int max_iter, double tol);
 RcppExport SEXP _coresynth_soft_impute_cpp(SEXP YSEXP, SEXP OSEXP, SEXP lambdaSEXP, SEXP max_iterSEXP, SEXP tolSEXP) {
@@ -153,6 +168,22 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// solve_simplex_qp_factored
+arma::vec solve_simplex_qp_factored(const arma::mat& F, const arma::vec& c, int max_iter, double tol, Rcpp::Nullable<Rcpp::NumericVector> x0, double lipschitz);
+RcppExport SEXP _coresynth_solve_simplex_qp_factored(SEXP FSEXP, SEXP cSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP x0SEXP, SEXP lipschitzSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type F(FSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type c(cSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type x0(x0SEXP);
+    Rcpp::traits::input_parameter< double >::type lipschitz(lipschitzSEXP);
+    rcpp_result_gen = Rcpp::wrap(solve_simplex_qp_factored(F, c, max_iter, tol, x0, lipschitz));
+    return rcpp_result_gen;
+END_RCPP
+}
 // scm_inner_weights_cpp
 arma::vec scm_inner_weights_cpp(const arma::mat& X0, const arma::vec& X1, const arma::vec& V_diag, bool wolfe);
 RcppExport SEXP _coresynth_scm_inner_weights_cpp(SEXP X0SEXP, SEXP X1SEXP, SEXP V_diagSEXP, SEXP wolfeSEXP) {
@@ -185,6 +216,21 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< bool >::type cheap_face(cheap_faceSEXP);
     Rcpp::traits::input_parameter< bool >::type wolfe(wolfeSEXP);
     rcpp_result_gen = Rcpp::wrap(scm_weights_cpp(X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart, cheap_face, wolfe));
+    return rcpp_result_gen;
+END_RCPP
+}
+// twfe_demean_cpp
+arma::mat twfe_demean_cpp(arma::mat M, const arma::uvec& idx_t, const arma::uvec& idx_i, int n_t, int n_i);
+RcppExport SEXP _coresynth_twfe_demean_cpp(SEXP MSEXP, SEXP idx_tSEXP, SEXP idx_iSEXP, SEXP n_tSEXP, SEXP n_iSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< arma::mat >::type M(MSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type idx_t(idx_tSEXP);
+    Rcpp::traits::input_parameter< const arma::uvec& >::type idx_i(idx_iSEXP);
+    Rcpp::traits::input_parameter< int >::type n_t(n_tSEXP);
+    Rcpp::traits::input_parameter< int >::type n_i(n_iSEXP);
+    rcpp_result_gen = Rcpp::wrap(twfe_demean_cpp(M, idx_t, idx_i, n_t, n_i));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -282,11 +328,14 @@ static const R_CallMethodDef CallEntries[] = {
     {"_coresynth_scm_placebo_cpp", (DL_FUNC) &_coresynth_scm_placebo_cpp, 6},
     {"_coresynth_scm_placebo_x_cpp", (DL_FUNC) &_coresynth_scm_placebo_x_cpp, 8},
     {"_coresynth_soft_impute_fe_cpp", (DL_FUNC) &_coresynth_soft_impute_fe_cpp, 7},
+    {"_coresynth_mc_cv_cpp", (DL_FUNC) &_coresynth_mc_cv_cpp, 5},
     {"_coresynth_soft_impute_cpp", (DL_FUNC) &_coresynth_soft_impute_cpp, 5},
     {"_coresynth_proj_simplex", (DL_FUNC) &_coresynth_proj_simplex, 1},
     {"_coresynth_solve_simplex_qp", (DL_FUNC) &_coresynth_solve_simplex_qp, 6},
+    {"_coresynth_solve_simplex_qp_factored", (DL_FUNC) &_coresynth_solve_simplex_qp_factored, 6},
     {"_coresynth_scm_inner_weights_cpp", (DL_FUNC) &_coresynth_scm_inner_weights_cpp, 4},
     {"_coresynth_scm_weights_cpp", (DL_FUNC) &_coresynth_scm_weights_cpp, 11},
+    {"_coresynth_twfe_demean_cpp", (DL_FUNC) &_coresynth_twfe_demean_cpp, 5},
     {"_coresynth_sdid_unit_weights_cpp", (DL_FUNC) &_coresynth_sdid_unit_weights_cpp, 3},
     {"_coresynth_sdid_time_weights_cpp", (DL_FUNC) &_coresynth_sdid_time_weights_cpp, 3},
     {"_coresynth_sdid_estimate_cpp", (DL_FUNC) &_coresynth_sdid_estimate_cpp, 6},

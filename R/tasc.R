@@ -105,11 +105,26 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
   # from, relative to their variation around each unit's mean: measured
   # against the raw norm, a panel far from zero makes every change look
   # negligible.
+  Y_obs_t     <- t(Y_obs)
+  obs         <- !is.na(Y_obs)
+  Yz          <- Y_obs; Yz[!obs] <- 0
+  Yz_t        <- t(Yz)
+  sum_y       <- colSums(Yz)
+  full        <- colSums(!obs) == 0L
+  has_full    <- any(full)
+  partial_idx <- which(!full)
+  t_obs_list  <- lapply(partial_idx, function(j) which(obs[, j]))
+  obs_cache   <- list(
+    Yz = Yz, Yz_t = Yz_t, sum_y = sum_y,
+    full = full, has_full = has_full,
+    partial_idx = partial_idx, t_obs_list = t_obs_list
+  )
+
   fitted_prev <- NULL
   converged   <- FALSE
   n_iter      <- 0L
   for (em in seq_len(em_iter)) {
-    ks <- kalman_smoother_cpp(t(sweep(Y_obs, 2L, par$mu)), par$W, par$A,
+    ks <- kalman_smoother_cpp(Y_obs_t - as.numeric(par$mu), par$W, par$A,
                               par$C, par$Q, par$R, par$z0, par$P0)
     fitted <- par$W %*% ks$z_smooth + par$mu
     if (!is.null(fitted_prev)) {
@@ -121,7 +136,7 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
       }
     }
     fitted_prev <- fitted
-    par    <- .tasc_mstep(Y_obs, ks, par, fix_A, isTRUE(intercept))
+    par    <- .tasc_mstep(Y_obs, ks, par, fix_A, isTRUE(intercept), obs_cache)
     n_iter <- em
   }
   if (!converged)
@@ -129,9 +144,10 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
       "TASC: EM did not converge in %d iterations (em_tol = %g); raise ",
       "em_iter or loosen em_tol."), em_iter, em_tol), call. = FALSE)
 
-  # Final smooth
-  ks_final <- kalman_smoother_cpp(t(sweep(Y_obs, 2L, par$mu)), par$W, par$A,
-                                  par$C, par$Q, par$R, par$z0, par$P0)
+  # Final smooth (reuse ks when the loop broke on convergence before M-step)
+  ks_final <- if (converged) ks else
+    kalman_smoother_cpp(Y_obs_t - as.numeric(par$mu), par$W, par$A,
+                        par$C, par$Q, par$R, par$z0, par$P0)
   Z_smooth <- ks_final$z_smooth   # r x T
 
   Y_hat_all <- sweep(t(par$W %*% Z_smooth), 2L, par$mu, "+")   # T x N
@@ -204,7 +220,8 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
 # which also gives the paper's updates of z0 and P0. The drift C is estimated
 # jointly with A by regressing z_{t+1} on [z_t, 1]; Q and R are diagonal, as
 # in the paper.
-.tasc_mstep <- function(Y_obs, ks, par, fix_A, intercept = TRUE) {
+.tasc_mstep <- function(Y_obs, ks, par, fix_A, intercept = TRUE,
+                        obs_cache = NULL) {
   r  <- length(par$z0)
   TT <- nrow(Y_obs)
   N  <- ncol(Y_obs)
@@ -250,11 +267,27 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
   # Observation rows, per unit over its observed periods: regress y_jt on
   # [m_t, 1] (or on m_t alone without an intercept) with the smoothed second
   # moments of z_t.
-  obs  <- !is.na(Y_obs)
-  Yz   <- Y_obs; Yz[!obs] <- 0
+  if (is.null(obs_cache)) {
+    obs         <- !is.na(Y_obs)
+    Yz          <- Y_obs; Yz[!obs] <- 0
+    Yz_t        <- t(Yz)
+    sum_y       <- colSums(Yz)
+    full        <- colSums(!obs) == 0L
+    has_full    <- any(full)
+    partial_idx <- which(!full)
+    t_obs_list  <- lapply(partial_idx, function(j) which(obs[, j]))
+  } else {
+    Yz          <- obs_cache$Yz
+    Yz_t        <- obs_cache$Yz_t
+    sum_y       <- obs_cache$sum_y
+    full        <- obs_cache$full
+    has_full    <- obs_cache$has_full
+    partial_idx <- obs_cache$partial_idx
+    t_obs_list  <- obs_cache$t_obs_list
+  }
   k    <- r + intercept
-  S_yu <- t(Yz) %*% t(m)                              # N x r: sum y m'
-  if (intercept) S_yu <- cbind(S_yu, colSums(Yz))     # ... and sum y
+  S_yu <- Yz_t %*% t(m)                               # N x r: sum y m'
+  if (intercept) S_yu <- cbind(S_yu, sum_y)           # ... and sum y
   E_uu <- function(t_idx, P_part) {
     m_t <- m[, t_idx, drop = FALSE]
     E   <- P_part + m_t %*% t(m_t)
@@ -267,18 +300,18 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
   W     <- par$W
   mu    <- par$mu
   r_var <- numeric(N)
-  full  <- colSums(!obs) == 0L
-  if (any(full)) {
+  if (has_full) {
     Bf <- S_yu[full, , drop = FALSE] %*% solve(E_uu(seq_len(TT), P_sum))
     W[full, ] <- Bf[, seq_len(r), drop = FALSE]
     if (intercept) mu[full] <- Bf[, k]
-    res_f <- sweep(Yz[, full, drop = FALSE] - t(W[full, , drop = FALSE] %*% m),
-                   2L, mu[full])
+    res_f <- t(Yz_t[full, , drop = FALSE] - W[full, , drop = FALSE] %*% m -
+                 as.numeric(mu[full]))
     r_var[full] <- (colSums(res_f^2) +
       rowSums((W[full, , drop = FALSE] %*% P_sum) * W[full, , drop = FALSE])) / TT
   }
-  for (j in which(!full)) {
-    t_obs <- which(obs[, j])
+  for (idx_p in seq_along(partial_idx)) {
+    j     <- partial_idx[idx_p]
+    t_obs <- t_obs_list[[idx_p]]
     if (length(t_obs) == 0L) { r_var[j] <- 1e-6; next }
     P_j <- sum_slices(P[, , t_obs, drop = FALSE])
     b_j <- drop(S_yu[j, ] %*% solve(E_uu(t_obs, P_j)))

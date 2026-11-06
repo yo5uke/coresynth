@@ -184,6 +184,10 @@ soft_impute_fe_cpp <- function(Y, O, lambda, estimate_fe = TRUE, max_iter = 1000
     .Call(`_coresynth_soft_impute_fe_cpp`, Y, O, lambda, estimate_fe, max_iter, tol, fe_sweeps)
 }
 
+mc_cv_cpp <- function(Y_obs, keep_list, held_list, lambdas, estimate_fe = TRUE) {
+    .Call(`_coresynth_mc_cv_cpp`, Y_obs, keep_list, held_list, lambdas, estimate_fe)
+}
+
 #' Fast Matrix Completion using Soft-Impute Algorithm
 #'
 #' Solves: min_L (1/2) ||O o (Y - L)||_F^2 + lambda * ||L||_*
@@ -211,6 +215,10 @@ proj_simplex <- function(y) {
 
 solve_simplex_qp <- function(Q, c, max_iter = 10000L, tol = 1e-6, x0 = NULL, lipschitz = -1.0) {
     .Call(`_coresynth_solve_simplex_qp`, Q, c, max_iter, tol, x0, lipschitz)
+}
+
+solve_simplex_qp_factored <- function(F, c, max_iter = 10000L, tol = 1e-6, x0 = NULL, lipschitz = -1.0) {
+    .Call(`_coresynth_solve_simplex_qp_factored`, F, c, max_iter, tol, x0, lipschitz)
 }
 
 #' SCM Inner Weights (QP Given V)
@@ -291,6 +299,10 @@ scm_inner_weights_cpp <- function(X0, X1, V_diag, wolfe = FALSE) {
 #' @export
 scm_weights_cpp <- function(X0, X1, Z0, Z1, max_iter = 100L, tol = 1e-4, t_train = -1L, z_rows = NULL, multistart = FALSE, cheap_face = FALSE, wolfe = FALSE) {
     .Call(`_coresynth_scm_weights_cpp`, X0, X1, Z0, Z1, max_iter, tol, t_train, z_rows, multistart, cheap_face, wolfe)
+}
+
+twfe_demean_cpp <- function(M, idx_t, idx_i, n_t, n_i) {
+    .Call(`_coresynth_twfe_demean_cpp`, M, idx_t, idx_i, n_t, n_i)
 }
 
 #' Calculate SDID Unit Weights (omega)

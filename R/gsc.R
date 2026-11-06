@@ -44,7 +44,8 @@
 # adopting later, which differ by cohort, so it fits per cohort.
 .fit_gsc_staggered <- function(pan, Y, r, covariate_array = NULL,
                                 control_group = "never_treated",
-                                force = "none") {
+                                force = "none",
+                                shared_ctrl = NULL) {
   TT      <- nrow(Y)
   T_adopt <- pan$T_adopt
   idx_tr  <- pan$idx_treat
@@ -54,7 +55,7 @@
 
   shared <- NULL
   if (control_group == "never_treated") {
-    shared <- tryCatch(
+    shared <- if (!is.null(shared_ctrl)) shared_ctrl else tryCatch(
       .gsc_fit_controls(Y[, idx_co, drop = FALSE], slice_X(idx_co), r, force),
       error = function(e) stop("GSC staggered: the control-unit fit failed: ",
                                conditionMessage(e), call. = FALSE))
@@ -173,13 +174,16 @@
          T_pre, " pre-treatment period(s) and ", N_co, " control unit(s). ",
          "Supply r explicitly.", call. = FALSE)
 
-  cands <- lo:hi
+  cands    <- lo:hi
   n_unconv <- 0L
-  mspe  <- vapply(cands, function(r) {
+  fits     <- vector("list", length(cands))
+  mspe     <- vapply(seq_along(cands), function(idx_c) {
+    r   <- cands[idx_c]
     res <- tryCatch(gsc_ife_cpp(Y_co, Y_tr_pre, r, X_co, X_tr_pre,
                                 force = force),
                     error = function(e) NULL)
     if (is.null(res)) return(NA_real_)
+    fits[[idx_c]] <<- res
     if (!isTRUE(res$converged)) n_unconv <<- n_unconv + 1L
     Z <- res$F[seq_len(T_pre), , drop = FALSE]           # T_pre x r
     if (unit_fe) Z <- cbind(1, Z)
@@ -192,8 +196,18 @@
       for (j in seq_len(p))
         R_tr <- R_tr - matrix(X_tr_pre[, , j], T_pre, N_tr) * res$beta[j]
 
+    if (ncol(Z) == 0L) return(sum(R_tr^2) / T_pre)
+    ZtZ_inv <- tryCatch(solve(crossprod(Z)), error = function(e) NULL)
+    if (!is.null(ZtZ_inv)) {
+      Z_inv <- Z %*% ZtZ_inv
+      h     <- rowSums(Z_inv * Z)
+      if (all(1 - h > 1e-10)) {
+        E_full <- R_tr - Z_inv %*% crossprod(Z, R_tr)
+        return(sum(rowSums(E_full^2) / (1 - h)^2) / T_pre)
+      }
+    }
+
     err <- vapply(seq_len(T_pre), function(s) {
-      if (ncol(Z) == 0L) return(sum(R_tr[s, ]^2))
       Z_ms <- Z[-s, , drop = FALSE]
       lam  <- tryCatch(
         solve(crossprod(Z_ms), crossprod(Z_ms, R_tr[-s, , drop = FALSE])),
@@ -212,8 +226,10 @@
     "%d of the %d candidate fits of the factor-count cross-validation",
     n_unconv, length(cands)))
 
-  list(r     = cands[which.min(mspe)],
-       table = data.frame(r = cands, mspe = mspe))
+  best <- which.min(mspe)
+  list(r     = cands[best],
+       table = data.frame(r = cands, mspe = mspe),
+       fit   = fits[[best]])
 }
 
 #' Fit Generalized Synthetic Control (Xu, 2017)
@@ -274,46 +290,42 @@ fit_gsc_cpp <- function(
   # estimated. Every treated unit is untreated throughout the global
   # pre-treatment window, so one cross-validation serves sharp and staggered
   # panels alike.
-  r_cv <- NULL
+  use_cov   <- !is.null(covariates) && !is.null(data)
+  X_all_arr <- NULL
+  if (use_cov) {
+    if (is.null(id_var) || is.null(time_var))
+      stop("'id_var' and 'time_var' must be provided with covariates.",
+           call. = FALSE)
+    X_all_arr <- build_covariate_array(data, id_var, time_var, covariates,
+                                       pan$units, pan$times)
+  }
+
+  r_cv   <- NULL
+  cv_fit <- NULL
   if (is.null(r)) {
     T_pre_cv <- pan$T_pre
     Y_co_cv  <- pan$Y[, pan$idx_control, drop = FALSE]
     Y_tr_cv  <- pan$Y[seq_len(T_pre_cv), pan$idx_treat, drop = FALSE]
-    if (!is.null(covariates) && !is.null(data)) {
-      if (is.null(id_var) || is.null(time_var))
-        stop("'id_var' and 'time_var' must be provided with covariates.",
-             call. = FALSE)
-      X_co_cv <- build_covariate_array(data, id_var, time_var, covariates,
-                                       pan$units[pan$idx_control], pan$times)
-      X_tr_cv <- build_covariate_array(
-        data, id_var, time_var, covariates,
-        pan$units[pan$idx_treat], pan$times
-      )[seq_len(T_pre_cv), , , drop = FALSE]
+    if (use_cov) {
+      X_co_cv <- X_all_arr[, pan$idx_control, , drop = FALSE]
+      X_tr_cv <- X_all_arr[seq_len(T_pre_cv), pan$idx_treat, , drop = FALSE]
     } else {
       X_co_cv <- array(0.0, c(nrow(pan$Y), length(pan$idx_control), 0L))
       X_tr_cv <- array(0.0, c(T_pre_cv,    length(pan$idx_treat),   0L))
     }
-    cv   <- .gsc_cv_r(Y_co_cv, Y_tr_cv, X_co_cv, X_tr_cv, force = force)
-    r    <- cv$r
-    r_cv <- cv$table
+    cv     <- .gsc_cv_r(Y_co_cv, Y_tr_cv, X_co_cv, X_tr_cv, force = force)
+    r      <- cv$r
+    r_cv   <- cv$table
+    cv_fit <- cv$fit
   }
 
   # ── Staggered adoption path ──────────────────────────────────────────────
   if (!pan$is_sharp) {
-    use_cov_st <- !is.null(covariates) && !is.null(data)
-    if (use_cov_st) {
-      if (is.null(id_var) || is.null(time_var))
-        stop("'id_var' and 'time_var' must be provided with covariates.",
-             call. = FALSE)
-      X_all_arr <- build_covariate_array(data, id_var, time_var, covariates,
-                                          pan$units, pan$times)
-    } else {
-      X_all_arr <- NULL
-    }
     res_st <- .fit_gsc_staggered(pan, pan$Y, r,
                                   covariate_array = X_all_arr,
                                   control_group   = control_group,
-                                  force           = force)
+                                  force           = force,
+                                  shared_ctrl     = cv_fit)
     res_st$method              <- "gsc"
     res_st$staggered           <- TRUE
     res_st$r                   <- r
@@ -329,7 +341,7 @@ fit_gsc_cpp <- function(
     res_st$Y_all               <- pan$Y            # T × N — needed by gsc_inference()
     res_st$idx_co              <- pan$idx_control
     res_st$idx_tr              <- pan$idx_treat
-    res_st$covariate_array_all <- if (use_cov_st) X_all_arr else NULL
+    res_st$covariate_array_all <- if (use_cov) X_all_arr else NULL
     res_st$control_group       <- control_group
     return(res_st)
   }
@@ -351,35 +363,11 @@ fit_gsc_cpp <- function(
   Y_tr_pre <- Y[seq_len(T_pre), idx_tr, drop = FALSE] # T_pre x N_tr
 
   # ── Build covariate arrays ────────────────────────────────────────────────
-  use_cov <- !is.null(covariates) && !is.null(data)
   if (use_cov) {
-    if (is.null(id_var) || is.null(time_var)) {
-      stop(
-        "'id_var' and 'time_var' must be provided with covariates.",
-        call. = FALSE
-      )
-    }
-    co_units <- pan$units[idx_co]
-    tr_units <- pan$units[idx_tr]
-    X_co_arr <- build_covariate_array(
-      data,
-      id_var,
-      time_var,
-      covariates,
-      co_units,
-      pan$times
-    ) # T x N_co x p
-    X_tr_arr <- build_covariate_array(
-      data,
-      id_var,
-      time_var,
-      covariates,
-      tr_units,
-      pan$times
-    ) # T x N_tr x p
-    # Pre-treatment slice of X_tr for Xu (2017) Step 2 loading estimation
+    X_co_arr     <- X_all_arr[, idx_co, , drop = FALSE] # T x N_co x p
+    X_tr_arr     <- X_all_arr[, idx_tr, , drop = FALSE] # T x N_tr x p
     X_tr_pre_arr <- X_tr_arr[seq_len(T_pre), , , drop = FALSE] # T_pre x N_tr x p
-    p <- length(covariates)
+    p            <- length(covariates)
   } else {
     T_full <- nrow(Y_co_all)
     N_co_n <- ncol(Y_co_all)
@@ -395,8 +383,9 @@ fit_gsc_cpp <- function(
     X_tr_pre_arr <- array(0.0, dim = c(T_pre, N_tr_n, 0L))
   }
 
-  res <- gsc_ife_cpp(Y_co_all, Y_tr_pre, r, X_co_arr, X_tr_pre_arr,
-                     force = force)
+  res <- if (!is.null(cv_fit)) cv_fit else
+    gsc_ife_cpp(Y_co_all, Y_tr_pre, r, X_co_arr, X_tr_pre_arr,
+                force = force)
   .gsc_warn_unconverged(!isTRUE(res$converged), "the fit")
   beta <- res$beta # numeric(0) when p=0
 

@@ -5,25 +5,31 @@
 // Projection onto the unit simplex
 // min ||x - y||^2 s.t. sum(x) = 1, x >= 0
 // Using algorithm by Duchi et al. (2008)
-// [[Rcpp::export]]
-arma::vec proj_simplex(arma::vec y) {
-  int n = y.n_elem;
-  arma::vec u = arma::sort(y, "descend");
-  
+static void proj_simplex_inplace(arma::vec& x, arma::vec& u) {
+  const arma::uword n = x.n_elem;
+  u = arma::sort(x, "descend");
+
   double cssv = 0.0;
   double rho = 0.0;
-  
-  for(int i = 0; i < n; i++) {
+
+  for (arma::uword i = 0; i < n; i++) {
     cssv += u(i);
-    if(u(i) > (cssv - 1.0) / (i + 1.0)) {
+    if (u(i) > (cssv - 1.0) / (i + 1.0)) {
       rho = (cssv - 1.0) / (i + 1.0);
     } else {
       break; // Since u is sorted descending, the condition will fail for the rest
     }
   }
-  
-  arma::vec x = arma::max(y - rho, arma::zeros(n));
-  return x;
+
+  x -= rho;
+  x.clamp(0.0, arma::datum::inf);
+}
+
+// [[Rcpp::export]]
+arma::vec proj_simplex(arma::vec y) {
+  arma::vec u(y.n_elem);
+  proj_simplex_inplace(y, u);
+  return y;
 }
 
 // Accelerated projected gradient (FISTA) on the unit simplex, shared by the
@@ -37,16 +43,20 @@ static arma::vec fista_simplex_core(Grad grad_fn, arma::vec x, double L,
   double t = 1.0 / L;
 
   arma::vec y = x;
+  arma::vec x_prev(x.n_elem);
+  arma::vec grad(x.n_elem);
+  arma::vec u_buf(x.n_elem);
   double t_acc = 1.0;
 
   for (int iter = 0; iter < max_iter; iter++) {
-    arma::vec x_prev = x;
+    x_prev = x;
 
     // Gradient step
-    arma::vec grad = grad_fn(y);
+    grad = grad_fn(y);
 
     // Projection step
-    x = proj_simplex(y - t * grad);
+    x = y - t * grad;
+    proj_simplex_inplace(x, u_buf);
 
     // Adaptive restart (O'Donoghue & Candes 2015, gradient scheme): when the
     // momentum direction disagrees with the descent direction, the
@@ -116,6 +126,30 @@ arma::vec solve_simplex_qp(const arma::mat& Q, const arma::vec& c, int max_iter 
     x, L, max_iter, tol);
 }
 
+// Factored form of solve_simplex_qp for Q = F'F when F has fewer rows than
+// columns: evaluates the gradient as F'(F y) - c without forming the n x n
+// Gram matrix Q.
+// [[Rcpp::export]]
+arma::vec solve_simplex_qp_factored(const arma::mat& F, const arma::vec& c,
+                                    int max_iter = 10000, double tol = 1e-6,
+                                    Rcpp::Nullable<Rcpp::NumericVector> x0 = R_NilValue,
+                                    double lipschitz = -1.0) {
+  int n = c.n_elem;
+  arma::vec x;
+  if (x0.isNotNull()) {
+    x = proj_simplex(Rcpp::as<arma::vec>(x0.get()));
+  } else {
+    x = arma::ones(n) / n;
+  }
+
+  double L = lipschitz;
+  if (L <= 0.0) L = lambda_max_sym(F * F.t());
+
+  return fista_simplex_core(
+    [&](const arma::vec& y) -> arma::vec { return F.t() * (F * y) - c; },
+    x, L, max_iter, tol);
+}
+
 // Ridge-penalised least squares on the unit simplex:
 //   min_w 0.5 ||A w||^2 + 0.5 * ridge * ||w||^2 - (A'b)'w,  w in simplex,
 // i.e. solve_simplex_qp with Q = A'A + ridge * I and c = A'b, without forming
@@ -141,6 +175,31 @@ arma::vec solve_simplex_ridge_ls(const arma::mat& A, const arma::vec& b,
   }
 
   double L = lambda_max_sym(A * A.t()) + ridge;
+  return fista_simplex_core(
+    [&](const arma::vec& y) -> arma::vec {
+      return A.t() * (A * y) + ridge * y - c;
+    },
+    x, L, max_iter, tol);
+}
+
+// Precomputed variants for leave-one-out loops (sdid_placebo_cpp) where the
+// full-sample Gram matrix G = Y_pre' Y_pre and/or M = Y_pre Y_pre' are known
+// outside the loop. Pure Armadillo (OpenMP-safe).
+arma::vec solve_simplex_ridge_ls_gram(const arma::mat& Q, const arma::vec& c,
+                                      int max_iter, double tol) {
+  const arma::uword n = c.n_elem;
+  arma::vec x = arma::ones(n) / n;
+  return fista_simplex_core(
+    [&](const arma::vec& y) -> arma::vec { return Q * y - c; },
+    x, lambda_max_sym(Q), max_iter, tol);
+}
+
+arma::vec solve_simplex_ridge_ls_wide(const arma::mat& A, const arma::vec& c,
+                                      const arma::mat& AAt, double ridge,
+                                      int max_iter, double tol) {
+  const arma::uword n = A.n_cols;
+  arma::vec x = arma::ones(n) / n;
+  double L = lambda_max_sym(AAt) + ridge;
   return fista_simplex_core(
     [&](const arma::vec& y) -> arma::vec {
       return A.t() * (A * y) + ridge * y - c;

@@ -7,6 +7,62 @@ arma::vec solve_simplex_ridge_ls(const arma::mat& A, const arma::vec& b,
                                  double ridge, int max_iter = 10000,
                                  double tol = 1e-6);
 
+// Alternating projections for two-way fixed effects demeaning on an arbitrary
+// (possibly unbalanced) cell set. Sweeps unit means (grouped by idx_i in
+// 0..n_i-1) then time means (grouped by idx_t in 0..n_t-1) until the time
+// means vanish to 1e-12 * scale, matching the R reference implementation.
+// [[Rcpp::export]]
+arma::mat twfe_demean_cpp(arma::mat M, const arma::uvec& idx_t,
+                          const arma::uvec& idx_i, int n_t, int n_i) {
+  const arma::uword K = M.n_rows;
+  const arma::uword C = M.n_cols;
+
+  arma::vec cnt_i(n_i, arma::fill::zeros);
+  arma::vec cnt_t(n_t, arma::fill::zeros);
+  for (arma::uword r = 0; r < K; r++) {
+    cnt_i(idx_i(r)) += 1.0;
+    cnt_t(idx_t(r)) += 1.0;
+  }
+
+  arma::vec sum_i(n_i);
+  arma::vec sum_t(n_t);
+
+  for (arma::uword col = 0; col < C; col++) {
+    double* v = M.colptr(col);
+    double scale = 1.0;
+    for (arma::uword r = 0; r < K; r++) {
+      double av = std::abs(v[r]);
+      if (av > scale) scale = av;
+    }
+    const double thresh = 1e-12 * scale;
+
+    for (int it = 0; it < 10000; it++) {
+      sum_i.zeros();
+      for (arma::uword r = 0; r < K; r++) sum_i(idx_i(r)) += v[r];
+      for (int i = 0; i < n_i; i++) {
+        if (cnt_i(i) > 0.0) sum_i(i) /= cnt_i(i);
+      }
+      for (arma::uword r = 0; r < K; r++) v[r] -= sum_i(idx_i(r));
+
+      sum_t.zeros();
+      for (arma::uword r = 0; r < K; r++) sum_t(idx_t(r)) += v[r];
+      for (int t = 0; t < n_t; t++) {
+        if (cnt_t(t) > 0.0) sum_t(t) /= cnt_t(t);
+      }
+      double max_mt = 0.0;
+      for (arma::uword r = 0; r < K; r++) {
+        double mt = sum_t(idx_t(r));
+        v[r] -= mt;
+        double amt = std::abs(mt);
+        if (amt > max_mt) max_mt = amt;
+      }
+      if (max_mt < thresh) break;
+    }
+  }
+
+  return M;
+}
+
 //' Calculate SDID Unit Weights (omega)
 //'
 //' Solves the regularized QP:

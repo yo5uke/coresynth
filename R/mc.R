@@ -57,24 +57,17 @@
     else assign(".Random.seed", old_seed, envir = globalenv())
   }, add = TRUE)
 
-  err <- matrix(NA_real_, nrow = as.integer(n_folds), ncol = length(lambdas))
-  O_k <- matrix(0.0, nrow(O), ncol(O))
-  for (k in seq_len(as.integer(n_folds))) {
-    keep_idx <- sample(obs_idx, fold_size)
-    O_k[] <- 0.0
-    O_k[keep_idx] <- 1.0
-    held <- setdiff(obs_idx, keep_idx)
-    if (length(held) == 0L) next
-
-    for (i in seq_along(lambdas)) {
-      M_i <- tryCatch(
-        soft_impute_fe_cpp(Y_obs, O_k, lambdas[i], estimate_fe = fixedeff)$M,
-        error = function(e) NULL)
-      if (is.null(M_i)) next
-      err[k, i] <- mean((Y_obs[held] - M_i[held])^2)
-    }
+  n_f       <- as.integer(n_folds)
+  keep_list <- vector("list", n_f)
+  held_list <- vector("list", n_f)
+  for (k in seq_len(n_f)) {
+    keep_idx       <- sample(obs_idx, fold_size)
+    keep_list[[k]] <- as.integer(keep_idx)
+    held_list[[k]] <- as.integer(setdiff(obs_idx, keep_idx))
   }
 
+  err   <- mc_cv_cpp(Y_obs, keep_list, held_list, lambdas,
+                     estimate_fe = fixedeff)
   score <- colMeans(err, na.rm = TRUE)
   if (all(is.na(score))) return(NULL)
   lambdas[which.min(score)]

@@ -60,40 +60,30 @@
 # vanish); on a balanced block it is exact after one pass. By Frisch-Waugh-
 # Lovell, OLS on the demeaned columns is the fixed-effects slope.
 .twfe_partial_out <- function(Y, X_arr, cells, label) {
-  p   <- dim(X_arr)[3]
-  K   <- nrow(cells)
-  y_v <- Y[cells]
-  X_m <- matrix(NA_real_, K, p)
-  for (k in seq_len(p))
-    X_m[, k] <- X_arr[cbind(cells, rep(k, K))]
+  p       <- dim(X_arr)[3]
+  TT      <- nrow(Y)
+  N       <- ncol(Y)
+  lin_idx <- cells[, 1L] + (cells[, 2L] - 1L) * TT
+  y_v     <- Y[lin_idx]
+  X_m     <- matrix(X_arr, nrow = TT * N, ncol = p)[lin_idx, , drop = FALSE]
 
   ok <- stats::complete.cases(X_m) & is.finite(y_v)
   if (sum(ok) < p + 1L)
     stop("Too few complete cases for covariate partial-out in ", label, ".",
          call. = FALSE)
-  X_m  <- X_m[ok, , drop = FALSE]
-  y_v  <- y_v[ok]
-  f_t  <- factor(cells[ok, 1L])
-  f_i  <- factor(cells[ok, 2L])
+  X_m   <- X_m[ok, , drop = FALSE]
+  y_v   <- y_v[ok]
+  idx_t <- as.integer(cells[ok, 1L] - 1L)
+  idx_i <- as.integer(cells[ok, 2L] - 1L)
 
-  demean <- function(v) {
-    scale <- max(1, max(abs(v)))
-    for (it in seq_len(10000L)) {
-      v   <- v - (rowsum(v, f_i, reorder = TRUE) / tabulate(f_i))[f_i]
-      m_t <- (rowsum(v, f_t, reorder = TRUE) / tabulate(f_t))[f_t]
-      v   <- v - m_t
-      if (max(abs(m_t)) < 1e-12 * scale) break
-    }
-    v
-  }
-  y_w <- demean(y_v)
-  X_w <- apply(X_m, 2L, demean)
-  if (!is.matrix(X_w)) X_w <- matrix(X_w, ncol = p)
+  YX_w <- twfe_demean_cpp(cbind(y_v, X_m), idx_t, idx_i, TT, N)
+  y_w  <- YX_w[, 1L]
+  X_w  <- YX_w[, -1L, drop = FALSE]
 
   # A covariate with no variation left after the fixed effects (time-
   # invariant, or a common time path) is absorbed by them and has no slope to
   # estimate. The ridge below would return ~0 for it anyway; say so.
-  var_raw <- apply(X_m, 2L, function(v) sum((v - mean(v))^2))
+  var_raw <- colSums(sweep(X_m, 2L, colMeans(X_m))^2)
   var_w   <- colSums(X_w^2)
   absorbed <- var_w <= 1e-10 * pmax(var_raw, .Machine$double.eps)
   if (any(absorbed)) {
@@ -127,7 +117,9 @@
 .sdid_partial_out_staggered <- function(Y, X_arr, pan) {
   TT      <- nrow(Y)
   T_adopt <- pan$T_adopt
-  co_cells <- as.matrix(expand.grid(row = seq_len(TT), col = pan$idx_control))
+  n_co    <- length(pan$idx_control)
+  co_cells <- cbind(row = rep.int(seq_len(TT), n_co),
+                    col = rep(pan$idx_control, each = TT))
   tr_cells <- do.call(rbind, lapply(pan$idx_treat, function(j) {
     t0 <- T_adopt[j]
     if (is.na(t0) || t0 <= 1L) return(NULL)

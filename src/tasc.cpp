@@ -68,6 +68,14 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
   const bool diag_R = R.is_diagmat() && arma::all(R.diag() > 0.0);
   const arma::vec R_diag = R.diag();
 
+  // Cache observation-pattern factors across consecutive periods with the
+  // same observed unit set (all pre-treatment periods share one set; all
+  // post-treatment periods in a sharp design share another).
+  arma::uvec prev_obs_idx;
+  bool has_prev_obs = false;
+  arma::mat W_obs, WtRi, WtRiW;
+  arma::vec r_obs;
+
   // ── Forward Kalman Filter ──
   for(int t = 0; t < T; t++) {
     // Predict
@@ -81,16 +89,26 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
     arma::uvec obs_idx = arma::find_finite(y_t);
 
     if(obs_idx.n_elem > 0) {
-      arma::mat W_obs = W.rows(obs_idx);
+      bool same_obs = has_prev_obs &&
+                      (obs_idx.n_elem == prev_obs_idx.n_elem) &&
+                      arma::all(obs_idx == prev_obs_idx);
+      if (!same_obs) {
+        W_obs = W.rows(obs_idx);
+        if (diag_R) {
+          r_obs = R_diag.elem(obs_idx);
+          WtRi = W_obs.t();                 // r x n_obs: W'R^{-1}
+          WtRi.each_row() /= r_obs.t();
+          WtRiW = WtRi * W_obs;
+        }
+        prev_obs_idx = obs_idx;
+        has_prev_obs = true;
+      }
       arma::vec y_obs = y_t.elem(obs_idx);
 
       arma::mat K, KRK;
       bool gain_ok = false;
       if (diag_R) {
-        arma::vec r_obs = R_diag.elem(obs_idx);
-        arma::mat WtRi = W_obs.t();                 // r x n_obs: W'R^{-1}
-        WtRi.each_row() /= r_obs.t();
-        gain_ok = arma::solve(K, I_r + P_p * (WtRi * W_obs), P_p * WtRi);
+        gain_ok = arma::solve(K, I_r + P_p * WtRiW, P_p * WtRi);
         if (gain_ok) {
           arma::mat KR = K;
           KR.each_row() %= r_obs.t();

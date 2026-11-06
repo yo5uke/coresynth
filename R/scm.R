@@ -1298,18 +1298,38 @@ fit_scm_cpp <- function(
                  cbind(sqrt(s * s_z) * t(XZt[[j]]), s_z * ZZt[[j]]))
     max(eigen(M, symmetric = TRUE, only.values = TRUE)$values)
   }
+  use_fact <- vapply(seq_len(J), function(j) {
+    nco_j <- ncol(blocks[[j]]$X)
+    nco_j >= 64L && 2L * (L_g[j] + dz) < nco_j
+  }, logical(1L))
+  XtX_l <- lapply(seq_len(J), function(j)
+    if (use_fact[j]) NULL else crossprod(blocks[[j]]$X))
+  Xtb_l <- lapply(blocks, function(bl) as.numeric(crossprod(bl$X, bl$b)))
+  ZtZ_l <- if (use_z) lapply(seq_len(J), function(j)
+    if (use_fact[j]) NULL else crossprod(blocks[[j]]$Xz))
+  Ztb_l <- if (use_z) lapply(blocks,
+                             function(bl) as.numeric(crossprod(bl$Xz, bl$bz)))
+
   Gamma <- lapply(seq_len(J), function(j) {
-    bl <- blocks[[j]]
-    Q  <- crossprod(bl$X) / L_g[j]
-    cv <- as.numeric(crossprod(bl$X, bl$b)) / L_g[j]
-    if (use_z) {
-      Q  <- Q  + crossprod(bl$Xz) / dz
-      cv <- cv + as.numeric(crossprod(bl$Xz, bl$bz)) / dz
-    }
-    lip <- lam_max(j, 1 / L_g[j], if (use_z) 1 / dz else 0)
+    bl  <- blocks[[j]]
+    sx  <- 1 / L_g[j]
+    sz  <- if (use_z) 1 / dz else 0
+    cv  <- sx * Xtb_l[[j]] + if (use_z) sz * Ztb_l[[j]] else 0
+    lip <- lam_max(j, sx, sz)
     x0  <- warm_start("separate", j)
-    as.numeric(if (is.null(x0)) solve_simplex_qp(Q, cv, lipschitz = lip) else
-      solve_simplex_qp(Q, cv, x0 = x0, lipschitz = lip))
+    if (use_fact[j]) {
+      Fj <- sqrt(sx) * bl$X
+      if (use_z) Fj <- rbind(Fj, sqrt(sz) * bl$Xz)
+      as.numeric(if (is.null(x0))
+        solve_simplex_qp_factored(Fj, cv, lipschitz = lip)
+      else
+        solve_simplex_qp_factored(Fj, cv, x0 = x0, lipschitz = lip))
+    } else {
+      Q <- sx * XtX_l[[j]]
+      if (use_z) Q <- Q + sz * ZtZ_l[[j]]
+      as.numeric(if (is.null(x0)) solve_simplex_qp(Q, cv, lipschitz = lip) else
+        solve_simplex_qp(Q, cv, x0 = x0, lipschitz = lip))
+    }
   })
 
   # Kept for the jackknife of scm_inference(): a donor with no weight here or
@@ -1340,54 +1360,79 @@ fit_scm_cpp <- function(
     }
     A_pool   <- nu_num / (C_pool^2 * L)
     A_pool_z <- if (use_z) nu_num / (C_pool^2 * dz) else 0
-    P        <- pooled_gap(Gamma)
-    P_z      <- pooled_gap_z(Gamma)
-    XtX_l  <- lapply(blocks, function(bl) crossprod(bl$X))
-    Xtb_l  <- lapply(blocks, function(bl) as.numeric(crossprod(bl$X, bl$b)))
-    ZtZ_l  <- if (use_z) lapply(blocks, function(bl) crossprod(bl$Xz))
-    Ztb_l  <- if (use_z) lapply(blocks,
-                               function(bl) as.numeric(crossprod(bl$Xz, bl$bz)))
+    gap_l    <- lapply(seq_len(J), function(j) block_gap(Gamma, j))
+    gz_l     <- if (use_z) lapply(seq_len(J), function(j) block_gap_z(Gamma, j))
+    P        <- numeric(L)
+    for (j in seq_len(J)) {
+      lg <- L_g[j]
+      P[seq_len(lg)] <- P[seq_len(lg)] + m_g[j] * gap_l[[j]] / J
+    }
+    P_z      <- if (use_z)
+      Reduce(`+`, lapply(seq_len(J), function(j) m_g[j] * gz_l[[j]] / J))
+    else numeric(0L)
+
+    # Precompute per-block BCD constants invariant across sweeps
+    A_sep_v   <- (1 - nu_num) * m_g^2 / (C_sep^2 * J * L_g)
+    s_x_v     <- 2 * (A_pool * m_g^2 / J^2 + A_sep_v)
+    A_sep_z_v <- if (use_z) (1 - nu_num) * m_g^2 / (C_sep^2 * J * dz) else numeric(J)
+    s_zz_v    <- if (use_z) 2 * (A_pool_z * m_g^2 / J^2 + A_sep_z_v) else numeric(J)
+    lip_bcd   <- vapply(seq_len(J), function(j)
+      lam_max(j, s_x_v[j], s_zz_v[j]), numeric(1L))
+    Q_bcd     <- lapply(seq_len(J), function(j) {
+      if (use_fact[j]) return(NULL)
+      Qj <- s_x_v[j] * XtX_l[[j]]
+      if (use_z) Qj <- Qj + s_zz_v[j] * ZtZ_l[[j]]
+      Qj
+    })
+    F_bcd     <- lapply(seq_len(J), function(j) {
+      if (!use_fact[j]) return(NULL)
+      Fj <- sqrt(s_x_v[j]) * blocks[[j]]$X
+      if (use_z) Fj <- rbind(Fj, sqrt(s_zz_v[j]) * blocks[[j]]$Xz)
+      Fj
+    })
+
     obj_prev <- Inf
     for (s in seq_len(max_sweeps)) {
       obj_sep <- 0
       for (j in seq_len(J)) {
-        bl <- blocks[[j]]
-        lg <- L_g[j]
-        mj <- m_g[j]
-        gap_j <- bl$b - as.numeric(bl$X %*% Gamma[[j]])
+        bl    <- blocks[[j]]
+        lg    <- L_g[j]
+        mj    <- m_g[j]
+        gap_j <- gap_l[[j]]
         # this block's share of the pooled gap, removed so R is the rest
         R     <- P[seq_len(lg)] - mj * gap_j / J
-        A_sep <- (1 - nu_num) * mj^2 / (C_sep^2 * J * lg)
+        A_sep <- A_sep_v[j]
         u     <- R + mj * bl$b / J
-        s_x   <- 2 * (A_pool * mj^2 / J^2 + A_sep)
-        s_zz  <- 0
-        Q     <- s_x * XtX_l[[j]]
         cvec  <- 2 * (A_pool * mj / J * as.numeric(crossprod(bl$X, u)) +
                         A_sep * Xtb_l[[j]])
         if (use_z) {
           # the covariate side of the same two terms
-          gz      <- bl$bz - as.numeric(bl$Xz %*% Gamma[[j]])
+          gz      <- gz_l[[j]]
           R_z     <- P_z - mj * gz / J
-          A_sep_z <- (1 - nu_num) * mj^2 / (C_sep^2 * J * dz)
+          A_sep_z <- A_sep_z_v[j]
           u_z     <- R_z + mj * bl$bz / J
-          s_zz    <- 2 * (A_pool_z * mj^2 / J^2 + A_sep_z)
-          Q       <- Q + s_zz * ZtZ_l[[j]]
           cvec    <- cvec +
             2 * (A_pool_z * mj / J * as.numeric(crossprod(bl$Xz, u_z)) +
                    A_sep_z * Ztb_l[[j]])
         }
         # warm start from the previous block solution: successive sweeps
         # resolve near-identical QPs, so FISTA converges in a few iterations
-        w_new <- as.numeric(solve_simplex_qp(Q, cvec, x0 = Gamma[[j]],
-                                             lipschitz = lam_max(j, s_x, s_zz)))
+        w_new <- as.numeric(if (use_fact[j])
+          solve_simplex_qp_factored(F_bcd[[j]], cvec, x0 = Gamma[[j]],
+                                    lipschitz = lip_bcd[j])
+        else
+          solve_simplex_qp(Q_bcd[[j]], cvec, x0 = Gamma[[j]],
+                           lipschitz = lip_bcd[j]))
         Gamma[[j]] <- w_new
-        gap_new <- bl$b - as.numeric(bl$X %*% w_new)
+        gap_new    <- bl$b - as.numeric(bl$X %*% w_new)
+        gap_l[[j]] <- gap_new
         P[seq_len(lg)] <- R + mj * gap_new / J
         obj_sep <- obj_sep + A_sep * sum(gap_new^2)
         if (use_z) {
-          gz_new  <- bl$bz - as.numeric(bl$Xz %*% w_new)
-          P_z     <- R_z + mj * gz_new / J
-          obj_sep <- obj_sep + A_sep_z * sum(gz_new^2)
+          gz_new    <- bl$bz - as.numeric(bl$Xz %*% w_new)
+          gz_l[[j]] <- gz_new
+          P_z       <- R_z + mj * gz_new / J
+          obj_sep   <- obj_sep + A_sep_z * sum(gz_new^2)
         }
       }
       obj <- A_pool * sum(P^2) + obj_sep
@@ -2277,18 +2322,36 @@ loo_donors <- function(fit, weight_threshold = 1e-6) {
 .cv_ridge_scm <- function(A, b, T_pre,
                            lambda_grid = 10^seq(-4, 4, length.out = 30L)) {
   N_co <- nrow(A)
-  Ipre <- diag(T_pre)
+  sv   <- svd(A)
+  d2   <- sv$d^2
+  U    <- sv$u
+  U2   <- U^2
+  Utb  <- drop(crossprod(U, b))
+  Ipre <- NULL
+  AtA  <- NULL
+  Atb  <- NULL
 
   cv_errors <- vapply(lambda_grid, function(lam) {
+    w <- d2 / (d2 + lam)
+    h <- drop(U2 %*% w)
+    if (all(1 - h > 1e-7)) {
+      hat_b <- drop(U %*% (w * Utb))
+      return(mean(((b - hat_b) / (1 - h))^2))
+    }
+    if (is.null(AtA)) {
+      Ipre <<- diag(T_pre)
+      AtA  <<- crossprod(A)
+      Atb  <<- drop(crossprod(A, b))
+    }
+    M_lam <- AtA + lam * Ipre
     loo <- vapply(seq_len(N_co), function(i) {
-      A_i    <- A[-i, , drop = FALSE]
-      b_i    <- b[-i]
+      ai     <- A[i, ]
       beta_i <- tryCatch(
-        solve(crossprod(A_i) + lam * Ipre, drop(t(A_i) %*% b_i)),
+        solve(M_lam - tcrossprod(ai), Atb - ai * b[i]),
         error = function(e) rep(NA_real_, T_pre)
       )
       if (anyNA(beta_i)) return(NA_real_)
-      (b[i] - sum(A[i, ] * beta_i))^2
+      (b[i] - sum(ai * beta_i))^2
     }, numeric(1L))
     mean(loo, na.rm = TRUE)
   }, numeric(1L))

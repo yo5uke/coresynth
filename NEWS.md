@@ -7,6 +7,31 @@ with covariates, from `method = "tasc"`, and the intervals of
 
 ## Performance and computational improvements
 
+- **Staggered partially pooled SCM (`method = "scm"`), `augment_scm()`, TASC
+  (`method = "tasc"`), SDID (`method = "sdid"`), GSC (`method = "gsc"`), and MC
+  (`method = "mc"`) eliminate redundant per-iteration and cross-validation work
+  with no change to estimates:**
+  - Staggered partially pooled SCM precomputes sweep-invariant block weights,
+    Lipschitz bounds, and Gram/factor matrices outside the block coordinate
+    descent loop, carries block residuals across sweeps, and evaluates FISTA
+    gradients in factored form when $2(L_j + d_z) < N_{co}$ and $N_{co} \ge 64$.
+  - `augment_scm()` replaces the $30 \times N_{co}$ ridge leave-one-out
+    matrix inversions in `.cv_ridge_scm()` with a single SVD and the exact
+    Sherman-Morrison / PRESS leave-one-out identity.
+  - `kalman_smoother_cpp()` caches observation-pattern factors across
+    consecutive time steps with identical observed unit sets, and `fit_tasc_cpp()`
+    precomputes missingness masks outside the EM loop and reuses the final
+    E-step smoother upon convergence.
+  - `sdid_placebo_cpp()` precomputes full-sample cross-products outside the
+    OpenMP leave-one-out loop, and `proj_simplex()` / `fista_simplex_core()`
+    projection steps operate in-place on preallocated buffers.
+  - `.twfe_partial_out()` moves the alternating-projection two-way fixed effects
+    demeaning loop to C++ (`twfe_demean_cpp()`).
+  - `.gsc_cv_r()` uses the exact leave-one-period-out OLS leverage identity and
+    reuses the selected candidate's `gsc_ife_cpp()` fit and covariate array;
+    `.mc_cv_lambda()` evaluates the fold-by-penalty grid in parallel via OpenMP
+    (`mc_cv_cpp()`) after drawing fold masks in R.
+
 - **Matrix Completion (`method = "mc"`, `soft_impute_fe_cpp()`) eliminates
   redundant matrix allocations.** Two-way fixed effects back-fitting sweeps
   now precompute residual row and column sums outside the sweep loop and update

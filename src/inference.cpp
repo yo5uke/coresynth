@@ -4,8 +4,13 @@
 
 // [[Rcpp::depends(RcppArmadillo)]]
 
-// Declaration of SDID unit weight solver
+// Declaration of SDID unit weight solvers
 arma::vec sdid_unit_weights_cpp(const arma::mat& Y_pre, const arma::vec& Y_tr_pre, double zeta2);
+arma::vec solve_simplex_ridge_ls_gram(const arma::mat& Q, const arma::vec& c,
+                                      int max_iter = 10000, double tol = 1e-6);
+arma::vec solve_simplex_ridge_ls_wide(const arma::mat& A, const arma::vec& c,
+                                      const arma::mat& AAt, double ridge,
+                                      int max_iter = 10000, double tol = 1e-6);
 
 // Forward declarations of internal SCM weight solvers (defined in scm.cpp)
 arma::vec scm_weights_vec_internal(const arma::mat& X0, const arma::vec& X1,
@@ -39,41 +44,53 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
 // [[Rcpp::export]]
 arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
                            const arma::vec& time_weights, double zeta2) {
-  int N_co  = Y_pre.n_cols;
+  const int T_pre    = Y_pre.n_rows;
+  const int N_co     = Y_pre.n_cols;
+  const int n_donors = N_co - 1;
+  const double ridge = zeta2 * T_pre;
   arma::vec placebo_effects(N_co);
+
+  // Precompute cross-products shared across all N_co leave-one-out problems.
+  const arma::vec co_pre_wt_all    = Y_pre.t() * time_weights;
+  const arma::vec co_post_mean_all = arma::mean(Y_post, 0).t();
+  const arma::mat G_all            = Y_pre.t() * Y_pre;
+  const bool use_gram              = (T_pre >= n_donors);
+  const arma::mat YYt_all          = use_gram ? arma::mat() : (Y_pre * Y_pre.t());
+  const arma::uvec all_idx         = arma::regspace<arma::uvec>(0, N_co - 1);
+
   const int n_threads = cs_num_threads();
 
   #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
-  for(int i = 0; i < N_co; i++) {
+  for (int i = 0; i < N_co; i++) {
     // Exceptions must not escape the OpenMP region (std::terminate would take
     // the R session down); a failed solve marks this placebo NaN.
     try {
-    // Pseudo-treated unit
-    arma::vec y_tr_pre  = Y_pre.col(i);
-    arma::vec y_tr_post = Y_post.col(i);
+      arma::uvec donor_idx = all_idx(arma::find(all_idx != (arma::uword)i));
+      arma::vec g_col = G_all.col(i);
+      arma::vec c     = g_col.elem(donor_idx);
 
-    // Donor pool (all other control units)
-    // Use arma::regspace for safe integer index generation
-    arma::uvec all_idx   = arma::regspace<arma::uvec>(0, N_co - 1);
-    arma::uvec donor_idx = all_idx(arma::find(all_idx != (arma::uword)i));
+      arma::vec unit_w;
+      if (use_gram) {
+        arma::mat Q = G_all.submat(donor_idx, donor_idx);
+        Q.diag() += ridge;
+        unit_w = solve_simplex_ridge_ls_gram(Q, c);
+      } else {
+        arma::vec y_tr_pre    = Y_pre.col(i);
+        arma::mat Y_donor_pre = Y_pre.cols(donor_idx);
+        arma::mat AAt         = YYt_all - y_tr_pre * y_tr_pre.t();
+        unit_w = solve_simplex_ridge_ls_wide(Y_donor_pre, c, AAt, ridge);
+      }
 
-    arma::mat Y_donor_pre  = Y_pre.cols(donor_idx);
-    arma::mat Y_donor_post = Y_post.cols(donor_idx);
+      double tr_pre_wt    = co_pre_wt_all(i);
+      double tr_post_mean = co_post_mean_all(i);
 
-    // Compute unit weights for this leave-one-out placebo
-    arma::vec unit_w = sdid_unit_weights_cpp(Y_donor_pre, y_tr_pre, zeta2);
+      arma::vec co_pre_wt    = co_pre_wt_all.elem(donor_idx);
+      arma::vec co_post_mean = co_post_mean_all.elem(donor_idx);
 
-    // SDID-style DiD using the provided time weights
-    double tr_pre_wt    = arma::dot(time_weights, y_tr_pre);
-    double tr_post_mean = arma::mean(y_tr_post);
+      double synth_pre_wt    = arma::dot(unit_w, co_pre_wt);
+      double synth_post_mean = arma::dot(unit_w, co_post_mean);
 
-    arma::vec co_pre_wt   = Y_donor_pre.t() * time_weights;        // N_co-1
-    arma::vec co_post_mean = arma::mean(Y_donor_post, 0).t();       // N_co-1
-
-    double synth_pre_wt   = arma::dot(unit_w, co_pre_wt);
-    double synth_post_mean = arma::dot(unit_w, co_post_mean);
-
-    placebo_effects(i) = (tr_post_mean - tr_pre_wt) - (synth_post_mean - synth_pre_wt);
+      placebo_effects(i) = (tr_post_mean - tr_pre_wt) - (synth_post_mean - synth_pre_wt);
     } catch (...) {
       placebo_effects(i) = arma::datum::nan;
     }

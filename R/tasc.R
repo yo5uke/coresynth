@@ -31,6 +31,7 @@
 fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
                          fix_A = FALSE, intercept = TRUE, ...) {
   pan <- panel_to_matrices(y, d, id, time)
+  pan <- .drop_unidentified(pan, "TASC", drop_periods = FALSE)
   Y   <- pan$Y; T_pre <- pan$T_pre
   idx_tr <- pan$idx_treat; idx_co <- pan$idx_control
 
@@ -65,27 +66,38 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
   # time-invariant part of the latent state of Rho et al. (2026, S.3.1.1),
   # freed from the column space of W. The intercepts start at each unit's
   # mean over the common pre-treatment window.
+  if (T_pre < 1L)
+    stop("TASC needs at least one period before the earliest adoption to ",
+         "initialise the state-space model.", call. = FALSE)
+  if (N < r)
+    stop("r (", r, ") cannot exceed the number of units (", N, ").",
+         call. = FALSE)
+
   Y_pre <- impute_col_mean(Y[seq_len(T_pre), , drop = FALSE])
   mu    <- if (isTRUE(intercept)) colMeans(Y_pre) else rep(0.0, N)
   Y_pre <- sweep(Y_pre, 2L, mu)
 
   # Initialise parameters from SVD of control-unit data (T_pre x N_co)
   # u: T_pre x r (time factors), v: N_co x r (unit loadings)
-  Y_co_pre <- Y_pre[, idx_co, drop = FALSE]
+  # A staggered panel may have fewer never-treated units than states, or
+  # none; every unit is untreated in this window, so all of them serve then.
+  idx_init <- if (length(idx_co) >= r) idx_co else seq_len(N)
+  idx_rest <- if (length(idx_co) >= r) idx_tr else integer(0L)
+  Y_co_pre <- Y_pre[, idx_init, drop = FALSE]
   svd_res  <- svd(Y_co_pre, nu = r, nv = r)
 
   # W_full: N x r observation/loading matrix
   # Control rows: right singular vectors (unit loadings, N_co x r)
   W_full <- matrix(0.0, nrow = N, ncol = r)
-  W_full[idx_co, ] <- svd_res$v[, seq_len(r), drop = FALSE]
+  W_full[idx_init, ] <- svd_res$v[, seq_len(r), drop = FALSE]
 
   # Treated rows: least-squares loadings from pre-treatment fit
   # F_pre = U * diag(D): T_pre x r time-factor matrix
-  if(T_pre >= r) {
+  if(T_pre >= r && length(idx_rest) > 0L) {
     F_pre <- svd_res$u %*% diag(svd_res$d[seq_len(r)], r, r)   # T_pre x r
     L_tr  <- solve(t(F_pre) %*% F_pre + diag(1e-8, r),
-                   t(F_pre) %*% Y_pre[, idx_tr, drop = FALSE])
-    W_full[idx_tr, ] <- t(L_tr)
+                   t(F_pre) %*% Y_pre[, idx_rest, drop = FALSE])
+    W_full[idx_rest, ] <- t(L_tr)
   }
 
   par <- list(
@@ -194,6 +206,7 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
     T_pre        = T_pre,
     idx_co       = idx_co,
     idx_tr       = idx_tr,
+    dropped_units = pan$dropped_units,
     unit_weights = NULL,
     estimate     = stag$estimate %||% att
   ), if (!is.null(stag)) list(

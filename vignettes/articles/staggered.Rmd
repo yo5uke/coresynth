@@ -87,7 +87,11 @@ therefore warns and will be removed in the next major release.
 A staggered panel needs at least two never-treated units for these
 estimators. When every unit is eventually treated, `"mc"` and `"tasc"` still
 apply: they impute each unit's counterfactual from the untreated cells of the
-whole panel rather than from a donor pool.
+whole panel rather than from a donor pool. `"mc"` can do so only for the
+periods in which some unit is still untreated, because nothing else
+identifies a period's effect; it drops the periods after the last adoption
+with a warning. `"tasc"` carries its states through them by the transition
+equation. Both drop a unit that is treated from the first period.
 
 ## Across estimators
 

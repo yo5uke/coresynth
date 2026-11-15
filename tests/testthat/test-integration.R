@@ -3660,9 +3660,60 @@ test_that("staggered panel with no never-treated units: donor-pool methods stop,
   for (m in c("scm", "sdid", "gsc", "si"))
     expect_error(scm_fit(y ~ d | id + time, data = stag_all, method = m),
                  "never-treated")
-  fit <- scm_fit(y ~ d | id + time, data = stag_all, method = "mc")
+  # MC fits what it can identify: from period 17 on every unit is treated, so
+  # those periods carry no information on their time effects and are dropped.
+  # The late adopters then have only untreated cells left and serve as
+  # controls, which leaves a single cohort.
+  expect_warning(
+    fit <- scm_fit(y ~ d | id + time, data = stag_all, method = "mc"),
+    "dropped 4 period(s) in which no unit is observed untreated (first: '17')",
+    fixed = TRUE)
+  expect_equal(fit$dropped_periods, 17:20)
+  expect_equal(length(fit$times), 16L)
+  expect_equal(ncol(fit$Y_treat), 3L)
+  expect_true(is.finite(fit$estimate))
+  # The fit is the one the trimmed panel gives.
+  trimmed <- stag_all[stag_all$time <= 16, ]
+  expect_equal(fit$estimate,
+               scm_fit(y ~ d | id + time, data = trimmed, method = "mc")$estimate)
+})
+
+test_that("TASC fits a staggered panel with no never-treated units", {
+  stag_all <- make_panel()
+  stag_all$d <- as.integer(
+    (stag_all$id %in% paste0("u", 1:3) & stag_all$time > 10) |
+    (!stag_all$id %in% paste0("u", 1:3) & stag_all$time > 16)
+  )
+  fit <- suppressWarnings(
+    scm_fit(y ~ d | id + time, data = stag_all, method = "tasc"))
   expect_true(isTRUE(fit$staggered))
   expect_true(is.finite(fit$estimate))
+  expect_equal(nrow(fit$cohort_estimates), 2L)
+})
+
+test_that("TASC rejects a state dimension or adoption date it cannot start from", {
+  small <- make_panel(N = 3)
+  expect_error(scm_fit(y ~ d | id + time, data = small, method = "tasc", r = 4),
+               "cannot exceed the number of units")
+})
+
+test_that("MC and TASC drop a unit with no untreated period", {
+  first <- make_panel()
+  first$d[first$id == "u2"] <- 1L
+  for (m in c("mc", "tasc")) {
+    expect_warning(
+      fit <- scm_fit(y ~ d | id + time, data = first, method = m),
+      "dropped 1 unit(s) with no untreated period (first: 'u2')",
+      fixed = TRUE)
+    expect_equal(fit$dropped_units, "u2")
+    expect_equal(ncol(fit$Y_treat), 1L)
+    # Without it the fit is the sharp one of the remaining units.
+    rest <- first[first$id != "u2", ]
+    expect_equal(fit$estimate,
+                 scm_fit(y ~ d | id + time, data = rest, method = m)$estimate)
+  }
+  expect_no_warning(
+    scm_fit(y ~ d | id + time, data = panel, method = "mc"))
 })
 
 test_that("NA in the treatment indicator errors instead of silently dropping the unit", {

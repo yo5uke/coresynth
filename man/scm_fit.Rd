@@ -307,6 +307,14 @@ Staggered \code{method = "scm"} fits add \code{cohort_estimates}, \code{cohort_f
 and the settings the fit resolved: \code{nu} (the number the partially pooled
 solver used, or \code{"separate"} for the per-cohort path), \code{fixedeff},
 \code{pool_cohorts} and \code{qp_solver}.
+
+\code{method = "mc"} and \code{"tasc"} impute a treated cell from untreated ones,
+so they drop, with a warning, what no untreated observation identifies: a
+unit treated from the first period, and for \code{"mc"} a period in which no
+unit is observed untreated (every period from the last adoption date on,
+when no unit is never treated). The fit is then the fit of the panel
+without them, and \code{dropped_units} and \code{dropped_periods} record what was
+removed.
 }
 \description{
 Unified formula interface for Synthetic Control and related causal

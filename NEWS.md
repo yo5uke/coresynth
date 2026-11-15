@@ -43,6 +43,29 @@ with covariates, from `method = "tasc"`, and the intervals of
 
 ## Bug fixes
 
+- **`method = "mc"` and `"tasc"` drop what they cannot identify, with a
+  warning.** A unit treated from the first period has no untreated
+  observation to learn its level or loadings from. For `"mc"`, a period in
+  which no unit is observed untreated has no data on its time effect or on
+  its row of the low-rank matrix either, which is every period from the last
+  adoption date on when no unit is never treated. Both were left at zero and
+  the resulting gaps averaged into the ATT: with a true effect of 2, `"mc"`
+  reported 5.05 on average on such a panel, and 2.00 once those periods are
+  left out. The fit is now the fit of the panel without them; a unit whose
+  treated periods are all dropped serves as a control, and `dropped_periods`
+  and `dropped_units` record what was removed. `"tasc"` carries its states
+  through a period without untreated units by the transition equation, so it
+  drops only such units. Panels in which every period has an untreated
+  observation and every treated unit an untreated period are unaffected.
+
+- **`method = "tasc"` fits a staggered panel with fewer never-treated units
+  than state dimensions, including none.** Its starting values came from the
+  never-treated units only, so such a panel stopped with `a dimension is zero`
+  or `subscript out of bounds`. Every unit is untreated before the earliest
+  adoption, so all of them now serve when the never-treated units are too few.
+  Fits with enough never-treated units are unchanged. A state dimension larger
+  than the number of units now stops with a message that says so.
+
 - **`conformal_inference()` supports Matrix Completion panels with missing values.**
   When a panel contains unobserved or `NA` cells outside treatment, the refit
   under the null now marks them as unobserved (`O = 0`) instead of assuming a

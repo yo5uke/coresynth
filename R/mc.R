@@ -99,12 +99,12 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL,
   }
 
   pan <- panel_to_matrices(y, d, id, time)
-  Y   <- pan$Y; T_pre <- pan$T_pre
-  idx_tr <- pan$idx_treat; idx_co <- pan$idx_control
-
-  if (any(is.infinite(Y))) {
+  if (any(is.infinite(pan$Y))) {
     stop("Outcome contains infinite values (Inf/-Inf).", call. = FALSE)
   }
+  pan <- .drop_unidentified(pan, "MC", drop_periods = TRUE)
+  Y   <- pan$Y; T_pre <- pan$T_pre
+  idx_tr <- pan$idx_treat; idx_co <- pan$idx_control
 
   TT <- nrow(Y); N <- ncol(Y)
 
@@ -181,6 +181,8 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL,
     idx_co       = idx_co,
     idx_tr       = idx_tr,
     Y_co_all     = Y[, idx_co, drop = FALSE],  # T x N_co -- needed by conformal_inference()
+    dropped_periods = pan$dropped_periods,
+    dropped_units   = pan$dropped_units,
     unit_weights = NULL,
     estimate     = stag$estimate %||% att
   ), if (!is.null(stag)) list(

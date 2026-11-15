@@ -154,6 +154,79 @@ panel_to_matrices <- function(y, d, id, time) {
     call. = FALSE)
 }
 
+#' Drop the periods and units an imputation estimator cannot identify
+#'
+#' MC and TASC impute a treated cell from untreated ones, so two kinds of cell
+#' are out of reach. A unit with no untreated observation -- treated from the
+#' first period -- has nothing to learn its own level or loadings from. And,
+#' for MC only, a period in which no unit is observed untreated has no data on
+#' its time effect or on its row of the low-rank matrix; TASC carries its
+#' states through such a period by the transition equation. Every unit being
+#' treated by the end of the panel produces the second case from the last
+#' adoption date on.
+#'
+#' Such periods and units are dropped with a warning, the way the cohort-refit
+#' estimators skip a cohort they cannot fit. A unit whose
+#' treated cells all fall in dropped periods has only untreated cells left and
+#' becomes a control.
+#'
+#' @param pan          Result of `panel_to_matrices()`.
+#' @param method_label Estimator name for the warning.
+#' @param drop_periods Whether periods without an untreated observation are
+#'   dropped as well (MC), or only units (TASC).
+#' @return `pan` restricted to what is identified, with `dropped_periods` and
+#'   `dropped_units` (the labels, or `NULL`) added.
+#' @noRd
+.drop_unidentified <- function(pan, method_label, drop_periods) {
+  Y  <- pan$Y
+  TT <- nrow(Y)
+  N  <- ncol(Y)
+  adopt <- pan$T_adopt
+  # Untreated and observed: before the unit's adoption row, or anywhere for a
+  # never-treated unit.
+  untreated <- !is.na(Y) &
+    (matrix(seq_len(TT), TT, N) < matrix(ifelse(is.na(adopt), TT + 1L, adopt),
+                                         TT, N, byrow = TRUE))
+  dead_i <- !is.na(adopt) & colSums(untreated) == 0L
+  dead_t <- if (drop_periods) rowSums(untreated) == 0L else rep(FALSE, TT)
+  if (!any(dead_i) && !any(dead_t)) return(pan)
+
+  why <- c(
+    if (any(dead_t))
+      sprintf("%d period(s) in which no unit is observed untreated (first: '%s')",
+              sum(dead_t), rownames(Y)[which(dead_t)[1L]]),
+    if (any(dead_i))
+      sprintf("%d unit(s) with no untreated period (first: '%s')",
+              sum(dead_i), colnames(Y)[which(dead_i)[1L]]))
+  warning(method_label, ": dropped ", paste(why, collapse = " and "),
+          ". Their counterfactual is not identified, so the effect is ",
+          "estimated without them.", call. = FALSE)
+
+  keep_t <- !dead_t
+  keep_i <- !dead_i
+  D <- pan$D[keep_t, keep_i, drop = FALSE]
+  treated <- which(colSums(D) > 0)
+  if (length(treated) == 0L)
+    stop(method_label, ": no treated cell is left once the periods and units ",
+         "without an untreated observation are dropped.", call. = FALSE)
+  T_adopt <- rep(NA_integer_, ncol(D))
+  for (j in treated) T_adopt[j] <- which(D[, j] > 0)[1L]
+
+  list(
+    Y = pan$Y[keep_t, keep_i, drop = FALSE],
+    D = D,
+    units = pan$units[keep_i],
+    times = pan$times[keep_t],
+    T_pre = min(T_adopt[treated]) - 1L,
+    T_adopt = T_adopt,
+    is_sharp = length(unique(T_adopt[treated])) == 1L,
+    idx_treat = treated,
+    idx_control = which(colSums(D) == 0),
+    dropped_periods = if (any(dead_t)) pan$times[dead_t],
+    dropped_units   = if (any(dead_i)) pan$units[dead_i]
+  )
+}
+
 #' Aggregate per-cohort fits into a staggered ATT
 #'
 #' Shared tail of every staggered engine: combines the per-cohort estimates
@@ -253,7 +326,8 @@ panel_to_matrices <- function(y, d, id, time) {
       "treated during the earlier cohorts' post-treatment windows, so it ",
       "cannot stand in for their untreated outcomes. method = \"mc\" and ",
       "\"tasc\" impute from each unit's untreated cells instead and do not ",
-      "need never-treated units.",
+      "need never-treated units, though \"mc\" reaches only the periods in ",
+      "which some unit is still untreated.",
       call. = FALSE)
   }
   invisible(control_group)

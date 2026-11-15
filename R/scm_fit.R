@@ -272,6 +272,14 @@
 #'   solver used, or `"separate"` for the per-cohort path), `fixedeff`,
 #'   `pool_cohorts` and `qp_solver`.
 #'
+#'   `method = "mc"` and `"tasc"` impute a treated cell from untreated ones,
+#'   so they drop, with a warning, what no untreated observation identifies: a
+#'   unit treated from the first period, and for `"mc"` a period in which no
+#'   unit is observed untreated (every period from the last adoption date on,
+#'   when no unit is never treated). The fit is then the fit of the panel
+#'   without them, and `dropped_units` and `dropped_periods` record what was
+#'   removed.
+#'
 #' @export
 #'
 #' @examples

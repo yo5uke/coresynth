@@ -26,8 +26,9 @@
 #'   to the best donor's MSPE: donors with ratio > threshold are excluded before
 #'   estimation. `Inf` (default) disables filtering.
 #' @param lambda_pen Penalty for penalised SCM (Abadie & L'Hour 2021). `NULL`
-#'   (default) runs standard SCM. `"auto"` selects lambda via out-of-sample
-#'   pre-treatment MSPE. A non-negative number uses that value directly.
+#'   (default) runs standard SCM. `"auto"` selects lambda by the
+#'   pre-intervention holdout of their S.4.2. A non-negative number uses that
+#'   value directly.
 #' @return A list of class `coresynth` with standard fields plus:
 #'   * `excluded_donors`: character vector of donors removed by filtering
 #'   * `lambda_pen`: penalty value used (NA when standard SCM)
@@ -666,9 +667,17 @@ fit_scm_cpp <- function(
 
     # Step 4: select lambda
     if (identical(lambda_pen, "auto")) {
-      lambda_pen_used <- .scm_tune_lambda_pen(
-        Q_mat, c_base, d_pen, Z0, Z1, t_train, T_pre
-      )
+      lambda_pen_used <- if (use_cov) {
+        # A predictor matrix cannot be re-measured on a training window, so
+        # the weights are fitted on it as it is and only the validation rows
+        # are held to the later pre-treatment periods (see v_selection).
+        t_val <- if (t_train > 0L && t_train < T_pre) t_train else T_pre %/% 2L
+        val   <- (t_val + 1L):T_pre
+        .scm_tune_lambda_pen(X0, X1, V_star,
+                             Z0[val, , drop = FALSE], Z1[val])
+      } else {
+        .scm_tune_lambda_pen_outcomes(Y_co_pre, drop(Y_tr_pre), V_star)
+      }
     } else {
       lambda_pen_used <- as.numeric(lambda_pen)
     }
@@ -850,11 +859,19 @@ fit_scm_cpp <- function(
   list(W = W_final, V = V_opt, loss = final_loss)
 }
 
-# Internal helper: tune lambda for penalised SCM via OOS pre-treatment MSPE.
-.scm_tune_lambda_pen <- function(Q_mat, c_base, d_pen, Z0, Z1, t_train, T_pre) {
-  if (t_train < 0L || t_train >= T_pre) t_train <- T_pre %/% 2L
-  Z0_val <- Z0[(t_train + 1L):T_pre, , drop = FALSE]
-  Z1_val <- Z1[(t_train + 1L):T_pre]
+# Internal helper: tune lambda for penalised SCM by the pre-intervention
+# holdout of Abadie & L'Hour (2021, S.4.2): the weights for each candidate
+# penalty are fitted on `X0_fit`/`X1_fit` under the metric `V_fit`, and the
+# penalty with the smallest squared prediction error for the treated outcome
+# over the validation rows `Z0_val`/`Z1_val` wins. The validation periods come
+# immediately before the intervention and the fitting rows must not contain
+# them, or the error is measured on the outcomes the weights were fitted to.
+.scm_tune_lambda_pen <- function(X0_fit, X1_fit, V_fit, Z0_val, Z1_val) {
+  V_sqrt <- sqrt(pmax(V_fit, 0))
+  X0_sc  <- sweep(X0_fit, 1L, V_sqrt, `*`)
+  Q_mat  <- crossprod(X0_sc)
+  c_base <- as.vector(t(X0_sc) %*% (V_sqrt * X1_fit))
+  d_pen  <- colSums(V_fit * (X1_fit - X0_fit)^2)
 
   lambda_grid <- c(0, 10^seq(-4, 2, length.out = 19L))
   best_lam    <- 0
@@ -874,6 +891,28 @@ fit_scm_cpp <- function(
     }
   }
   best_lam
+}
+
+# The holdout of .scm_tune_lambda_pen() for a fit whose predictors are the
+# pre-treatment outcomes: the first floor(T_pre / 2) periods train and the
+# rest, up to the intervention, validate -- the split v_selection = "oos"
+# uses. `V` weights the training rows: with in-sample V selection it is the
+# training part of the fitted V, and under "oos" the V that was itself
+# selected on those rows. A V with no mass on the training rows identifies no
+# weights there, so the rows are then weighted equally.
+.scm_tune_lambda_pen_outcomes <- function(Y_co_pre, Y_tr_pre, V) {
+  T_pre <- nrow(Y_co_pre)
+  t0    <- T_pre %/% 2L
+  if (t0 < 1L)
+    stop("lambda_pen = 'auto' holds out the later pre-treatment periods to ",
+         "choose the penalty, so it needs at least 2 of them.", call. = FALSE)
+  train <- seq_len(t0)
+  val   <- (t0 + 1L):T_pre
+  V_tr  <- if (length(V) == T_pre) V[train] else V
+  if (length(V_tr) != t0 || sum(pmax(V_tr, 0)) < 1e-12) V_tr <- rep(1 / t0, t0)
+  .scm_tune_lambda_pen(
+    Y_co_pre[train, , drop = FALSE], Y_tr_pre[train], V_tr,
+    Y_co_pre[val, , drop = FALSE],   Y_tr_pre[val])
 }
 
 # -- Internal: cohort-by-cohort SCM for staggered adoption -------------------
@@ -976,7 +1015,6 @@ fit_scm_cpp <- function(
       }
     }
 
-    t_train_g <- if (v_selection == "oos") T_pre_g %/% 2L else -1L
     # Staggered SCM is outcomes-only, so "auto" resolves to the single-start
     # coordinate descent ("multistart" is rejected at the fit entry point).
     effective_outer_g <- switch(v_optim,
@@ -1025,8 +1063,7 @@ fit_scm_cpp <- function(
         c_base   <- as.vector(t(X0_sc) %*% (V_sqrt * X1_pen))
 
         lambda_pen_used <- if (identical(lambda_pen, "auto")) {
-          .scm_tune_lambda_pen(Q_mat, c_base, d_pen,
-                               Y_co_pre, Y_tr_pre, t_train_g, T_pre_g)
+          .scm_tune_lambda_pen_outcomes(Y_co_pre, Y_tr_pre, V_star)
         } else {
           as.numeric(lambda_pen)
         }
@@ -2384,6 +2421,10 @@ loo_donors <- function(fit, weight_threshold = 1e-6) {
 augment_scm <- function(fit, lambda_ridge = NULL) {
   if (!inherits(fit, "coresynth_scm")) {
     stop("augment_scm() requires a coresynth object with method = 'scm'.", call. = FALSE)
+  }
+  if (inherits(fit, "coresynth_staggered")) {
+    stop("augment_scm() supports sharp (single-cohort) fits only.",
+         call. = FALSE)
   }
   if (is.null(fit$Y_co_pre) || is.null(fit$Y_co_post)) {
     stop(

@@ -69,9 +69,15 @@
 #'   excluded from estimation. `Inf` (default) disables filtering.
 #' @param lambda_pen Penalised SCM parameter (Abadie & L'Hour 2021, JASA).
 #'   For `method = "scm"` only. `NULL` (default) runs standard unpenalised SCM.
-#'   `"auto"` selects the penalty via out-of-sample pre-treatment MSPE on the
-#'   same validation window as `v_selection = "oos"`. A non-negative number
-#'   uses that value directly.
+#'   `"auto"` selects the penalty by the pre-intervention holdout of their
+#'   S.4.2: for each candidate the weights are fitted on the outcomes of the
+#'   first `floor(T_pre / 2)` pre-treatment periods, and the candidate with
+#'   the smallest squared prediction error over the remaining pre-treatment
+#'   periods wins (the split `v_selection = "oos"` uses); the weights are
+#'   then refitted with it on the fit's own predictors. With user-supplied
+#'   `predictors` the predictor matrix is fixed, so the weights are fitted on
+#'   it and only the validation is held to those later periods. A
+#'   non-negative number uses that value directly.
 #' @param v_optim Outer V-optimisation method for `method = "scm"`.
 #'   The outer problem (choose V so that the implied donor weights W(V)
 #'   minimise pre-treatment outcome MSPE) is non-convex, and a single local

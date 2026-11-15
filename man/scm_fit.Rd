@@ -157,9 +157,15 @@ excluded from estimation. \code{Inf} (default) disables filtering.}
 
 \item{lambda_pen}{Penalised SCM parameter (Abadie & L'Hour 2021, JASA).
 For \code{method = "scm"} only. \code{NULL} (default) runs standard unpenalised SCM.
-\code{"auto"} selects the penalty via out-of-sample pre-treatment MSPE on the
-same validation window as \code{v_selection = "oos"}. A non-negative number
-uses that value directly.}
+\code{"auto"} selects the penalty by the pre-intervention holdout of their
+S.4.2: for each candidate the weights are fitted on the outcomes of the
+first \code{floor(T_pre / 2)} pre-treatment periods, and the candidate with
+the smallest squared prediction error over the remaining pre-treatment
+periods wins (the split \code{v_selection = "oos"} uses); the weights are
+then refitted with it on the fit's own predictors. With user-supplied
+\code{predictors} the predictor matrix is fixed, so the weights are fitted on
+it and only the validation is held to those later periods. A
+non-negative number uses that value directly.}
 
 \item{v_optim}{Outer V-optimisation method for \code{method = "scm"}.
 The outer problem (choose V so that the implied donor weights W(V)

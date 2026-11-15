@@ -78,7 +78,8 @@ fit_oos <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
 fit_filt <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
                     donor_mspe_threshold = 5)
 
-# Abadie & L'Hour (2021): penalised SCM (auto-selects the penalty out of sample)
+# Abadie & L'Hour (2021): penalised SCM; "auto" fits each candidate penalty on
+# the first half of the pre-period and scores it on the second (their S.4.2)
 fit_pen <- scm_fit(y ~ d | id + time, data = dat, method = "scm",
                    lambda_pen = "auto")
 

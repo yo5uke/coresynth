@@ -1685,6 +1685,15 @@ test_that("augment_scm auto-selected lambda_ridge is positive", {
   expect_true(aug$lambda_ridge > 0)
 })
 
+test_that("augment_scm names the reason it rejects a staggered fit", {
+  stag <- make_panel()
+  stag$d <- as.integer((stag$id %in% c("u1", "u2") & stag$time > 10) |
+                         (stag$id %in% c("u3", "u4") & stag$time > 14))
+  fit <- suppressMessages(scm_fit(y ~ d | id + time, data = stag, method = "scm"))
+  expect_error(augment_scm(fit), "sharp (single-cohort) fits only",
+               fixed = TRUE)
+})
+
 test_that("augment_scm with very large lambda_ridge gives delta near zero", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
   aug <- augment_scm(fit, lambda_ridge = 1e12)
@@ -7272,6 +7281,28 @@ test_that("sdid_placebo_cpp solves each unit-weight problem with its intercept",
                                        sweep(post, 2L, level, "+"),
                                        fit$time_weights, fit$zeta2))
   expect_equal(got_shifted, got, tolerance = 1e-5)
+})
+
+# ── Penalised SCM: holdout choice of the penalty ─────────────────────────────
+
+test_that("lambda_pen = 'auto' fits on the training periods and scores on the rest", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm",
+                 lambda_pen = "auto")
+  donors <- fit$Y_co_pre
+  y1     <- fit$Y_treat[seq_len(10L)]
+  train  <- 1:5
+  val    <- 6:10
+  V_tr   <- unname(fit$v_weights)[train]
+  if (sum(V_tr) < 1e-12) V_tr <- rep(1 / 5, 5)
+  X0s    <- donors[train, ] * sqrt(V_tr)
+  grid   <- c(0, 10^seq(-4, 2, length.out = 19L))
+  score  <- vapply(grid, function(lam) {
+    cc <- drop(crossprod(X0s, sqrt(V_tr) * y1[train])) -
+      lam / 2 * colSums(V_tr * (y1[train] - donors[train, ])^2)
+    w  <- drop(solve_simplex_qp(crossprod(X0s), cc))
+    mean((y1[val] - drop(donors[val, ] %*% w))^2)
+  }, numeric(1L))
+  expect_equal(fit$lambda_pen, grid[which.min(score)])
 })
 
 # ── Kalman smoother: diagonal R as a vector ──────────────────────────────────

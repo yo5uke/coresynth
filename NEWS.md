@@ -127,6 +127,17 @@ with covariates, from `method = "tasc"`, and the intervals of
   for the other estimators, instead of a one-column matrix carrying names.
   The values are unchanged.
 
+- **`lambda_pen = "auto"` holds out the periods it scores on.** With the
+  pre-treatment outcomes as predictors, the weights for each candidate
+  penalty were fitted on the very periods their prediction error was then
+  measured on, so the search was in-sample. It now follows the
+  pre-intervention holdout of Abadie & L'Hour (2021, S.4.2): the weights are
+  fitted on the first half of the pre-treatment periods and scored on the
+  second, and the chosen penalty is then used on the fit's own predictors. The penalty selected, and the estimate with it,
+  change. Fits with user-supplied `predictors`, whose matrix cannot be
+  re-measured on a training window, and fits with a numeric `lambda_pen` are
+  unaffected.
+
 - **`conformal_inference()` returns the interval the test implies rather
   than the one its grid could hold.** The interval is read off a grid of
   candidate effects. The default grid, four pre-treatment residual standard
@@ -158,6 +169,9 @@ with covariates, from `method = "tasc"`, and the intervals of
   adoption, so all of them now serve when the never-treated units are too few.
   Fits with enough never-treated units are unchanged. A state dimension larger
   than the number of units now stops with a message that says so.
+
+- **`augment_scm()` says that it supports sharp fits only** when given a
+  staggered fit, instead of reporting missing donor matrices.
 
 - **`conformal_inference()` supports Matrix Completion panels with missing values.**
   When a panel contains unobserved or `NA` cells outside treatment, the refit

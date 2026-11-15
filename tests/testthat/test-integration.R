@@ -3716,6 +3716,18 @@ test_that("MC and TASC drop a unit with no untreated period", {
     scm_fit(y ~ d | id + time, data = panel, method = "mc"))
 })
 
+test_that("MC does not depend on the level of the outcome", {
+  # The fixed effects sit outside the penalty, so adding a constant to every
+  # outcome must leave the candidate penalties, and the fit, where they were.
+  fit0 <- scm_fit(y ~ d | id + time, data = panel, method = "mc")
+  shifted <- panel
+  shifted$y <- shifted$y + 1e4
+  fit1 <- scm_fit(y ~ d | id + time, data = shifted, method = "mc")
+  expect_true(fit0$lambda_cv)
+  expect_equal(fit1$lambda, fit0$lambda, tolerance = 1e-6)
+  expect_equal(fit1$estimate, fit0$estimate, tolerance = 1e-6)
+})
+
 test_that("NA in the treatment indicator errors instead of silently dropping the unit", {
   na_d <- panel
   na_d$d[57] <- NA

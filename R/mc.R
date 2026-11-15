@@ -28,8 +28,28 @@
 # path is a speed-up rather than part of the estimator, and soft_impute_cpp
 # always starts from zero, so it is not used here.
 #
-# The path runs from the spectral norm of the (masked) panel, which shrinks
-# everything to zero, down towards zero, which fits the observed cells exactly.
+# The path runs from the smallest penalty that shrinks L to zero (see
+# .mc_lambda_max()) down towards zero, which fits the observed cells exactly.
+# The smallest penalty at which the low-rank part is exactly zero: the largest
+# singular value of what the nuclear norm acts on. Without fixed effects that
+# is the masked panel. With them it is the masked panel net of the two-way
+# fixed effects fitted on their own, because the effects are estimated outside
+# the penalty. Taking the raw panel there instead would tie the path to the
+# level of the outcome -- adding a constant to every cell would move the
+# candidate penalties, and on a panel far from zero most of them would fall in
+# the range where L is zero.
+.mc_lambda_max <- function(Y_obs, O, fixedeff) {
+  R <- Y_obs * O
+  if (isTRUE(fixedeff)) {
+    # An unreachable penalty keeps L at zero, so only the effects are fitted;
+    # the sweeps are what converge them under an irregular mask.
+    fe <- soft_impute_fe_cpp(Y_obs, O, .Machine$double.xmax, estimate_fe = TRUE,
+                             max_iter = 2L, fe_sweeps = 200L)
+    R  <- O * (Y_obs - fe$M)
+  }
+  svd(R, nu = 0, nv = 0)$d[1L]
+}
+
 .mc_cv_lambda <- function(Y_obs, O, n_folds = 5L, n_lambda = 20L, seed = 1L,
                           fixedeff = TRUE) {
   obs_idx <- which(O > 0)
@@ -37,7 +57,7 @@
   n_cell  <- length(O)
   if (n_obs < 2L) return(NULL)
 
-  lam_max <- svd(Y_obs * O, nu = 0, nv = 0)$d[1L]
+  lam_max <- .mc_lambda_max(Y_obs, O, fixedeff)
   if (!is.finite(lam_max) || lam_max <= 0) return(NULL)
   # Geometric path down to a small fraction of lambda_max; the paper's
   # lambda_L = 0 is the interpolating fit, which cross-validation never wants
@@ -135,7 +155,7 @@ fit_mc_cpp <- function(y, d, id, time, lambda = NULL,
                             fixedeff = fixedeff)
     lambda_cv <- !is.null(lambda)
     if (!lambda_cv) {
-      d1 <- svd(Y_obs * O, nu = 0, nv = 0)$d[1L]
+      d1 <- .mc_lambda_max(Y_obs, O, fixedeff)
       lambda <- if (is.finite(d1) && d1 > 0) 0.01 * d1 else 0.0
     }
   }

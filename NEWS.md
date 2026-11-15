@@ -43,6 +43,21 @@ with covariates, from `method = "tasc"`, and the intervals of
 
 ## Bug fixes
 
+- **`method = "mc"` no longer depends on the level of the outcome.** The
+  candidate penalties ran down from the largest singular value of the masked
+  panel itself. With fixed effects (the default) the penalty acts on the panel
+  net of them, so on a panel far from zero most candidates fell where the
+  low-rank part is exactly zero, and adding a constant to every outcome
+  changed the fit. On the same 40 simulated panels the RMSE of the effect was
+  0.35 to 0.36 with the outcome centred at 0, 20 or 100, 1.14 at 1,000 and
+  1.58 at 10,000, where the fit had degenerated to two-way fixed effects. The
+  path now starts at the largest singular value of the masked panel net of
+  the fixed effects fitted on their own, the smallest penalty at which the
+  low-rank part vanishes; the RMSE is 0.35 at every level. Fits with
+  `lambda = NULL` change slightly on every panel, since the candidate grid
+  moves, and substantially where the outcome's level is hundreds of times its
+  variation. `fixedeff = FALSE` and a supplied `lambda` are unaffected.
+
 - **`method = "mc"` and `"tasc"` drop what they cannot identify, with a
   warning.** A unit treated from the first period has no untreated
   observation to learn its level or loadings from. For `"mc"`, a period in

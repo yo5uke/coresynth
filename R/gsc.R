@@ -464,7 +464,8 @@ fit_gsc_cpp <- function(
 #' @param alpha Significance level for the confidence interval (default 0.05).
 #' @param seed  RNG seed for reproducibility (default NULL).
 #' @return A list with:
-#'   * `p_value`:   Two-sided p-value: mean(|ATT*| >= |ATT_obs|)
+#'   * `p_value`:   Two-sided p-value, `(1 + #{|ATT*| >= |ATT_obs|}) / (B + 1)`
+#'     over the replicates that succeeded, so it is never exactly zero
 #'   * `ci_lower`:  Lower bound of the (1-alpha)*100% CI for the ATT,
 #'     `ATT_obs - q(1 - alpha/2)` where `q` are quantiles of `boot_dist`
 #'   * `ci_upper`:  Upper bound, `ATT_obs - q(alpha/2)`
@@ -568,7 +569,9 @@ gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
   err_q <- quantile(valid, c(alpha / 2, 1 - alpha / 2), names = FALSE)
 
   list(
-    p_value = mean(abs(valid) >= abs(att_obs)),
+    # The observed effect counts as one draw of its own null distribution
+    # (Davison & Hinkley 1997, S.4.2), which keeps the p-value off zero.
+    p_value = (1 + sum(abs(valid) >= abs(att_obs))) / (length(valid) + 1),
     ci_lower = att_obs - err_q[2],
     ci_upper = att_obs - err_q[1],
     se = sd(valid),

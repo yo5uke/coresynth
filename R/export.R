@@ -61,12 +61,14 @@ export_json <- function(x, file = "coresynth_results.json",
   )
 
   # ── 3. estimate ───────────────────────────────────────────────────────────────
+  # [[ ]], not $: a staggered SCM fit carries `separate_args`, which `x$se`
+  # would partial-match.
   estimate_section <- list(
     att      = rd(x$estimate),
-    se       = if (!is.null(x$se))       rd(x$se)       else NULL,
-    p_value  = if (!is.null(x$p_value))  rd(x$p_value)  else NULL,
-    ci_lower = if (!is.null(x$ci_lower)) rd(x$ci_lower) else NULL,
-    ci_upper = if (!is.null(x$ci_upper)) rd(x$ci_upper) else NULL
+    se       = if (!is.null(x[["se"]]))       rd(x[["se"]])       else NULL,
+    p_value  = if (!is.null(x[["p_value"]]))  rd(x[["p_value"]])  else NULL,
+    ci_lower = if (!is.null(x[["ci_lower"]])) rd(x[["ci_lower"]]) else NULL,
+    ci_upper = if (!is.null(x[["ci_upper"]])) rd(x[["ci_upper"]]) else NULL
   )
   if (!is.null(inference)) {
     if (!is.null(inference$p_value))  estimate_section$p_value  <- rd(inference$p_value)
@@ -91,6 +93,12 @@ export_json <- function(x, file = "coresynth_results.json",
       return(lapply(seq_len(ncol(m)), function(j) rd(m[, j])))
     }
     rd(as.numeric(m))
+  }
+  # A matrix as a list of its columns; NULL stays NULL. A staggered GSC fit
+  # keeps its factors and loadings per cohort, so it has none at the top level.
+  col_list <- function(m) {
+    if (is.null(m)) return(NULL)
+    lapply(seq_len(ncol(m)), function(j) rd(m[, j]))
   }
   Y_synth_out <- if (!is.null(x$Y_synth))   x$Y_synth
                  else if (!is.null(x$Y_tr_hat)) x$Y_tr_hat
@@ -124,9 +132,11 @@ export_json <- function(x, file = "coresynth_results.json",
     "gsc"  = list(
       r               = x$r,
       singular_values = rd(as.numeric(x$singular_values)),
-      F               = lapply(seq_len(ncol(x$F)),   function(j) rd(x$F[, j])),
-      L_co            = lapply(seq_len(ncol(x$L_co)), function(j) rd(x$L_co[, j])),
-      L_tr            = lapply(seq_len(ncol(x$L_tr)), function(j) rd(x$L_tr[, j]))
+      # [[ ]], not $: a staggered fit has no `F`, and $ would partial-match
+      # `force` instead.
+      F               = col_list(x[["F"]]),
+      L_co            = col_list(x[["L_co"]]),
+      L_tr            = col_list(x[["L_tr"]])
     ),
     "mc"   = list(lambda = rd(x$lambda)),
     "tasc" = list(

@@ -237,6 +237,17 @@ scm_design <- function(
   } else {
     X_mat      <- Y[E_idx, , drop = FALSE]   # TE x J
     pred_names <- paste0("Y[", times[E_idx], "]")
+    # A missing fitting-period outcome makes every candidate treatment set
+    # fail, which would be reported as an infeasible design; name the cell.
+    bad <- which(!is.finite(X_mat), arr.ind = TRUE)
+    if (nrow(bad) > 0L) {
+      stop(sprintf(paste0(
+        "The outcome is missing or non-finite in %d unit-time cell(s) of the ",
+        "fitting periods (first: unit '%s' at time '%s'). scm_design() needs ",
+        "a balanced panel over the periods it fits on."),
+        nrow(bad), colnames(X_mat)[bad[1L, 2L]], rownames(X_mat)[bad[1L, 1L]]),
+        call. = FALSE)
+    }
   }
 
   # Row-wise normalisation (divide by cross-unit SD)

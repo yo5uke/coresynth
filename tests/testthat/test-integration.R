@@ -606,6 +606,27 @@ test_that("export_json with inference includes inference section (GSC)", {
   expect_false(is.null(res$inference$ci_lower))
 })
 
+test_that("export_json handles staggered fits of every method", {
+  stag <- make_panel()
+  stag$d <- as.integer((stag$id %in% c("u1", "u2") & stag$time > 10) |
+                         (stag$id %in% c("u3", "u4") & stag$time > 14))
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
+    fit <- suppressWarnings(suppressMessages(
+      scm_fit(y ~ d | id + time, data = stag, method = m)))
+    res <- export_json(fit, file = NULL)
+    expect_equal(res$meta$method, m)
+    expect_true(is.finite(res$estimate$att))
+  }
+  # A staggered GSC fit keeps its factors per cohort: none at the top level,
+  # and `force` must not stand in for `F`.
+  fit_gsc <- scm_fit(y ~ d | id + time, data = stag, method = "gsc", r = 1)
+  expect_null(export_json(fit_gsc, file = NULL)$method_specific$F)
+  # Nor `separate_args` for a standard error the fit does not have.
+  fit_sep <- suppressMessages(
+    scm_fit(y ~ d | id + time, data = stag, method = "scm", nu = "separate"))
+  expect_null(export_json(fit_sep, file = NULL)$estimate$se)
+})
+
 # ── Phase 5a: Staggered adoption ──────────────────────────────────────────────
 
 make_staggered_panel <- function(N = 12, TT = 24, seed = 7) {
@@ -1261,6 +1282,17 @@ test_that("scm_design default (no T_fit) gives NA inference without warning", {
   res <- scm_design(df, "outcome", "unit", "time", T0 = 15L)  # no warning for default
   expect_true(is.na(res$p_value))
   expect_true(all(is.na(res$ci_lower)))
+})
+
+test_that("scm_design names a missing fitting-period outcome", {
+  df <- make_design_panel()
+  df_na <- df
+  df_na$outcome[df_na$unit == "m3" & df_na$time == 4] <- NA_real_
+  expect_error(scm_design(df_na, "outcome", "unit", "time", T0 = 15L),
+               "unit 'm3' at time '4'")
+  df_gap <- df[!(df$unit == "m3" & df$time == 4), ]
+  expect_error(scm_design(df_gap, "outcome", "unit", "time", T0 = 15L),
+               "unit 'm3' at time '4'")
 })
 
 test_that("scm_design explicit T_fit consuming all pre-periods warns", {
@@ -7303,6 +7335,36 @@ test_that("lambda_pen = 'auto' fits on the training periods and scores on the re
     mean((y1[val] - drop(donors[val, ] %*% w))^2)
   }, numeric(1L))
   expect_equal(fit$lambda_pen, grid[which.min(score)])
+})
+
+# ── gsc_boot p-value ─────────────────────────────────────────────────────────
+
+test_that("gsc_boot counts the observed effect in its p-value", {
+  strong <- panel
+  strong$y[strong$d == 1] <- strong$y[strong$d == 1] + 100
+  fit  <- scm_fit(y ~ d | id + time, data = strong, method = "gsc", r = 2)
+  boot <- gsc_boot(fit, B = 29L, seed = 1L)
+  valid <- boot$boot_dist[!is.na(boot$boot_dist)]
+  expect_equal(boot$p_value,
+               (1 + sum(abs(valid) >= abs(boot$att_obs))) / (length(valid) + 1))
+  expect_gt(boot$p_value, 0)
+})
+
+# ── Treatment that switches off ──────────────────────────────────────────────
+
+test_that("a treatment indicator that returns to 0 is reported as absorbing", {
+  reversed <- panel
+  reversed$d[reversed$id == "u1" & reversed$time > 15] <- 0L
+  expect_warning(
+    fit <- scm_fit(y ~ d | id + time, data = reversed, method = "sdid"),
+    "returns to 0 after treatment has started for 1 unit(s) (first: unit 'u1' at time '16')",
+    fixed = TRUE)
+  # The fit is the one of the absorbing design.
+  expect_equal(fit$estimate,
+               scm_fit(y ~ d | id + time, data = panel, method = "sdid")$estimate)
+  # A row missing after adoption is not the treatment ending.
+  gap <- panel[!(panel$id == "u1" & panel$time == 18), ]
+  expect_no_warning(scm_fit(y ~ d | id + time, data = gap, method = "mc"))
 })
 
 # ── Kalman smoother: diagonal R as a vector ──────────────────────────────────

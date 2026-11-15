@@ -2,8 +2,11 @@
 
 A review of the GSC, TASC, SI, SDID and MC (Matrix Completion) code against
 their papers and against gsynth/fect/MCPanel. Estimates from `method = "gsc"`
-with covariates, from `method = "tasc"`, and the intervals of
-`sdid_inference()`, `gsc_inference()`, `si_inference()` and `gsc_boot()` change.
+with covariates, from `method = "tasc"`, from `method = "mc"` with its default
+penalty, and from `lambda_pen = "auto"` change, as do the intervals and
+p-values of `sdid_inference()`, `gsc_inference()`, `si_inference()`,
+`gsc_boot()` and `conformal_inference()`. Each entry below says when and by
+how much.
 
 ## Performance and computational improvements
 
@@ -162,6 +165,14 @@ with covariates, from `method = "tasc"`, and the intervals of
   20 periods the 90% and 95% intervals came out identical. Intervals at such
   levels narrow by the candidates on the threshold.
 
+- **`gsc_boot()` counts the observed effect in its p-value**,
+  `(1 + #{|ATT*| >= |ATT|}) / (B + 1)`, which can no longer be exactly zero.
+
+- **A treatment indicator that returns to 0 is reported.** Adoption is
+  treated as absorbing by every estimator, so a unit counts as treated from
+  its first treated period to the end of the panel; `scm_fit()` now warns
+  when the data code a treatment that ends. Estimates are unchanged.
+
 - **`method = "tasc"` fits a staggered panel with fewer never-treated units
   than state dimensions, including none.** Its starting values came from the
   never-treated units only, so such a panel stopped with `a dimension is zero`
@@ -169,6 +180,16 @@ with covariates, from `method = "tasc"`, and the intervals of
   adoption, so all of them now serve when the never-treated units are too few.
   Fits with enough never-treated units are unchanged. A state dimension larger
   than the number of units now stops with a message that says so.
+
+- **`export_json()` works on staggered GSC fits.** A staggered fit keeps its
+  factors per cohort, and the lookup of `F` partially matched `force` instead,
+  which stopped the export. On a staggered SCM fit made with
+  `nu = "separate"` the standard error was likewise filled from
+  `separate_args`.
+
+- **`scm_design()` names a missing outcome in its fitting periods.** Such a
+  panel made every candidate treatment set fail, which was reported as
+  `no feasible treatment set found`.
 
 - **`augment_scm()` says that it supports sharp fits only** when given a
   staggered fit, instead of reporting missing donor matrices.

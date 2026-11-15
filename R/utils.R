@@ -83,6 +83,26 @@ panel_to_matrices <- function(y, d, id, time) {
   Y[idx_mat] <- y
   D[idx_mat] <- d
 
+  # Adoption is treated as absorbing: a unit counts as treated from its first
+  # treated period to the end of the panel, whatever the indicator does
+  # afterwards. Say so when the data disagree, rather than fitting a design
+  # other than the one coded. Only cells present in the data count, so a
+  # missing row after adoption is not read as the treatment ending.
+  present <- matrix(FALSE, TT, N)
+  present[idx_mat] <- TRUE
+  started  <- apply(D > 0, 2L, cummax) > 0
+  reversed <- present & started & D == 0
+  if (any(reversed)) {
+    ij <- which(reversed, arr.ind = TRUE)[1L, ]
+    warning(sprintf(paste0(
+      "The treatment indicator returns to 0 after treatment has started for ",
+      "%d unit(s) (first: unit '%s' at time '%s'). Adoption is treated as ",
+      "absorbing: such a unit counts as treated from its first treated ",
+      "period to the end of the panel."),
+      sum(colSums(reversed) > 0), colnames(Y)[ij[2L]], rownames(Y)[ij[1L]]),
+      call. = FALSE)
+  }
+
   # Determine treated units: any unit that is ever treated
   ever_treated <- which(colSums(D) > 0)
   ever_control <- which(colSums(D) == 0)

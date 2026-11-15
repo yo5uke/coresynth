@@ -19,7 +19,8 @@ drawn for the treated units (default 499L).}
 \value{
 A list with:
 \itemize{
-\item \code{p_value}:   Two-sided p-value: mean(|ATT*| >= |ATT_obs|)
+\item \code{p_value}:   Two-sided p-value, \verb{(1 + #\{|ATT*| >= |ATT_obs|\}) / (B + 1)}
+over the replicates that succeeded, so it is never exactly zero
 \item \code{ci_lower}:  Lower bound of the (1-alpha)*100\% CI for the ATT,
 \code{ATT_obs - q(1 - alpha/2)} where \code{q} are quantiles of \code{boot_dist}
 \item \code{ci_upper}:  Upper bound, \code{ATT_obs - q(alpha/2)}

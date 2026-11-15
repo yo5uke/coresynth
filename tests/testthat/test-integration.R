@@ -3012,13 +3012,14 @@ test_that("Phase 20: sdid_inference staggered placebo returns sdid_inference", {
   expect_null(inf$boot_ests)
 })
 
-test_that("Phase 20: staggered placebo_effects length = never-treated controls", {
+test_that("staggered placebo draws one effect per placebo assignment", {
   fit <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid")
-  inf <- sdid_inference(fit, method = "placebo")
-  # never_co = intersect({u2..u12}, {u3..u12}) = {u3..u12} = 10 units
-  never_co <- Reduce(intersect, lapply(fit$cohort_fits, `[[`, "idx_co"))
-  expect_equal(length(inf$placebo_effects), length(never_co))
-  expect_false(is.null(names(inf$placebo_effects)))
+  # Two units are treated, so each replicate hands the placebo to two controls.
+  inf <- sdid_inference(fit, method = "placebo", n_boot = 30L, seed = 1L)
+  expect_length(inf$placebo_effects, 30L)
+  expect_true(all(is.finite(inf$placebo_effects)))
+  again <- sdid_inference(fit, method = "placebo", n_boot = 30L, seed = 1L)
+  expect_identical(inf$placebo_effects, again$placebo_effects)
 })
 
 test_that("Phase 20: staggered placebo n_controls = never-treated count", {
@@ -3030,8 +3031,11 @@ test_that("Phase 20: staggered placebo n_controls = never-treated count", {
 
 test_that("Phase 20: staggered placebo alternative one-sided p-values sum >= 1", {
   fit <- scm_fit(y ~ d | id + time, data = staggered, method = "sdid")
-  p_g <- sdid_inference(fit, method = "placebo", alternative = "greater")$p_value
-  p_l <- sdid_inference(fit, method = "placebo", alternative = "less")$p_value
+  # The same seed gives both tests the same placebo assignments.
+  p_g <- sdid_inference(fit, method = "placebo", alternative = "greater",
+                        seed = 1L)$p_value
+  p_l <- sdid_inference(fit, method = "placebo", alternative = "less",
+                        seed = 1L)$p_value
   expect_gte(p_g + p_l, 1 - .Machine$double.eps)
   expect_lte(p_g, 1)
   expect_lte(p_l, 1)
@@ -7095,6 +7099,97 @@ test_that("conformal_inference handles missing observations in MC panels", {
   expect_gte(ci_res$p_value, 0)
   expect_lte(ci_res$p_value, 1)
 })
+
+# ── SDID placebo (Arkhangelsky et al. 2021, Algorithm 4) ─────────────────────
+
+test_that("the SDID placebo refits the estimator with each control as treated", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  inf <- sdid_inference(fit, method = "placebo")
+  expect_named(inf$placebo_effects, colnames(fit$Y_co_pre))
+  # One treated unit: no draws, so the seed plays no part.
+  expect_identical(inf$placebo_effects,
+                   sdid_inference(fit, method = "placebo", seed = 7L)$placebo_effects)
+  controls <- panel[panel$id != "u1", ]
+  ref <- vapply(names(inf$placebo_effects), function(u) {
+    relabelled <- controls
+    relabelled$d <- as.integer(relabelled$id == u & relabelled$time > 10)
+    scm_fit(y ~ d | id + time, data = relabelled, method = "sdid")$estimate
+  }, numeric(1L))
+  expect_equal(inf$placebo_effects, ref, tolerance = 1e-10)
+})
+
+test_that("the SDID placebo is unmoved by unit levels", {
+  # SDID differences out a unit's level, and so does each placebo refit.
+  shifted <- panel
+  shifted$y <- shifted$y + 50 * as.integer(factor(shifted$id))
+  inf0 <- sdid_inference(scm_fit(y ~ d | id + time, data = panel,
+                                 method = "sdid"), method = "placebo")
+  inf1 <- sdid_inference(scm_fit(y ~ d | id + time, data = shifted,
+                                 method = "sdid"), method = "placebo")
+  # Exact in theory; the levels worsen the conditioning of the weight problems,
+  # which the solver's tolerance turns into a difference in the fourth digit.
+  expect_equal(inf1$se, inf0$se, tolerance = 1e-2)
+  expect_equal(inf1$p_value, inf0$p_value)
+})
+
+test_that("the SDID placebo hands the placebo to as many controls as are treated", {
+  multi <- make_panel(N = 14)
+  multi$d <- as.integer(multi$id %in% c("u1", "u2", "u3") & multi$time > 10)
+  fit <- scm_fit(y ~ d | id + time, data = multi, method = "sdid")
+  inf <- sdid_inference(fit, method = "placebo", n_boot = 25L, seed = 3L)
+  expect_length(inf$placebo_effects, 25L)
+  expect_equal(inf$n_controls, 11L)
+  expect_equal(inf$se, sqrt(mean((inf$placebo_effects -
+                                    mean(inf$placebo_effects))^2)))
+  # A placebo set of three is less noisy than a single placebo unit.
+  single <- vapply(seq_len(11L), function(i) {
+    relabelled <- multi[!multi$id %in% c("u1", "u2", "u3"), ]
+    relabelled$d <- as.integer(relabelled$id == unique(relabelled$id)[i] &
+                                 relabelled$time > 10)
+    scm_fit(y ~ d | id + time, data = relabelled, method = "sdid")$estimate
+  }, numeric(1L))
+  expect_lt(inf$se, stats::sd(single))
+
+  # The paper asks for more controls than treated units, no more: with three
+  # treated and four control units each placebo leaves a single donor.
+  few <- make_panel(N = 7)
+  few$d <- as.integer(few$id %in% c("u1", "u2", "u3") & few$time > 10)
+  fit_few <- scm_fit(y ~ d | id + time, data = few, method = "sdid")
+  inf_few <- sdid_inference(fit_few, method = "placebo", n_boot = 10L, seed = 1L)
+  expect_true(all(is.finite(inf_few$placebo_effects)))
+
+  none <- make_panel(N = 6)
+  none$d <- as.integer(none$id %in% c("u1", "u2", "u3") & none$time > 10)
+  fit_none <- scm_fit(y ~ d | id + time, data = none, method = "sdid")
+  expect_error(sdid_inference(fit_none, method = "placebo"),
+               "more never-treated units than treated ones")
+  # Two controls and one treated unit was accepted before and still is.
+  tiny <- make_panel(N = 3)
+  fit_tiny <- scm_fit(y ~ d | id + time, data = tiny, method = "sdid")
+  expect_length(sdid_inference(fit_tiny, method = "placebo")$placebo_effects, 2L)
+})
+
+test_that("sdid_placebo_cpp solves each unit-weight problem with its intercept", {
+  fit  <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  pre  <- fit$Y_co_pre
+  post <- fit$Y_co_post
+  got  <- drop(sdid_placebo_cpp(pre, post, fit$time_weights, fit$zeta2))
+  ref  <- vapply(seq_len(ncol(pre)), function(i) {
+    donors <- pre[, -i, drop = FALSE]
+    omega  <- drop(sdid_unit_weights_cpp(sweep(donors, 2L, colMeans(donors)),
+                                         pre[, i] - mean(pre[, i]), fit$zeta2))
+    sdid_estimate_cpp(donors, post[, -i, drop = FALSE], pre[, i], post[, i],
+                      omega, fit$time_weights)
+  }, numeric(1L))
+  expect_equal(got, ref, tolerance = 1e-5)
+  # A level added to each unit is differenced out.
+  level <- 10 * seq_len(ncol(pre))
+  got_shifted <- drop(sdid_placebo_cpp(sweep(pre, 2L, level, "+"),
+                                       sweep(post, 2L, level, "+"),
+                                       fit$time_weights, fit$zeta2))
+  expect_equal(got_shifted, got, tolerance = 1e-5)
+})
+
 # ── Kalman smoother: diagonal R as a vector ──────────────────────────────────
 
 test_that("kalman_smoother_cpp takes the diagonal of R as a vector", {
@@ -7109,3 +7204,38 @@ test_that("kalman_smoother_cpp takes the diagonal of R as a vector", {
   expect_error(run(rv[-1L]), "N x N matrix or a vector of N variances")
 })
 
+# ── SDID with a single control unit ──────────────────────────────────────────
+
+test_that("SDID fits with a single never-treated unit, as difference-in-differences", {
+  one <- make_panel(N = 2)
+  fit <- scm_fit(y ~ d | id + time, data = one, method = "sdid")
+  expect_equal(unname(fit$unit_weights), 1)
+  # With one donor the unit weight is 1 and the estimate is the lambda-weighted
+  # difference-in-differences against it.
+  Y   <- matrix(one$y, 20, 2)
+  pre <- 1:10
+  ref <- (mean(Y[-pre, 1]) - sum(fit$time_weights * Y[pre, 1])) -
+    (mean(Y[-pre, 2]) - sum(fit$time_weights * Y[pre, 2]))
+  expect_equal(fit$estimate, ref, tolerance = 1e-10)
+
+  # Staggered: one never-treated unit is enough for SDID, not for the others.
+  stag <- make_panel(N = 4)
+  stag$d <- as.integer((stag$id == "u1" & stag$time > 10) |
+                         (stag$id %in% c("u2", "u3") & stag$time > 14))
+  fit_s <- scm_fit(y ~ d | id + time, data = stag, method = "sdid")
+  expect_equal(nrow(fit_s$cohort_estimates), 2L)
+  expect_error(scm_fit(y ~ d | id + time, data = stag, method = "gsc"),
+               "at least 2 never-treated units")
+})
+
+test_that("the SDID bootstrap keeps draws with a single control, as Algorithm 2 does", {
+  # Three controls and three treated units: draws with one control are common
+  # and are now used rather than redrawn.
+  small <- make_panel(N = 6)
+  small$d <- as.integer(small$id %in% c("u1", "u2", "u3") & small$time > 10)
+  fit <- scm_fit(y ~ d | id + time, data = small, method = "sdid")
+  inf <- sdid_inference(fit, method = "bootstrap", n_boot = 40L, seed = 2L)
+  expect_true(all(is.finite(inf$boot_ests)))
+  es <- sdid_event_study(fit, n_boot = 40L, seed = 2L)
+  expect_equal(es$n_boot_valid + es$n_boot_dropped, 40L)
+})

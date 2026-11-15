@@ -118,10 +118,12 @@ the paper's three variance estimators. `"bootstrap"` (Algorithm 2) draws units
 with replacement from the whole panel, treated and control alike, and runs the
 whole estimator again on each draw; `"jackknife"` (Algorithm 3) drops one unit
 at a time with the fitted weights held fixed; `"placebo"` (Algorithm 4)
-reassigns the treatment to control units. The first two need more than one
-treated unit -- the paper notes the jackknife is not even defined with one --
-so a single treated unit calls for `"placebo"`, which assumes the treated and
-control units share a noise level. Staggered fits add `"jackknife_global"`.
+hands the treatment to as many control units as there are treated ones and
+runs the whole estimator again on the controls alone. The first two need more
+than one treated unit -- the paper notes the jackknife is not even defined
+with one -- so a single treated unit calls for `"placebo"`, which assumes the
+treated and control units share a noise level. Staggered fits add
+`"jackknife_global"`.
 The result is `broom`-friendly.
 
 ```{r sdid-inf}

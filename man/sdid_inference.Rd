@@ -21,14 +21,17 @@ sdid_inference(
 (resamples treated and control units), \code{"jackknife"}, or
 \code{"jackknife_global"} (staggered only).}
 
-\item{n_boot}{Number of bootstrap replications (only for \code{method = "bootstrap"}).}
+\item{n_boot}{Number of bootstrap replications for \code{method = "bootstrap"},
+and of placebo assignments for \code{method = "placebo"} when more than one
+unit is treated.}
 
 \item{level}{Confidence level for the interval (all methods).}
 
 \item{alternative}{Direction of the alternative hypothesis: \code{"two.sided"},
 \code{"greater"}, or \code{"less"}.}
 
-\item{seed}{Integer seed for reproducibility (only for \code{method = "bootstrap"}).}
+\item{seed}{Integer seed for reproducibility (\code{method = "bootstrap"}, and
+\code{"placebo"} with more than one treated unit).}
 
 \item{...}{Not used. Passing \code{cluster} raises an error that points to
 \code{\link[=sdid_event_study]{sdid_event_study()}}; any other argument is reported as unused.}
@@ -43,7 +46,9 @@ A list with:
 \item \code{method}: The inference method used.
 \item \code{n_controls}: Number of control units.
 \item \code{alternative}: The alternative hypothesis direction.
-\item \code{placebo_effects}: Named vector of LOO placebo effects (placebo only).
+\item \code{placebo_effects}: The placebo effects (placebo only): one per control
+unit, named by it, when a single unit is treated, and one per placebo
+assignment otherwise.
 \item \code{boot_ests}: Bootstrap estimate distribution (bootstrap only).
 }
 }
@@ -57,7 +62,7 @@ jackknife across every unit of all cohorts.
 \details{
 \strong{\code{method = "bootstrap"}} draws N units with replacement from the whole
 panel, treated and control alike, redrawing a sample with no treated unit
-or fewer than two controls, and runs the whole estimator again on it: the
+or no control unit, and runs the whole estimator again on it: the
 covariate partial-out when the fit has covariates, \eqn{\hat\sigma^2},
 \eqn{\zeta^2} (unless fixed in \code{\link[=scm_fit]{scm_fit()}}), \eqn{\hat\omega} and
 \eqn{\hat\lambda}. A unit drawn twice enters as two units. On a staggered
@@ -79,12 +84,21 @@ further needs two treated units in every cohort. Use \code{"placebo"} for a
 single treated unit; it learns the noise level from the controls and so
 assumes their noise matches the treated units'.
 
-For \code{method = "placebo"}, the p-value is the permutation p-value, while
-the standard error is the dispersion of the placebo distribution
-(Clarke et al. 2024, Algorithm 4) and the confidence interval is the
-normal approximation around the estimate with that SE. The placebo SE
-assumes the treated unit's noise is comparable to the control units';
-interpret it with caution when the donor pool is small.
+\strong{\code{method = "placebo"}} (Algorithm 4) leaves the treated units out. As
+many control units as there are treated ones receive the placebo, and the
+whole estimator runs again on the controls alone -- the same refit the
+bootstrap makes, with \eqn{\hat\omega} and \eqn{\hat\lambda} and their
+intercepts estimated afresh. With one treated unit every control takes the
+placebo in turn, which gives the whole placebo distribution and needs no
+random draws. With several, \code{n_boot} sets of control units are drawn
+without replacement; on a staggered fit they take the treated units'
+adoption dates, so each replicate has the fit's own treatment structure.
+The p-value is the permutation p-value, the standard error is the
+dispersion of the placebo effects, and the confidence interval is the
+normal approximation around the estimate with that SE. It needs more
+never-treated units than treated ones, and it assumes the treated
+units' noise is comparable to the control units'; interpret it with caution
+when the donor pool is small.
 
 \code{\link[=sdid_event_study]{sdid_event_study()}} runs the same bootstrap at the level of clusters of
 units and reports period-by-period effects alongside the ATT.

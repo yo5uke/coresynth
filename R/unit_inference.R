@@ -16,9 +16,9 @@
 # bootstrap draws the treated units within `ctx$strata` (the arms of a
 # multi-arm fit) and the controls separately. With `ctx$pooled` it draws N
 # units from the whole panel and redraws a sample without a treated unit or
-# with fewer than two controls, which is Algorithm 2 of Arkhangelsky et al.
-# (2021). Either way the cohorts are pooled, so cohort sizes vary across
-# draws as in Clarke et al. (2024, Algorithm 2), and the controls drawn serve
+# without a control, which is Algorithm 2 of Arkhangelsky et al. (2021).
+# Either way the cohorts are pooled, so cohort sizes vary across draws as in
+# Clarke et al. (2024, Algorithm 2), and the controls drawn serve
 # every cohort, which keeps the correlation that shared donors induce between
 # the cohort effects. The jackknife drops one unit at a time, treated or
 # control.
@@ -78,7 +78,7 @@
         for (attempt in seq_len(1000L)) {
           pick <- sample.int(length(pool), length(pool), replace = TRUE)
           n_tr <- sum(is_tr[pick])
-          if (n_tr >= 1L && length(pick) - n_tr >= 2L)
+          if (n_tr >= 1L && length(pick) - n_tr >= 1L)
             return(list(co = pool[pick[!is_tr[pick]]],
                         tr = pool[pick[is_tr[pick]]]))
         }

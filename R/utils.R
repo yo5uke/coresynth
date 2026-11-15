@@ -306,9 +306,13 @@ panel_to_matrices <- function(y, d, id, time) {
 #' @param control_group The resolved `control_group` value.
 #' @param pan    The panel (`panel_to_matrices()` or `panel_to_tensor()`).
 #' @param method_label Estimator name for messages.
+#' @param min_controls The fewest never-treated units the estimator can fit
+#'   a cohort with: SDID is defined with a single donor, while the others
+#'   need two to choose between.
 #' @return `control_group`, invisibly; called for its checks.
 #' @noRd
-.check_control_group <- function(control_group, pan, method_label) {
+.check_control_group <- function(control_group, pan, method_label,
+                                 min_controls = 2L) {
   if (isTRUE(pan$is_sharp)) return(invisible(control_group))
   if (identical(control_group, "clean")) {
     warning(
@@ -318,10 +322,12 @@ panel_to_matrices <- function(y, d, id, time) {
       "treated themselves, which biases the cohort effects towards zero. ",
       "Use the default control_group = \"never_treated\".",
       call. = FALSE)
-  } else if (length(pan$idx_control) < 2L) {
+  } else if (length(pan$idx_control) < min_controls) {
     stop(
-      method_label, " staggered adoption needs at least two never-treated ",
-      "units to serve as donors (this panel has ",
+      method_label, " staggered adoption needs at least ",
+      if (min_controls == 1L) "one never-treated unit" else
+        paste(min_controls, "never-treated units"),
+      " to serve as donors (this panel has ",
       length(pan$idx_control), "). A unit that adopts later is itself ",
       "treated during the earlier cohorts' post-treatment windows, so it ",
       "cannot stand in for their untreated outcomes. method = \"mc\" and ",

@@ -32,6 +32,11 @@ void scm_multistart_batch(const std::vector<arma::mat>& X0d,
 //' estimates the leave-one-out SDID effect. The distribution of these
 //' placebo effects provides a permutation-based null distribution for inference.
 //'
+//' The unit weights of each leave-one-out problem are re-estimated with their
+//' intercept, as in the estimator; the time weights and the penalty are the
+//' ones passed in. [sdid_inference()] with `method = "placebo"` re-estimates
+//' those as well, so it does not go through this function.
+//'
 //' @param Y_pre     Control units pre-treatment outcomes (T_pre x N_co)
 //' @param Y_post    Control units post-treatment outcomes (T_post x N_co)
 //' @param time_weights Lambda weights for pre-treatment periods (T_pre x 1)
@@ -50,12 +55,20 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
   const double ridge = zeta2 * T_pre;
   arma::vec placebo_effects(N_co);
 
+  // The unit-weight QP is solved on series demeaned over the pre-treatment
+  // window, which concentrates the intercept omega_0 out of it as the
+  // estimator does (Arkhangelsky et al. 2021, Eq. 2.1). A unit's own mean does
+  // not depend on which unit is left out, so one pass serves every problem.
+  // The difference-in-differences itself is intercept-free and uses Y_pre.
+  arma::mat Yc = Y_pre;
+  Yc.each_row() -= arma::mean(Y_pre, 0);
+
   // Precompute cross-products shared across all N_co leave-one-out problems.
   const arma::vec co_pre_wt_all    = Y_pre.t() * time_weights;
   const arma::vec co_post_mean_all = arma::mean(Y_post, 0).t();
-  const arma::mat G_all            = Y_pre.t() * Y_pre;
+  const arma::mat G_all            = Yc.t() * Yc;
   const bool use_gram              = (T_pre >= n_donors);
-  const arma::mat YYt_all          = use_gram ? arma::mat() : (Y_pre * Y_pre.t());
+  const arma::mat YYt_all          = use_gram ? arma::mat() : (Yc * Yc.t());
   const arma::uvec all_idx         = arma::regspace<arma::uvec>(0, N_co - 1);
 
   const int n_threads = cs_num_threads();
@@ -75,8 +88,8 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
         Q.diag() += ridge;
         unit_w = solve_simplex_ridge_ls_gram(Q, c);
       } else {
-        arma::vec y_tr_pre    = Y_pre.col(i);
-        arma::mat Y_donor_pre = Y_pre.cols(donor_idx);
+        arma::vec y_tr_pre    = Yc.col(i);
+        arma::mat Y_donor_pre = Yc.cols(donor_idx);
         arma::mat AAt         = YYt_all - y_tr_pre * y_tr_pre.t();
         unit_w = solve_simplex_ridge_ls_wide(Y_donor_pre, c, AAt, ridge);
       }

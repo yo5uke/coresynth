@@ -26,3 +26,9 @@ For each control unit, treats it as the "pseudo-treated" unit and
 estimates the leave-one-out SDID effect. The distribution of these
 placebo effects provides a permutation-based null distribution for inference.
 }
+\details{
+The unit weights of each leave-one-out problem are re-estimated with their
+intercept, as in the estimator; the time weights and the penalty are the
+ones passed in. \code{\link[=sdid_inference]{sdid_inference()}} with \code{method = "placebo"} re-estimates
+those as well, so it does not go through this function.
+}

@@ -102,9 +102,9 @@ bootstrap draw enter as distinct unit columns (equivalent to assigning fresh
 unit IDs per draw), and \eqn{\hat\sigma^2}, \eqn{\zeta^2} (unless user-fixed in
 \code{scm_fit()}), unit weights \eqn{\hat\omega}, and time weights \eqn{\hat\lambda} are
 all re-estimated on each draw. Draws in which either the resampled treated
-group or the resampled control group has zero units (or fewer than two
-control units) are discarded; the counts of valid and discarded draws are
-reported in \code{n_boot_valid} and \code{n_boot_dropped}.
+group or the resampled control group has zero units are discarded
+(Arkhangelsky et al. 2021, Algorithm 2); the counts of valid and discarded
+draws are reported in \code{n_boot_valid} and \code{n_boot_dropped}.
 
 Pre-treatment period coefficients are returned and plotted for visual
 inspection of pre-trends only; no joint Wald test is performed because the

@@ -73,6 +73,11 @@ gsc_ife_cpp <- function(Y_co, Y_tr_pre, r, X_co, X_tr_pre, max_iter = 1000L, tol
 #' estimates the leave-one-out SDID effect. The distribution of these
 #' placebo effects provides a permutation-based null distribution for inference.
 #'
+#' The unit weights of each leave-one-out problem are re-estimated with their
+#' intercept, as in the estimator; the time weights and the penalty are the
+#' ones passed in. [sdid_inference()] with `method = "placebo"` re-estimates
+#' those as well, so it does not go through this function.
+#'
 #' @param Y_pre     Control units pre-treatment outcomes (T_pre x N_co)
 #' @param Y_post    Control units post-treatment outcomes (T_post x N_co)
 #' @param time_weights Lambda weights for pre-treatment periods (T_pre x 1)

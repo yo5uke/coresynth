@@ -79,6 +79,45 @@ with covariates, from `method = "tasc"`, and the intervals of
   drops only such units. Panels in which every period has an untreated
   observation and every treated unit an untreated period are unaffected.
 
+- **The placebo of `sdid_inference()` follows Algorithm 4 of Arkhangelsky et
+  al. (2021) and Clarke et al. (2024).** It treated one control unit at a time
+  as the treated one whatever the number of treated units, kept the fit's
+  time weights and penalty, and solved the unit weights without the intercept
+  the estimator has, so it was not the estimator it was meant to reproduce:
+  adding unit fixed effects, which SDID differences out, moved the placebo
+  standard error (0.36, 0.43 and 0.47 for unit levels with standard deviation
+  0, 5 and 50). Its 95% interval covered 0.81 of the time with one treated
+  unit, where the standard error was two-thirds of the estimator's standard
+  deviation, and 0.97-1.00 with 5 or 20, where it was 1.3 to 2.6 times too
+  large. Now as many control units as there are treated ones receive the
+  placebo, and the whole estimator runs again on the controls alone, exactly
+  as on the fit's own data. With one treated unit every control takes the
+  placebo in turn; with several, `n_boot` sets are drawn (reproducible
+  through `seed`), and on a staggered fit they take the treated units'
+  adoption dates. Coverage is 0.975 with one treated unit, 0.945 with five
+  and 0.96 on a staggered fit, with standard errors within 5% of the
+  estimator's standard deviation. `placebo_effects` holds one effect per
+  control unit, named by it, with one treated unit as before, and one per
+  placebo assignment otherwise. The placebo needs more never-treated units
+  than treated ones, as the paper does. It is slower, a full refit per
+  placebo: 1.3 s with 300 control units. `sdid_placebo_cpp()` keeps its
+  fixed time weights and penalty and now solves the unit weights with their
+  intercept.
+
+- **`method = "sdid"` fits with a single control unit, and its bootstrap
+  keeps draws with one.** SDID is defined with one donor, where it is
+  difference-in-differences against that unit, and Algorithm 2 of
+  Arkhangelsky et al. (2021) discards a bootstrap sample only when it has no
+  treated or no control unit. A sharp fit needed two control units, a
+  staggered one two never-treated units, and `sdid_inference()` and
+  `sdid_event_study()` redrew or discarded samples with a single control.
+  The bootstrap distribution changes slightly on panels small enough for
+  such samples to occur; the other estimators still need two.
+
+- **`unit_weights` of a `method = "sdid"` fit is a named numeric vector**, as
+  for the other estimators, instead of a one-column matrix carrying names.
+  The values are unchanged.
+
 - **`method = "tasc"` fits a staggered panel with fewer never-treated units
   than state dimensions, including none.** Its starting values came from the
   never-treated units only, so such a panel stopped with `a dimension is zero`
@@ -144,7 +183,7 @@ with covariates, from `method = "tasc"`, and the intervals of
   treated units drawn. `method = "jackknife"` (Algorithm 3) drops every unit
   in turn with the fitted unit and time weights held fixed. Coverage is now
   0.88-0.97. Both need more than one treated unit and point to
-  `method = "placebo"` otherwise, which is unchanged. This is the same scheme
+  `method = "placebo"` otherwise. This is the same scheme
   `sdid_event_study()` already used, so the two now agree.
 
 - **The jackknife of a staggered fit needs two treated units in every

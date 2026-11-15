@@ -12,7 +12,7 @@
 
 $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{tr,g} \cdot T_{post,g}}$$
 
-- **コントロール群**: `"never_treated"`（既定）= 統制ユニットのみ。`"clean"`（非推奨・警告、次メジャーで削除）= never-treated ＋ 将来採用者。**コホート効果は採用時点からパネル末尾まで平均するので、将来採用者は事後窓の途中で処置済みになり反実仮想を汚染する**（τ=3 で −0.24〜−0.59 のバイアスを実測）。Clarke Algorithm 1・BFR S.2.2 とも、末尾まで推定するなら never-treated に一致する。never-treated が 2 未満なら `.check_control_group()` が明示エラーで MC/TASC へ誘導する。**MC/TASC は `control_group` を持たない**
+- **コントロール群**: `"never_treated"`（既定）= 統制ユニットのみ。`"clean"`（非推奨・警告、次メジャーで削除）= never-treated ＋ 将来採用者。**コホート効果は採用時点からパネル末尾まで平均するので、将来採用者は事後窓の途中で処置済みになり反実仮想を汚染する**（τ=3 で −0.24〜−0.59 のバイアスを実測）。Clarke Algorithm 1・BFR S.2.2 とも、末尾まで推定するなら never-treated に一致する。never-treated が足りなければ（SCM/GSC/SI は 2 未満、SDID は 0。SDID は対照 1 つでも定義される）`.check_control_group(min_controls =)` が明示エラーで MC/TASC へ誘導する。**MC/TASC は `control_group` を持たない**
 - **コホート分割する手法としない手法**: SCM/SDID/GSC/SI はコホートごとに再フィットする。**MC/TASC は補完型**なので再フィットせず、観測マスクが採用時点を表現し単一フィットがそのまま staggered 推定になる。**どちらも集計は同じ Clarke 加重**でなければならない — ユニット等加重にすると事後長の異なるコホートで他手法と別の推定量を返す
 
 ## 推論関数の対応表
@@ -20,7 +20,7 @@ $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{
 | 手法 | sharp 推論 | staggered 推論 |
 |---|---|---|
 | SCM | `mspe_ratio_pval()` | `scm_inference()`（jackknife 既定 / wild bootstrap） |
-| SDID | `sdid_inference()`（4 method 全て。bootstrap・jackknife は N_tr ≥ 2、1 なら placebo）/ `sdid_event_study()`（期間別効果＋クラスタ/ユニット bootstrap） | `sdid_inference()` のみ |
+| SDID | `sdid_inference()`（4 method 全て。bootstrap・jackknife は N_tr ≥ 2、1 なら placebo。placebo は never-treated > N_tr が条件で、N_tr=1 は全対照を列挙、複数なら `n_boot` 組を引く）/ `sdid_event_study()`（期間別効果＋クラスタ/ユニット bootstrap） | `sdid_inference()` のみ |
 | GSC | `gsc_boot()`（Xu Algorithm 2、N_tr が少ないとき）/ `gsc_inference()`（N_tr ≥ 2） | `gsc_inference()` |
 | MC | — | — |
 | TASC | — | — （本パッケージで唯一、推論ツール自体なし） |
@@ -37,7 +37,7 @@ $$\hat\tau = \frac{\sum_g N_{tr,g} \cdot T_{post,g} \cdot \hat\tau_g}{\sum_g N_{
 - `paste0("Donor ", integer(0))` は zero-length が `""` 扱いになり長さ 1 の `"Donor "` を返す → zero-length を保持する `sprintf()` を使う
 - `R CMD INSTALL` 失敗時は旧版に**サイレントロールバック**される。ビルド手順は下記
 - **plot のタイトル・サブタイトルに非 ASCII 文字を入れない**（ギリシャ文字・Unicode マイナス記号等）— UTF-8 でないロケールで `R CMD check --run-donttest` がクラッシュする。マイナスは ASCII ハイフン、ギリシャ文字は綴り（`lambda`/`omega`）で代替する
-- **`cohort_fits` から新しいフィールドを読むときは `[[ ]]`**（`$` は部分マッチする — SDID の `unit_weights` に `unit` が、GSC の `r_cv` に `r` が無言で吸われる）
+- **`cohort_fits` から新しいフィールドを読むときは `[[ ]]`**（`$` は部分マッチする — SDID の `unit_weights` に `unit` が、GSC の `r_cv` に `r` が無言で吸われる）。fit 直下も同じで、staggered fit に無いフィールドを `$` で読むと別のフィールドが返る（`export_json()` で `x$F` が `force` に、`x$se` が `separate_args` に吸われていた）
 - **手法間の解の一致を検証する DGP**: 処置ユニットの予測子ベクトルがドナー凸包の外に出る設計だと、予測子経路の違いが結果に出ず「一致した」ように見える。因子モデル DGP ＋手計算での突き合わせで判定する
 - **OpenMP の並列ループは `num_threads(cs_num_threads())`（`src/threads.h`）で上限を付け、本体を `try/catch` で囲む** — CRAN ポリシーは check 中 2 スレッドまで（`_R_CHECK_LIMIT_CORES_` で自動判定、利用者は `options(coresynth.threads=)`）。例外が OpenMP 領域を抜けると `std::terminate` で R ごと落ちる。`cs_num_threads()` は R の状態を読むので**並列領域の外（メインスレッド）でのみ**呼ぶ。スレッド内では Rcpp 型（`Nullable` 等）も使わない
 - **Formula の項は列名そのものに限る**: `scm_fit()` は `all.vars()` で列名を取り `data` から直接読むので、`log(y)` や `I(t > 1990)` を許すと変換が黙って捨てられる。入口で `is.name()` 検査してエラーにしている

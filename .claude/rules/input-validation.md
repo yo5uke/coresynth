@@ -6,7 +6,7 @@ paths:
 
 # 入力検証
 
-- **`panel_to_matrices()`**（fit 全手法の共通入口）: ①0 行データ ②NA の id/time ③NA の処置指標（従来は該当ユニットが無言で脱落）④負の d ⑤処置ユニットなし ⑥sharp 時コントロールなし、を明示エラー。⑥が **sharp 限定**なのが重要 — staggered で全ユニットが最終的に処置されても MC/TASC は未処置セルから補完できる。コホート再フィット型（SCM/SDID/GSC/SI）の never-treated 2 未満は `.check_control_group()` が手法名つきで明示エラーにする（同関数は `"clean"` の非推奨警告も出す）。`scm_design()` にも 0 行チェック
+- **`panel_to_matrices()`**（fit 全手法の共通入口）: ①0 行データ ②NA の id/time ③NA の処置指標（従来は該当ユニットが無言で脱落）④負の d ⑤処置ユニットなし ⑥sharp 時コントロールなし、を明示エラー。⑥が **sharp 限定**なのが重要 — staggered で全ユニットが最終的に処置されても MC/TASC は未処置セルから補完できる。コホート再フィット型の never-treated 不足（SCM/GSC/SI は 2 未満、SDID は 0 — `min_controls` 引数）は `.check_control_group()` が手法名つきで明示エラーにする（同関数は `"clean"` の非推奨警告も出す）。`scm_design()` にも 0 行チェックと、フィット期間のアウトカム欠損セルの名指しエラー（以前は全候補集合が失敗して「no feasible treatment set found」になっていた）。⑥の「MC は補完できる」は**未処置ユニットが残っている期間に限る** — never-treated 0 のパネルは最終採用時点以降が識別不能で、MC はその期間を警告つきで落とす（`mc.md`）。**処置指標が 1 → 0 に戻るユニットは警告**（採用は吸収的として扱い、推定値は解除なしと同一。データに存在するセルだけで判定するので、採用後の行の欠落は解除と読まない）
 - **`.check_panel_complete()`**: SCM/SDID/GSC/SI の fit 入口で `!is.finite(Y)` セルをユニット・時点つきで明示エラー（従来は `eig_sym(): decomposition failed` 等の C++ エラー）。欠損対応の MC/TASC は呼ばない — MC は O マスクで、TASC は初期化のみ列平均補完（EM 本体は NA のままカルマン + per-unit M-step）で欠損を扱う
 - **`scm_fit()` 型検証**: factor/character の outcome・treatment を拒否（`as.numeric(factor)` はレベルコードを返しデータを無言破壊）。非整数 d も拒否（`as.integer` 切り捨てで 0.9→0 の罠）、coerce は `as.integer(round())`
 - **`build_predictor_matrices()`**: X0/X1 の非有限値を predictor 名つきで即エラー（`pred()` の時間窓にデータがないケースで下流 QP が壊れるのを防止）

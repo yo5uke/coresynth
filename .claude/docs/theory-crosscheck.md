@@ -8,15 +8,15 @@
 | SCM | 座標降下 11 点グリッド・OOS V 選択・低ランク FISTA パス・`proj_simplex` 単調早期 break | Abadie et al. (2010) |
 | GSC | Bai (2009) 反復（集中化 β 更新、収束判定つき）・処置ローディング OLS・反事実構成・加法 FE（Remark 3、within 変換＋残差平均）・Algorithm 2 の parametric bootstrap（残差ベクトル再抽出・LOO 予測誤差） | Xu (2017) |
 | SI-PCR | `Y_pre_co^T` の SVD から疑似逆行列構成（`Pinv = U_k diag(1/S_k) V_k^T`） | Agarwal et al. (2025) §3.3 |
-| MC | Soft-Impute（fill-in + SVD 閾値）アルゴリズム | Mazumder et al. (2010) |
+| MC | Soft-Impute（fill-in + SVD 閾値）アルゴリズム。λ パスの上端は TWFE 残差の最大特異値（MCPanel `mcnnm_lam_range()` と同じ） | Mazumder et al. (2010)・Athey et al. (2021) |
 | TASC | `kalman_smoother_cpp`（Joseph form）・`arma::find_finite` による NA 除外・Algorithm 7 の厳密 M-step（P^s 込み、m0/P0 更新、対角 Q・R）＋欠測セル（観測期間のみ）＋ユニット切片 | Rho et al. (2026)・Shumway & Stoffer (1982) |
 | SCM-Design | base/weakly_targeted/unit_level 3 バリアント（eq.7/9/10 を S 固定下で厳密最適化）・順列検定・共形 CI | Abadie & Zhao (2026) + 付属コード SCDesign |
 | Staggered 加重 | `Σ N_tr,g·T_post,g·τ̂_g / Σ N_tr,g·T_post,g` を全手法で正しく実装 | Clarke et al. (2024) |
-| SDID 推論（sharp） | placebo（時間重み固定・ユニット重み再計算）・bootstrap・jackknife | Clarke et al. (2024) |
-| SDID 推論（staggered） | bootstrap/jackknife/jackknife_global + placebo（never-treated intersection + per-cohort 置換検定） | Clarke et al. (2024) |
+| SDID 推論（sharp） | placebo（Algorithm 4: N_tr 個の対照を疑似処置にして推定量全体を再推定）・bootstrap・jackknife | Arkhangelsky et al. (2021)・Clarke et al. (2024) |
+| SDID 推論（staggered） | bootstrap/jackknife/jackknife_global + placebo（never-treated から N_tr 個を引き、処置ユニットの採用時点を割り当てて全コホート再推定） | Clarke et al. (2024) |
 | SI-PCR 多アーム（sharp） | ユニット因子 v_il の arm 非依存性: コントロール arm SVD 基底を全 arm で共有。加重平均 ATT | Agarwal et al. (2025) §5 |
 | SI-PCR 多アーム + staggered | (g,d) セルの二重加重平均・コホート内 SVD 基底共有・shared donor pool を保つ推論 | Agarwal et al. (2025) §5 + Clarke et al. (2024) |
-| Conformal | 全 T 再推定・moving-block 置換・test inversion CI | Chernozhukov, Wüthrich & Zhu (2021) |
+| Conformal | 全 T 再推定・moving-block 置換・test inversion CI（Algorithm 1 の `p > α`） | Chernozhukov, Wüthrich & Zhu (2021) |
 | SCM 検証ツール | in-time placebo（backdating）・ドナー LOO（V 固定, fn.20）・placebo gap プロット（Fig 4–8, mspe_prune 20/5/2） | ADH (2015)・ADH (2010) §3.4 |
 | SCM staggered | partially pooled SCM（Eq. 6 の ν 目的関数）・intercept shift（Eq. 8–10）・jackknife（App. A.1）・wild bootstrap（Eq. 12 の全ユニット和 ＋ Otsu & Rai 2017 Eq. 8–9 の乗数・中心化。Eq. 13 字面の全ユニット中心化は採らない）・コホート内完全プーリング（**App A.2 の和パラメータ化**: q_pool に n_g、q_sep に n_g²）。原著者実装 augsynth と重み・ν̂ が**不等コホートサイズを含め 4〜5 桁一致**（v1.0.0 でブロック質量を修正。それ以前は等サイズ限定の一致だった） | Ben-Michael, Feller & Rothstein (2022) 本文 + supporting information App A.1/A.2 + 付属コード augsynth・Otsu & Rai (2017) |
 | SCM 共変量 | balance で扱う（ADH 2010 S.2.3 の V 加重予測子）。sharp の `covariates`（partial-out）は明示エラー。**staggered の partial-out は Clarke S.2.2 の借用で BFR S.5.2 の ξ 項ではない**（保留中の申し送り） | Abadie et al. (2010) S.2.3・BFR (2022) S.4/S.5.2 |
@@ -29,7 +29,7 @@
 |---|---|---|
 | SCM | Synth 1.1.10 / tidysynth | ドナー集合一致・重み 0.02 以内。共通目的関数（前処置 MSPE）で coresynth 3.077 < Synth 3.209（multistart の効果）。ADH 予測子指定では公表重みを max\|diff\| 0.0046 で再現（Synth は 0.0170） |
 | 順列検定 | ADH 2010 Fig. 8 | ADH 予測子指定で p=1/39=0.0256 を再現 |
-| SDID | synthdid | −15.6046 vs −15.6038、重み相関 0.9998 |
+| SDID | synthdid | −15.6046 vs −15.6038、重み相関 0.9998。差は synthdid の Frank-Wolfe + sparsify の近似誤差で、coresynth の重みの方が真の最適解に 2〜3 桁近い（`sdid.md`） |
 | Conformal | scinference | p=0.096774 完全一致 |
 | GSC | gsynth / fect | `force` = unit/time/two-way は r=0,1,2 で ATT 1e-15 一致。`"none"` は gsynth が総平均 μ を持つ分だけ違う（Y から総平均を引けば一致）。共変量つき（Xu 式 3 の DGP、30 draws）で ATT 平均差 0.029 |
 | MC | MCPanel / fect | 2.9507 vs 2.9515 / 2.9138（真値 3） |

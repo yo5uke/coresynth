@@ -12,7 +12,7 @@ $$Y_{it}^{(0)} = \delta_t + \theta_t Z_i + \lambda_t \mu_i + \varepsilon_{it}$$
 
 重み推定は入れ子最適化: 外側 = V（予測子重み）の座標降下 / L-BFGS-B / multistart、内側 = simplex QP（FISTA + active-set）。推論は `mspe_ratio_pval()`（sharp、MSPE 比率順列検定）と `scm_inference()`（staggered 専用、jackknife 既定 / wild bootstrap）に分離。検証ツール: `placebo_in_time()`（in-time placebo backdating）・`loo_donors()`（V 固定ドナー LOO）。
 
-**Augmented SCM**（`augment_scm()`、Ben-Michael, Feller & Rothstein 2021, JASA）: sharp SCM fit（`coresynth_scm`）に対するリッジ回帰バイアス補正。ドナー横断のリッジ回帰で事後期間平均を予測するアウトカムモデル `beta_hat` を推定し、`tau_aug = tau_SCM + (m_tr_post - sum_j W_j * m_j_post)` で SCM の事前期間フィット不足を補正する。ペナルティ `lambda_ridge` は既定でコントロールユニット横断の LOO-CV により選択する。staggered SCM の partially pooled fit（2022, JRSS-B）とは別の拡張であり、両者を混同しない。**staggered fit に渡すと「Y_co_pre が無い」という誤誘導なエラーになる**（本来は「staggered 非対応」と言うべき軽微な修正漏れ、保留中）。
+**Augmented SCM**（`augment_scm()`、Ben-Michael, Feller & Rothstein 2021, JASA）: sharp SCM fit（`coresynth_scm`）に対するリッジ回帰バイアス補正。ドナー横断のリッジ回帰で事後期間平均を予測するアウトカムモデル `beta_hat` を推定し、`tau_aug = tau_SCM + (m_tr_post - sum_j W_j * m_j_post)` で SCM の事前期間フィット不足を補正する。ペナルティ `lambda_ridge` は既定でコントロールユニット横断の LOO-CV により選択する。staggered SCM の partially pooled fit（2022, JRSS-B）とは別の拡張であり、両者を混同しない。staggered fit は「sharp 限定」の明示エラー。
 
 **sharp SCM の no-op 引数**: `control_group`・（`predictors = NULL` のときの）`scale_predictors` は受理されて無言で無視される。1.0.0 以前からの全手法共通の設計課題で、まとめて対応する予定。
 
@@ -69,6 +69,7 @@ $$Y_{it}^{(0)} = \delta_t + \theta_t Z_i + \lambda_t \mu_i + \varepsilon_{it}$$
 - **`qp_solver` の既定は `"auto"`（v1.0.0 で切替済み）** = 縮退しうる経路（予測子つき sharp、および `2·T_pre < N_co` の outcomes-only）では `"wolfe"`、それ以外の outcomes-only と自前で QP を解く経路（oos・lambda_pen・bfgs・staggered）では `"active_set"`。outcomes-only で一律 Wolfe にしていた当初案は、座標降下の各内側問題を cold start するため **同一の重みで 3 倍遅く**（Gram 形式の active-set 比では 14 倍）、既定 fit の速度を大きく損ねていた。`2·T_pre ≥ N_co` の規則は Gram 形式の切替と同じ基準で、40 パネルの照合で HEAD 既定と重み・プラセボとも 1e-13 一致を確認済み。単純に既定を `"wolfe"` にすると除外経路が軒並みエラーになるため `"auto"` を挟んでいる。**明示的な `"wolfe"` は除外経路でエラーのまま**（無言の降格をしない）。解決後の値が `fit$qp_solver` に入るので `mspe_ratio_pval()` の placebo バッチが同じソルバを写せる。縮退した予測子指定では単なる tie-break の差にとどまらず、**外側 V 探索が到達する loss 自体が改善する**（N_co=30・予測子 1〜2 本で loss 3.25→2.75 / 3.31→2.79、非ゼロドナー 13→3 / 17→2）。内側解がスパースで安定だと非凸な外側目的が評価しやすくなるため。outcomes-only は非縮退なので機械精度で不変
 - **`v_window`**（sharp SCM 限定）: 外側 V フィットの評価行だけを制限する。X（予測子行列 or outcomes-only の全プリ行）と報告される `loss`（全プリ期間）は不変。`v_selection="oos"` と staggered とは併用不可
 - **OOS V 選択**（`v_selection="oos"`, outcomes-only, Abadie 2021 §3.2 準拠）: プリ期間を訓練半分と検証半分に分割し、W(V) は**訓練半分のみ**でフィットする（検証行を QP に含めると V が検証行に質量を寄せて検証 MSPE を人為的にゼロにできるリークが起こる）。V は検証 MSPE 最小化で選び、最終 W は V* を用いて直近の半分に再フィットする
+- **`lambda_pen = "auto"` はホールドアウトで選ぶ**（Abadie & L'Hour 2021 S.4.2、2026-11-15 に修正）: 候補 λ ごとに W を**訓練期間（プリ期間の前半 floor(T_pre/2)）だけ**で当て、直後の検証期間（後半）の二乗予測誤差で選ぶ。選んだ λ で fit 本来の予測子（全プリ期間、oos なら後半）に当て直す。V は訓練行に対応する部分（in-sample 選択なら V の前半、oos なら訓練行で選ばれた V そのもの）、訓練行に V の質量が無ければ等加重。**以前は当てはめに使った行で MSPE を測っていた**（「out-of-sample」と文書化しながら in-sample）。staggered の per-cohort 経路も同じ関数（`.scm_tune_lambda_pen_outcomes()`）。予測子指定の fit は予測子行列を訓練窓で測り直せないので、行列全体で当てて検証窓だけ後半に限る（`v_selection = "oos"` の予測子経路と同じ扱いで、ここは不変）
 - **予測子 SD スケーリング**（`scale_predictors = TRUE` 既定）: 各予測子を全ユニット横断 SD で除算する。スケールの大きい予測子が V 加重損失を支配するのを防ぐため。W 自体はスケール不変
 
 ## staggered・推論

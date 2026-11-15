@@ -27,3 +27,16 @@
 | k=3・`coord_descent` | 0.47s → **0.02s** | 75.3s → **0.37s** |
 
 **k が小さいほど遅い**という反直感的な性質が旧実装の特徴だった（rank 落ちが深いほど active set が全ドナーから始まり O(m³) の face を踏み続けるため）。現在は k=1 が最速。
+
+## SDID placebo（Algorithm 4）対 synthdid
+
+`sdid_inference(method = "placebo")` は placebo ごとに推定量全体（σ̂²・ζ²・ω・λ と切片）を当て直す。synthdid 0.0.9 の `placebo_se()` と、T=60・T_pre=45 のパネルで 1 placebo あたりの時間を比べた（2026-11-15、`sandbox/32_sdid_placebo_vs_synthdid.R`。synthdid の再推定は 5 回の平均、coresynth は placebo 50 回または全対照の最小値）:
+
+| 設定 | synthdid `placebo_se()` | synthdid の再推定 1 回 | coresynth |
+|---|---|---|---|
+| N_co=40・N_tr=1 | 0.247s | 0.598s | 0.0010s（約 250 倍） |
+| N_co=100・N_tr=1 | 0.939s | 0.910s | 0.0011s（約 850 倍） |
+| N_co=40・N_tr=5 | 0.353s | 0.446s | 0.0010s（約 350 倍） |
+| N_co=100・N_tr=5 | 0.934s | 0.956s | 0.0010s（約 930 倍） |
+
+synthdid は N_co が増えると 1 placebo の時間が伸びる（Frank-Wolfe）が、coresynth はほぼ一定。標準誤差の値そのものは比べていない（乱数が別なので一致しない）。

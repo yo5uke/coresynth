@@ -35,13 +35,16 @@ one-sided tests use the signed mean post-treatment residual.}
 \item{level}{Confidence level for the interval (default 0.95).}
 
 \item{grid}{Optional numeric vector of candidate \eqn{\tau_0} values for test
-inversion. When \code{NULL} (default), a grid of \code{n_grid} points is centred on
-the point estimate with half-width \code{grid_mult} times the pre-treatment
-residual standard deviation.}
+inversion, used as given. When \code{NULL} (default), a grid of \code{n_grid}
+points is centred on the point estimate with half-width \code{grid_mult} times
+the pre-treatment residual standard deviation, and is extended outwards
+while the interval reaches its edge.}
 
-\item{n_grid}{Number of grid points when \code{grid = NULL} (default 200).}
+\item{n_grid}{Number of points in the initial grid when \code{grid = NULL}
+(default 200); the grid returned is longer when the search was extended.}
 
-\item{grid_mult}{Half-width multiplier when \code{grid = NULL} (default 4).}
+\item{grid_mult}{Half-width multiplier of the initial grid when
+\code{grid = NULL} (default 4).}
 
 \item{...}{Unused.}
 }
@@ -62,6 +65,19 @@ moving-block permutation p-value from the estimated residuals. A confidence
 interval is obtained by test inversion over a grid of candidate \eqn{\tau_0}.
 }
 \details{
+The interval collects the candidates whose p-value exceeds \code{1 - level},
+as in Algorithm 1 of the paper, and is reported as the range they span.
+The default grid is only a first guess at where that range lies, so while
+a side of it still ends on an accepted candidate the search moves outwards,
+in steps that double, until the test rejects; the bound is then resolved to
+the spacing of the initial grid. A warning is raised if the search stops
+with a bound still on its edge. That is what happens when the interval is
+unbounded: the permutation p-value is a multiple of \eqn{1/T}, so a panel
+with fewer than \eqn{1/(1 - level)} periods rejects no value at all. A grid
+supplied through \code{grid} is used as given. A one-sided test leaves the side
+of its alternative open by construction, so that bound is the end of the
+grid and is not flagged.
+
 Supported for \strong{sharp} (single-cohort) fits with \code{method} in
 \code{c("scm", "sdid", "gsc", "mc", "si")}. Staggered, multi-arm, and \code{tasc}
 fits are not supported (use \code{sdid_inference()}, \code{gsc_inference()}, or

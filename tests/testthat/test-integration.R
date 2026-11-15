@@ -3465,7 +3465,9 @@ test_that("Phase 24: sdid_inference object inherits coresynth_inference", {
 test_that("conformal_inference works across supported sharp methods", {
   for (m in c("scm", "sdid", "gsc", "mc", "si")) {
     fit <- scm_fit(y ~ d | id + time, data = panel, method = m)
-    ci  <- conformal_inference(fit, n_grid = 60L)
+    # On this panel the interval is wider than the default grid; its width is
+    # tested separately, so the grid-edge warning is muffled here.
+    ci  <- suppressWarnings(conformal_inference(fit, n_grid = 60L))
     expect_s3_class(ci, "conformal_inference")
     expect_s3_class(ci, "coresynth_inference")
     expect_equal(ci$method, "conformal")
@@ -3486,11 +3488,15 @@ test_that("conformal p-value for true effect exceeds p-value for tau0 = 0", {
 
 test_that("conformal CI contains the point estimate", {
   fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
-  ci  <- conformal_inference(fit, n_grid = 120L)
+  ci  <- suppressWarnings(conformal_inference(fit, n_grid = 120L))
   if (!is.na(ci$ci_lower)) {
     expect_true(ci$ci_lower <= fit$estimate && fit$estimate <= ci$ci_upper)
   }
-  expect_true(is.numeric(ci$grid) && length(ci$grid) == 120L)
+  # n_grid is the initial grid; the search extends it while the interval
+  # still reaches its edge.
+  expect_true(is.numeric(ci$grid) && length(ci$grid) >= 120L)
+  expect_false(is.unsorted(ci$grid))
+  expect_length(ci$p_grid, length(ci$grid))
 })
 
 test_that("conformal one-sided alternatives run and tidy()/glance() work", {
@@ -3499,11 +3505,88 @@ test_that("conformal one-sided alternatives run and tidy()/glance() work", {
   ci_l <- conformal_inference(fit, alternative = "less", ci = FALSE)
   expect_true(ci_g$p_value >= 0 && ci_g$p_value <= 1)
   expect_true(ci_l$p_value >= 0 && ci_l$p_value <= 1)
-  td <- broom::tidy(conformal_inference(fit, n_grid = 40L))
+  td <- broom::tidy(suppressWarnings(conformal_inference(fit, n_grid = 40L)))
   expect_equal(td$term, "ATT")
   expect_equal(td$method, "conformal")
-  gl <- broom::glance(conformal_inference(fit, n_grid = 40L))
+  gl <- broom::glance(suppressWarnings(conformal_inference(fit, n_grid = 40L)))
   expect_equal(gl$method, "conformal")
+})
+
+test_that("conformal_inference extends its default grid until the test rejects", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  # The default grid is narrower than the interval on this panel, so the
+  # search has to move outwards on both sides.
+  expect_no_warning(ci <- conformal_inference(fit))
+  expect_gt(length(ci$grid), 200L)
+  expect_gt(ci$ci_lower, min(ci$grid))
+  expect_lt(ci$ci_upper, max(ci$grid))
+  # It is the interval a fixed grid wide enough to hold it gives, to the
+  # spacing of the initial grid.
+  ref  <- conformal_inference(fit, grid = seq(-20, 20, by = 0.01))
+  expect_lt(abs(ci$ci_lower - ref$ci_lower), 0.05)
+  expect_lt(abs(ci$ci_upper - ref$ci_upper), 0.05)
+  # A one-sided test never rejects towards its alternative: that side is the
+  # end of the grid, is not searched, and is not reported as a cut-off.
+  expect_no_warning(
+    ci_g <- conformal_inference(fit, alternative = "greater", n_grid = 60L))
+  expect_equal(ci_g$ci_upper, max(ci_g$grid))
+  expect_gt(ci_g$ci_lower, min(ci_g$grid))
+  expect_no_warning(
+    ci_l <- conformal_inference(fit, alternative = "less", n_grid = 60L))
+  expect_equal(ci_l$ci_lower, min(ci_l$grid))
+  expect_lt(ci_l$ci_upper, max(ci_l$grid))
+})
+
+test_that("conformal_inference warns when the interval is cut off at the grid edge", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  # A grid given by the caller is used as it is.
+  expect_warning(conformal_inference(fit, grid = seq(1, 3, by = 0.1)),
+                 "both confidence bounds sit on the edge of the search grid")
+  # With T periods no p-value is below 1/T, so a short panel rejects nothing
+  # and searching further would not help.
+  short <- make_panel(T = 12, T_pre = 8)
+  fit_s <- scm_fit(y ~ d | id + time, data = short, method = "scm")
+  expect_warning(ci_s <- conformal_inference(fit_s, n_grid = 40L),
+                 "cannot fall below 1/12")
+  expect_length(ci_s$grid, 40L)
+  # An interval the search cannot close is reported as possibly unbounded.
+  fit_i <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  expect_warning(conformal_inference(fit_i, n_grid = 40L),
+                 "may be unbounded")
+})
+
+test_that("conformal_inference keeps the candidates whose p-value exceeds alpha", {
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "scm")
+  # 20 periods: p-values are multiples of 0.05, so both levels put candidates
+  # exactly on alpha, and Algorithm 1 of the paper leaves those out.
+  wide <- seq(-20, 20, by = 0.05)
+  for (lv in c(0.90, 0.95)) {
+    ci <- conformal_inference(fit, level = lv, grid = wide)
+    # The bounds are accepted candidates, and the ones just outside are not.
+    expect_gt(ci$p_grid[ci$grid == ci$ci_lower], 1 - lv + 1e-6)
+    expect_gt(ci$p_grid[ci$grid == ci$ci_upper], 1 - lv + 1e-6)
+    expect_lt(ci$p_grid[which(ci$grid == ci$ci_lower) - 1L], 1 - lv + 1e-6)
+    expect_lt(ci$p_grid[which(ci$grid == ci$ci_upper) + 1L], 1 - lv + 1e-6)
+  }
+  ci90 <- conformal_inference(fit, level = 0.90, grid = wide)
+  ci95 <- conformal_inference(fit, level = 0.95, grid = wide)
+  expect_gt(ci95$ci_upper - ci95$ci_lower, ci90$ci_upper - ci90$ci_lower)
+})
+
+test_that("conformal_inference reuses the donor-side step without changing the refit", {
+  for (m in c("gsc", "si")) {
+    fit  <- scm_fit(y ~ d | id + time, data = panel, method = m)
+    Yco  <- donor_outcomes(fit)
+    y1   <- treated_outcomes(fit)
+    prep <- coresynth:::.conformal_prepare(fit, Yco)
+    expect_false(is.null(prep))
+    expect_equal(coresynth:::.conformal_refit(fit, Yco, y1, prep),
+                 coresynth:::.conformal_refit(fit, Yco, y1),
+                 tolerance = 1e-12)
+  }
+  # Estimators whose refit depends on the treated series throughout have none.
+  fit <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+  expect_null(coresynth:::.conformal_prepare(fit, donor_outcomes(fit)))
 })
 
 test_that("conformal_inference rejects staggered and tasc fits", {
@@ -5360,7 +5443,7 @@ test_that("conformal_inference refits MC under the fit's own model", {
   for (fe in c(TRUE, FALSE)) {
     fit <- scm_fit(y ~ d | id + time, data = panel_lv, method = "mc",
                    fixedeff = fe)
-    ci <- conformal_inference(fit, grid = seq(0, 4, by = 1))
+    ci <- suppressWarnings(conformal_inference(fit, grid = seq(0, 4, by = 1)))
     expect_true(is.finite(ci$p_value))
     expect_gte(ci$p_value, 0)
     expect_lte(ci$p_value, 1)
@@ -7093,7 +7176,8 @@ test_that("conformal_inference handles missing observations in MC panels", {
   p_na$y[p_na$id == "u2" & p_na$time == 5] <- NA_real_
   fit_mc_na <- scm_fit(y ~ d | id + time, data = p_na, method = "mc",
                        lambda = 0.5)
-  ci_res <- conformal_inference(fit_mc_na, ci = TRUE, n_grid = 25L)
+  ci_res <- suppressWarnings(
+    conformal_inference(fit_mc_na, ci = TRUE, n_grid = 25L))
   expect_s3_class(ci_res, "conformal_inference")
   expect_true(is.finite(ci_res$p_value))
   expect_gte(ci_res$p_value, 0)

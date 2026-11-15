@@ -7,6 +7,15 @@ with covariates, from `method = "tasc"`, and the intervals of
 
 ## Performance and computational improvements
 
+- **`conformal_inference()` computes the donor-side step of a GSC or SI refit
+  once instead of at every grid point.** The test inversion refits the
+  counterfactual under each candidate effect, and only the treated series
+  changes between them: for GSC the factors, coefficients and additive effects
+  come from the control units alone, and for SI the counterfactual is linear in
+  the treated series. Confidence intervals are 2 to 17 times faster for GSC
+  (most with covariates) and 2 to 4 times for SI, with the same p-values and
+  bounds; the SI grid moves by rounding error only.
+
 - **TASC no longer builds an N-by-N noise covariance at every EM
   iteration.** The observation noise is diagonal, and the M-step now hands
   its N variances to `kalman_smoother_cpp()` as a vector, which the function
@@ -117,6 +126,30 @@ with covariates, from `method = "tasc"`, and the intervals of
 - **`unit_weights` of a `method = "sdid"` fit is a named numeric vector**, as
   for the other estimators, instead of a one-column matrix carrying names.
   The values are unchanged.
+
+- **`conformal_inference()` returns the interval the test implies rather
+  than the one its grid could hold.** The interval is read off a grid of
+  candidate effects. The default grid, four pre-treatment residual standard
+  deviations either side of the estimate, is too narrow whenever the
+  pre-treatment fit is tight, and a bound on its edge was reported as the
+  bound of the interval: on a 20-period panel the reported interval ended at
+  the grid on both sides for all five estimators, where the SCM one is
+  [-0.5, 4.7]. The default grid is now extended outwards, in steps that
+  double, until the test rejects, and the bound is resolved to the spacing of
+  the initial grid. A warning is raised when a bound is still on the edge:
+  for a grid supplied through `grid`, when the search runs out, and when the
+  panel has fewer than `1 / (1 - level)` periods, where the permutation
+  p-value cannot fall below `1 / T` and no value is rejected. Intervals that
+  were inside the default grid are unchanged; the others widen to their true
+  extent.
+
+- **`conformal_inference()` keeps the candidates whose p-value exceeds
+  `1 - level`**, as Algorithm 1 of Chernozhukov, Wuthrich & Zhu (2021) does,
+  instead of those at or above it. The p-value is a multiple of `1 / T`, so
+  whenever `(1 - level) * T` is an integer some candidates sit exactly on the
+  threshold, and rounding in `1 - level` decided which side they fell on: with
+  20 periods the 90% and 95% intervals came out identical. Intervals at such
+  levels narrow by the candidates on the threshold.
 
 - **`method = "tasc"` fits a staggered panel with fewer never-treated units
   than state dimensions, including none.** Its starting values came from the

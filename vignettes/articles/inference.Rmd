@@ -196,8 +196,10 @@ tidy(conf)
 ```
 
 The p-value tests the sharp null τ0 = 0; the CI is obtained by test inversion
-over a grid. Because the permutation uses |Π| = T cyclic shifts, the smallest
-attainable p-value is 1/T.
+over a grid, which is extended outwards until the test rejects on both sides.
+Because the permutation uses |Π| = T cyclic shifts, the smallest attainable
+p-value is 1/T, so a panel with fewer than 1/(1 - level) periods cannot reject
+any value and the function warns that its interval is unbounded.
 
 ## Assembling a results table
 

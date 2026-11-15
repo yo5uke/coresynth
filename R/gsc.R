@@ -606,7 +606,15 @@ gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
 
   shared <- NULL
   if (identical(ctx$control_group, "never_treated")) {
-    shared <- fit_ctrl(co)
+    # Dropping a treated unit leaves the control units as they are, so the
+    # jackknife asks for the same control-unit fit once per treated unit.
+    cache <- ctx$cache
+    if (!is.null(cache) && identical(co, ctx$co)) {
+      if (is.null(cache$ctrl)) cache$ctrl <- fit_ctrl(co)
+      shared <- cache$ctrl
+    } else {
+      shared <- fit_ctrl(co)
+    }
     if (is.null(shared)) return(NULL)
   }
   est <- w <- numeric(length(cohorts))
@@ -640,7 +648,8 @@ gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
       Y = fit$Y_all, X = fit$covariate_array_all, r = fit$r,
       T_adopt = .adopt_from_cohorts(ncol(fit$Y_all), fit$cohort_fits),
       co = fit$idx_co, tr = tr, control_group = .fit_control_group(fit),
-      force = fit[["force"]] %||% "none"))
+      force = fit[["force"]] %||% "none",
+      cache = new.env(parent = emptyenv())))
   }
   if (is.null(fit$Y_co_all))
     stop("fit does not contain Y_co_all. Re-estimate with the current version.",
@@ -658,7 +667,8 @@ gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
     Y = cbind(fit$Y_co_all, fit$Y_treat), X = X, r = fit$r,
     T_adopt = c(rep(NA_integer_, N_co), rep(fit$T_pre + 1L, N_tr)),
     co = seq_len(N_co), tr = N_co + seq_len(N_tr),
-    control_group = "never_treated", force = fit[["force"]] %||% "none")
+    control_group = "never_treated", force = fit[["force"]] %||% "none",
+    cache = new.env(parent = emptyenv()))
 }
 
 #' Non-parametric Inference for GSC (Xu 2017)

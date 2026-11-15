@@ -25,6 +25,11 @@ how much.
   accepts alongside the full matrix. Building and scanning the matrix was 70%
   of the fit time at 3,000 units. Estimates are identical.
 
+- **The GSC jackknife fits the control units once for all the treated units
+  it drops.** Dropping a treated unit leaves the control units as they were,
+  so `gsc_inference()` asked for the same control-unit fit once per treated
+  unit. Results are identical.
+
 - **Staggered partially pooled SCM (`method = "scm"`), `augment_scm()`, TASC
   (`method = "tasc"`), SDID (`method = "sdid"`), GSC (`method = "gsc"`), and MC
   (`method = "mc"`) eliminate redundant per-iteration and cross-validation work

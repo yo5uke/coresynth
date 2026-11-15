@@ -303,7 +303,7 @@ BEGIN_RCPP
 END_RCPP
 }
 // kalman_smoother_cpp
-Rcpp::List kalman_smoother_cpp(const arma::mat& Y, const arma::mat& W, const arma::mat& A, const arma::vec& C, const arma::mat& Q, const arma::mat& R, const arma::vec& z0, const arma::mat& P0);
+Rcpp::List kalman_smoother_cpp(const arma::mat& Y, const arma::mat& W, const arma::mat& A, const arma::vec& C, const arma::mat& Q, const Rcpp::NumericVector& R, const arma::vec& z0, const arma::mat& P0);
 RcppExport SEXP _coresynth_kalman_smoother_cpp(SEXP YSEXP, SEXP WSEXP, SEXP ASEXP, SEXP CSEXP, SEXP QSEXP, SEXP RSEXP, SEXP z0SEXP, SEXP P0SEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
@@ -313,7 +313,7 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< const arma::mat& >::type A(ASEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type C(CSEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type Q(QSEXP);
-    Rcpp::traits::input_parameter< const arma::mat& >::type R(RSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type R(RSEXP);
     Rcpp::traits::input_parameter< const arma::vec& >::type z0(z0SEXP);
     Rcpp::traits::input_parameter< const arma::mat& >::type P0(P0SEXP);
     rcpp_result_gen = Rcpp::wrap(kalman_smoother_cpp(Y, W, A, C, Q, R, z0, P0));

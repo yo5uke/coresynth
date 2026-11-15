@@ -17,7 +17,9 @@ kalman_smoother_cpp(Y, W, A, C, Q, R, z0, P0)
 
 \item{Q}{State noise covariance (r x r)}
 
-\item{R}{Observation noise covariance (N x N, diagonal in practice)}
+\item{R}{Observation noise covariance: an N x N matrix, or the N
+variances of a diagonal one as a vector, which avoids building and
+scanning the full matrix}
 
 \item{z0}{Initial state mean (r x 1)}
 

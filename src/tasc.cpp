@@ -31,7 +31,9 @@ static arma::mat safe_inv_sympd(const arma::mat& M) {
 //' @param A  State transition matrix (r x r). Pass diag(r) for random-walk dynamics.
 //' @param C  State drift vector (r x 1)
 //' @param Q  State noise covariance (r x r)
-//' @param R  Observation noise covariance (N x N, diagonal in practice)
+//' @param R  Observation noise covariance: an N x N matrix, or the N
+//'   variances of a diagonal one as a vector, which avoids building and
+//'   scanning the full matrix
 //' @param z0 Initial state mean (r x 1)
 //' @param P0 Initial state covariance (r x r)
 //' @return A list with z_smooth, P_smooth, P_cross, z_pred, z_upd.
@@ -45,7 +47,7 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
                                const arma::mat& A,
                                const arma::vec& C,
                                const arma::mat& Q,
-                               const arma::mat& R,
+                               const Rcpp::NumericVector& R,
                                const arma::vec& z0,
                                const arma::mat& P0) {
   int T = Y.n_cols;
@@ -65,8 +67,25 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
   // an r x r solve, and K R K' is a column scaling. Per time step this costs
   // O(N r^2) instead of O(N^3); the filtered moments are the same up to
   // round-off. A general R keeps the direct form.
-  const bool diag_R = R.is_diagmat() && arma::all(R.diag() > 0.0);
-  const arma::vec R_diag = R.diag();
+  // R may also arrive as the vector of those variances.
+  const arma::uword N = W.n_rows;
+  bool R_is_mat = false;
+  if (Rf_isMatrix(R)) {
+    Rcpp::IntegerVector R_dim = R.attr("dim");
+    R_is_mat = ((arma::uword)R_dim[0] == N && (arma::uword)R_dim[1] == N);
+  }
+  const bool R_is_vec = !R_is_mat && (arma::uword)R.size() == N;
+  if (!R_is_mat && !R_is_vec)
+    Rcpp::stop("R must be an N x N matrix or a vector of N variances");
+  // Views on R's memory: no copy of the matrix is made.
+  const arma::mat R_mat = R_is_mat
+    ? arma::mat(const_cast<double*>(R.begin()), N, N, false, true)
+    : arma::mat();
+  const arma::vec R_diag = R_is_vec
+    ? arma::vec(const_cast<double*>(R.begin()), N, false, true)
+    : arma::vec(R_mat.diag());
+  const bool diag_R = (R_is_vec || R_mat.is_diagmat()) &&
+                      arma::all(R_diag > 0.0);
 
   // Cache observation-pattern factors across consecutive periods with the
   // same observed unit set (all pre-treatment periods share one set; all
@@ -116,7 +135,9 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
         }
       }
       if (!gain_ok) {
-        arma::mat R_obs = R.submat(obs_idx, obs_idx);
+        arma::mat R_obs = R_is_vec
+          ? arma::mat(arma::diagmat(R_diag.elem(obs_idx)))
+          : arma::mat(R_mat.submat(obs_idx, obs_idx));
         // Innovation covariance S and Kalman gain K
         arma::mat S = W_obs * P_p * W_obs.t() + R_obs;
         K   = P_p * W_obs.t() * safe_inv_sympd(S);

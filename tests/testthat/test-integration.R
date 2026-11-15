@@ -7095,3 +7095,17 @@ test_that("conformal_inference handles missing observations in MC panels", {
   expect_gte(ci_res$p_value, 0)
   expect_lte(ci_res$p_value, 1)
 })
+# ── Kalman smoother: diagonal R as a vector ──────────────────────────────────
+
+test_that("kalman_smoother_cpp takes the diagonal of R as a vector", {
+  set.seed(1)
+  Y <- matrix(rnorm(60), 6, 10)
+  Y[1, 7:10] <- NA_real_
+  W  <- matrix(rnorm(12), 6, 2)
+  rv <- stats::runif(6, 0.3, 1)
+  run <- function(R) kalman_smoother_cpp(Y, W, diag(2), c(0, 0), diag(0.1, 2),
+                                         R, c(0, 0), diag(2))
+  expect_identical(run(rv), run(diag(rv)))
+  expect_error(run(rv[-1L]), "N x N matrix or a vector of N variances")
+})
+

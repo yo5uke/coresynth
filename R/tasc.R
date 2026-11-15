@@ -106,7 +106,7 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
     A  = diag(r),
     C  = rep(0.0, r),
     Q  = diag(0.1, r),
-    R  = diag(var(as.vector(Y_co_pre)) * 0.5, N),
+    R  = rep(var(as.vector(Y_co_pre)) * 0.5, N),   # diagonal, kept as a vector
     z0 = rep(0.0, r),
     P0 = diag(1.0, r)
   )
@@ -192,7 +192,7 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
     mu           = stats::setNames(par$mu, colnames(Y)),
     C            = par$C,
     Q            = par$Q,
-    R            = par$R,
+    R            = diag(par$R, N),
     z0           = par$z0,
     P0           = par$P0,
     intercept    = isTRUE(intercept),
@@ -341,7 +341,7 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
     A  = A,
     C  = C,
     Q  = Q,
-    R  = diag(pmax(r_var, 1e-6), N),
+    R  = pmax(r_var, 1e-6),
     z0 = m0s,
     P0 = (P0s + t(P0s)) / 2 + diag(1e-8, r)
   )

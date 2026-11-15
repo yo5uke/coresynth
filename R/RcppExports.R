@@ -412,7 +412,9 @@ si_pcr_cpp <- function(Y_pre_co, Y_post_co, Y_pre_tr, k) {
 #' @param A  State transition matrix (r x r). Pass diag(r) for random-walk dynamics.
 #' @param C  State drift vector (r x 1)
 #' @param Q  State noise covariance (r x r)
-#' @param R  Observation noise covariance (N x N, diagonal in practice)
+#' @param R  Observation noise covariance: an N x N matrix, or the N
+#'   variances of a diagonal one as a vector, which avoids building and
+#'   scanning the full matrix
 #' @param z0 Initial state mean (r x 1)
 #' @param P0 Initial state covariance (r x r)
 #' @return A list with z_smooth, P_smooth, P_cross, z_pred, z_upd.

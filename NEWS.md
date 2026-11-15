@@ -7,6 +7,12 @@ with covariates, from `method = "tasc"`, and the intervals of
 
 ## Performance and computational improvements
 
+- **TASC no longer builds an N-by-N noise covariance at every EM
+  iteration.** The observation noise is diagonal, and the M-step now hands
+  its N variances to `kalman_smoother_cpp()` as a vector, which the function
+  accepts alongside the full matrix. Building and scanning the matrix was 70%
+  of the fit time at 3,000 units. Estimates are identical.
+
 - **Staggered partially pooled SCM (`method = "scm"`), `augment_scm()`, TASC
   (`method = "tasc"`), SDID (`method = "sdid"`), GSC (`method = "gsc"`), and MC
   (`method = "mc"`) eliminate redundant per-iteration and cross-validation work

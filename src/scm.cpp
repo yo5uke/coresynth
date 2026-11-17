@@ -67,10 +67,15 @@ static inline void scm_make_factor(const arma::mat& X0, const arma::vec& X1,
 //    fits, where m runs to the size of the donor pool.
 //  * otherwise: the explicit Helmert null-space route on the m x m face Gram,
 //    which is the cheaper of the two once m <= k.
-// Rank truncation is at 1e-9 of the leading eigenvalue of the face Gram in
-// the null-space routes (equivalently sqrt(1e-9) of the leading singular
-// value of the factor): curvature below that carries no statistical
-// information. The caller's dual-feasibility check gates every result.
+// Rank truncation in the null-space routes: active_set_simplex() starts from
+// dense supports and masks active coordinates from the dual check, so it keeps
+// 1e-9 of the leading Gram eigenvalue (sqrt(1e-9) of the leading singular
+// value). wolfe_simplex() grows an affinely independent corral S (|S| <= k+1)
+// and checks unmasked KKT optimality across all donors including S, so
+// truncating at 1e-9 leaves an O(1e-5) stationarity residual on S that fails
+// its 1e-10 KKT gate and triggers cycling/FISTA fallbacks; it therefore passes
+// tight = true (1e-14 on the Gram eigenvalue / 1e-11 on the singular value).
+// The caller's dual-feasibility check gates every result.
 // Bordered-KKT direct solve of the face problem from its Gram G = B_A'B_A and
 // c_A = B_A'b. Fails when the saddle system is singular.
 static bool face_solve_bordered(const arma::mat& G, const arma::vec& cA,
@@ -92,10 +97,12 @@ static bool face_solve_bordered(const arma::mat& G, const arma::vec& cA,
 
 // Explicit Helmert null-space route on the m x m face Gram (see face_solve).
 static bool face_solve_helmert(const arma::mat& G, const arma::vec& cA,
-                               arma::vec& wA, double& mu);
+                               arma::vec& wA, double& mu,
+                               bool tight = false);
 
 static bool face_solve(const arma::mat& BA, const arma::vec& b,
-                       bool cheap_face, arma::vec& wA, double& mu) {
+                       bool cheap_face, arma::vec& wA, double& mu,
+                       bool tight = false) {
   const arma::uword m = BA.n_cols;
   const arma::uword k = BA.n_rows;
 
@@ -133,7 +140,7 @@ static bool face_solve(const arma::mat& BA, const arma::vec& b,
     arma::vec z(m, arma::fill::zeros);
     if (sv.n_elem > 0) {
       double smax = sv.max();
-      double scut = 3.16227766016837933e-5 * smax;   // sqrt(1e-9) * smax
+      double scut = (tight ? 1e-11 : 3.16227766016837933e-5) * smax;
       arma::vec Ur = U.t() * r;
       for (arma::uword i = 0; i < sv.n_elem; i++) {
         Ur(i) = (sv(i) > scut) ? Ur(i) / sv(i) : 0.0;
@@ -146,11 +153,11 @@ static bool face_solve(const arma::mat& BA, const arma::vec& b,
     return true;
   }
 
-  return face_solve_helmert(BA.t() * BA, BA.t() * b, wA, mu);
+  return face_solve_helmert(BA.t() * BA, BA.t() * b, wA, mu, tight);
 }
 
 static bool face_solve_helmert(const arma::mat& G, const arma::vec& cA,
-                               arma::vec& wA, double& mu) {
+                               arma::vec& wA, double& mu, bool tight) {
   const arma::uword m = G.n_rows;
   arma::mat Z_ns = sum_null_basis(m);
   arma::vec w0(m);
@@ -170,7 +177,7 @@ static bool face_solve_helmert(const arma::mat& G, const arma::vec& cA,
   if (fast) {
     double dmin = R.diag().min();
     double dmax = R.diag().max();
-    fast = (dmin > 0.0) && (dmin >= 3.2e-5 * dmax);  // rcond(H) >~ 1e-9
+    fast = (dmin > 0.0) && (dmin >= (tight ? 1e-7 : 3.2e-5) * dmax);
     if (fast) {
       u = arma::solve(arma::trimatu(R), arma::solve(arma::trimatl(R.t()), bz));
     }
@@ -183,7 +190,7 @@ static bool face_solve_helmert(const arma::mat& G, const arma::vec& cA,
     if (ev_max <= 0.0) {
       u = arma::zeros<arma::vec>(m - 1);  // flat face: w0 is stationary
     } else {
-      double cutoff = 1e-9 * ev_max;
+      double cutoff = (tight ? 1e-14 : 1e-9) * ev_max;
       arma::vec bt = evec.t() * bz;
       for (arma::uword i = 0; i < ev.n_elem; i++) {
         bt(i) = (ev(i) > cutoff) ? bt(i) / ev(i) : 0.0;
@@ -397,11 +404,12 @@ static arma::vec fista_simplex(const arma::mat& B, const arma::vec& b,
   const bool presolve = cold && !wolfe;
 
   arma::vec x_as;
-  if (wolfe) {
-    if (wolfe_simplex(B, b, x_as)) return x_as;
-  } else if (!presolve &&
-             active_set_simplex(B, b, arma::find(x > 1e-10), x_as, 100,
-                                cheap_face)) {
+  if (wolfe && wolfe_simplex(B, b, x_as)) {
+    return x_as;
+  }
+  if (!presolve &&
+      active_set_simplex(B, b, arma::find(x > 1e-10), x_as, 100,
+                         cheap_face)) {
     return x_as;
   }
   if (!presolve && use_nnls && nnls_rescue(B, b, x_as)) {
@@ -434,7 +442,7 @@ static arma::vec fista_simplex(const arma::mat& B, const arma::vec& b,
     }
   }
   // A cold start finishes exactly from wherever the gradient method stopped.
-  if (presolve) {
+  if (cold) {
     if (active_set_simplex(B, b, arma::find(x > 1e-10), x_as, 100,
                            cheap_face)) {
       return x_as;
@@ -492,7 +500,7 @@ static bool wolfe_simplex(const arma::mat& B, const arma::vec& b,
       arma::uvec Su = arma::conv_to<arma::uvec>::from(S);
       arma::vec wA;
       double mu;
-      if (!face_solve(B.cols(Su), b, false, wA, mu)) return false;
+      if (!face_solve(B.cols(Su), b, false, wA, mu, true)) return false;
       if (!wA.is_finite()) return false;
       if (wA.min() > 0.0) {          // interior of the face: corral is valid
         alpha = wA / arma::accu(wA);

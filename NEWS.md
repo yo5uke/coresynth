@@ -10,6 +10,21 @@ how much.
 
 ## Performance and computational improvements
 
+- **Predictor-specified SCM (`method = "scm"`) and `mspe_ratio_pval()` no
+  longer fall back to FISTA on ill-conditioned Wolfe faces.** Under the
+  default `"auto"` solver (`"wolfe"` on predictor-specified fits),
+  `face_solve()` previously truncated face-Gram eigenvalues at `1e-9`, leaving
+  stationarity residuals larger than `wolfe_simplex()`'s `1e-10` optimality
+  tolerance on mildly ill-conditioned faces and sending those inner solves
+  through 10,000-iteration FISTA fallbacks. `wolfe_simplex()` now calls
+  `face_solve()` with a tighter rank cutoff (`1e-14` on eigenvalues, `1e-11`
+  on singular values), and `fista_simplex()` falls back to warm-started
+  `active_set_simplex()` before resorting to FISTA and polishes cold starts on
+  exit. The Proposition 99 8-predictor fit and placebo test drops from ~8.5 s
+  to ~1.0 s (and synthetic `N_co = 60`, `k = 6` multi-start placebos from
+  ~10.4 s to ~0.7 s), while outcomes-only and `qp_solver = "active_set"` fits
+  keep their exact paths and timings.
+
 - **`conformal_inference()` computes the donor-side step of a GSC or SI refit
   once instead of at every grid point.** The test inversion refits the
   counterfactual under each candidate effect, and only the treated series

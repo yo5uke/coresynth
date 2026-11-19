@@ -392,7 +392,8 @@ static bool wolfe_simplex(const arma::mat& B, const arma::vec& b,
 // the gradient solve it replaced. A cold start therefore runs the gradient
 // method first and hands its support to the exact solver at the end: the
 // result is the same KKT-verified optimum, reached from a support of the
-// right size. Wolfe grows its corral from one donor, so it needs no presolve.
+// right size. Wolfe grows its corral from one donor and runs before any of
+// this; when it fails on a cold start, the same presolve applies.
 static arma::vec fista_simplex(const arma::mat& B, const arma::vec& b,
                                double L, arma::vec x,
                                int max_iter = 10000, double tol = 1e-6,

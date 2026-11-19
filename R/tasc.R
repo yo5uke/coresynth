@@ -100,13 +100,16 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
     W_full[idx_rest, ] <- t(L_tr)
   }
 
+  r_init <- stats::var(as.vector(Y_co_pre)) * 0.5
+  if (!is.finite(r_init) || r_init < 1e-6) r_init <- 1e-6
+
   par <- list(
     mu = mu,
     W  = W_full,
     A  = diag(r),
     C  = rep(0.0, r),
     Q  = diag(0.1, r),
-    R  = rep(var(as.vector(Y_co_pre)) * 0.5, N),   # diagonal, kept as a vector
+    R  = rep(r_init, N),   # diagonal, kept as a vector
     z0 = rep(0.0, r),
     P0 = diag(1.0, r)
   )

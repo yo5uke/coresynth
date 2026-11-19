@@ -102,8 +102,15 @@
       crossprod(X_w[, keep, drop = FALSE], y_w)))
 
   Y_tilde <- Y
-  for (k in seq_len(p))
-    Y_tilde <- Y_tilde - X_arr[, , k] * beta_hat[k]
+  for (k in which(keep)) {
+    Xk <- X_arr[, , k]
+    if (any(!is.finite(Xk))) {
+      cov_names <- dimnames(X_arr)[[3L]] %||% paste0("covariate ", seq_len(p))
+      stop("Covariate '", cov_names[k], "' contains missing or non-finite values.",
+           call. = FALSE)
+    }
+    Y_tilde <- Y_tilde - Xk * beta_hat[k]
+  }
 
   list(Y_tilde = Y_tilde, beta_hat = beta_hat)
 }

@@ -16,7 +16,7 @@ the penalty by leave-one-out cross-validation on the control units.}
 A list with:
 \itemize{
 \item \code{att_aug}: Augmented ATT estimate
-\item \code{delta}: Bias correction term (m_tr_post - sum_j W_j m_j_post)
+\item \code{delta}: Counterfactual bias correction term (m_tr_post - sum_j W_j m_j_post)
 \item \code{att_scm}: Original SCM ATT for comparison
 \item \code{lambda_ridge}: Ridge penalty used
 \item \code{beta_hat}: Ridge regression coefficients (length T_pre)
@@ -28,9 +28,10 @@ following Ben-Michael, Feller & Rothstein (2021, JASA). The corrected
 estimator is:
 }
 \details{
-tau_aug = tau_SCM + (m_tr_post - sum_j W_j * m_j_post)
+tau_aug = tau_SCM - (m_tr_post - sum_j W_j * m_j_post)
 
-where m_i_post = Y_pre_i' beta_hat is the ridge outcome model prediction
-for unit i's mean post-treatment outcome, and beta_hat is estimated by
-ridge regression across control units.
+where m_i_post = beta_0 + Y_pre_i' beta_hat is the ridge outcome model
+prediction for unit i's mean post-treatment outcome, and (beta_0, beta_hat)
+are estimated by ridge regression with an unpenalized intercept across
+control units.
 }

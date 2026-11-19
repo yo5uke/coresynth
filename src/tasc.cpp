@@ -124,14 +124,16 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
       }
       arma::vec y_obs = y_t.elem(obs_idx);
 
-      arma::mat K, KRK;
       bool gain_ok = false;
       if (diag_R) {
-        gain_ok = arma::solve(K, I_r + P_p * WtRiW, P_p * WtRi);
+        arma::mat G;
+        gain_ok = arma::solve(G, I_r + P_p * WtRiW, P_p);
         if (gain_ok) {
-          arma::mat KR = K;
-          KR.each_row() %= r_obs.t();
-          KRK = KR * K.t();
+          // K = G * WtRi: update state and Joseph covariance in O(r*n_obs + r^3)
+          // without materialising the r x n_obs gain matrix K.
+          z_curr = z_p + G * (WtRi * y_obs - WtRiW * z_p);
+          arma::mat IKW = I_r - G * WtRiW;
+          P_curr = IKW * P_p * IKW.t() + G * WtRiW * G.t();
         }
       }
       if (!gain_ok) {
@@ -139,17 +141,13 @@ Rcpp::List kalman_smoother_cpp(const arma::mat& Y,
           ? arma::mat(arma::diagmat(R_diag.elem(obs_idx)))
           : arma::mat(R_mat.submat(obs_idx, obs_idx));
         // Innovation covariance S and Kalman gain K
-        arma::mat S = W_obs * P_p * W_obs.t() + R_obs;
-        K   = P_p * W_obs.t() * safe_inv_sympd(S);
-        KRK = K * R_obs * K.t();
+        arma::mat S   = W_obs * P_p * W_obs.t() + R_obs;
+        arma::mat K   = P_p * W_obs.t() * safe_inv_sympd(S);
+        arma::mat KRK = K * R_obs * K.t();
+        z_curr = z_p + K * (y_obs - W_obs * z_p);
+        arma::mat IKW = I_r - K * W_obs;
+        P_curr = IKW * P_p * IKW.t() + KRK;
       }
-
-      // State update
-      z_curr = z_p + K * (y_obs - W_obs * z_p);
-
-      // Covariance update — Joseph form for numerical stability
-      arma::mat IKW = I_r - K * W_obs;
-      P_curr = IKW * P_p * IKW.t() + KRK;
 
       // Enforce symmetry
       P_curr = 0.5 * (P_curr + P_curr.t());

@@ -68,8 +68,8 @@ static bool soft_impute_fe_core(const arma::mat& Y, const arma::mat& O,
 
     double denom = std::max(norm_L, 1e-12);
     double rel_change = arma::norm(L_new - L, "fro") / denom;
-    L = L_new;
-    norm_L = (r_pos == 0) ? 0.0 : arma::norm(L, "fro");
+    L.swap(L_new);
+    norm_L = (r_pos == 0) ? 0.0 : arma::norm(D_thresh.head(r_pos), 2);
 
     if (iter > 0 && rel_change < tol) break;
   }
@@ -190,8 +190,9 @@ arma::mat mc_cv_cpp(const arma::mat& Y_obs, const Rcpp::List& keep_list,
       if (held_folds[k].n_elem == 0) continue;
       arma::mat L, M;
       arma::vec a, b;
-      soft_impute_fe_core(Y_obs, O_folds[k], lambdas(i), estimate_fe,
-                          1000, 1e-5, 5, L, a, b, M);
+      bool ok = soft_impute_fe_core(Y_obs, O_folds[k], lambdas(i), estimate_fe,
+                                    1000, 1e-5, 5, L, a, b, M);
+      if (!ok) continue;
       arma::vec diff = Y_obs.elem(held_folds[k]) - M.elem(held_folds[k]);
       err(k, i) = arma::mean(arma::square(diff));
     } catch (...) {

@@ -6630,7 +6630,12 @@ test_that("SDID unit weights solve the same QP with or without forming Q", {
   w  <- sdid_unit_weights_cpp(Y_pre, y_tr, zeta2)
   Q  <- crossprod(Y_pre) + diag(zeta2 * nrow(Y_pre), ncol(Y_pre))
   w_ref <- solve_simplex_qp(Q, crossprod(Y_pre, y_tr))
-  expect_equal(drop(w), drop(w_ref), tolerance = 1e-8)
+  a_bar <- rowMeans(Y_pre)
+  Yc    <- Y_pre - a_bar
+  Qc    <- crossprod(Yc) + diag(zeta2 * nrow(Y_pre), ncol(Y_pre))
+  w_ref_c <- solve_simplex_qp(Qc, crossprod(Yc, y_tr - a_bar))
+  expect_equal(drop(w), drop(w_ref), tolerance = 1e-5)
+  expect_equal(drop(w), drop(w_ref_c), tolerance = 1e-8)
 })
 
 # ── SDID Event Study with Cluster / Unit Bootstrap ───────────────────────────
@@ -7446,7 +7451,7 @@ test_that("the SDID bootstrap keeps draws with a single control, as Algorithm 2 
 })
 
 test_that("SDID weights are invariant to large unit fixed effects and common time trends", {
-  base <- make_panel(N = 12, TT = 20, T_pre = 10)
+  base <- make_panel(N = 12, T = 20, T_pre = 10)
   fit0 <- scm_fit(y ~ d | id + time, data = base, method = "sdid")
 
   # Add large unit-level offsets (+1e4 * unit_idx) and large common time trend (+1e4 * time)
@@ -7462,21 +7467,21 @@ test_that("SDID weights are invariant to large unit fixed effects and common tim
 
 test_that("scm_design unit_level solves eq. 10 exactly when m > k and guards T0 == max(time)", {
   # k = 1 predictor (T_fit = 1) with m = 2 treated units => rank(X_S) = 1 < m
-  # Unit values at t = 1: u1 = 1, u2 = 2, u3 = 0, u4 = 1.8; X_bar = 1.2
   # With T0 = 2 and T = 3, verify T0 == max(time) errors cleanly.
   dat <- expand.grid(time = 1:3, id = paste0("u", 1:5))
   x1  <- c(u1 = 1.0, u2 = 2.0, u3 = 0.0, u4 = 1.5, u5 = 3.0)
   dat$y <- x1[dat$id] + 0.1 * dat$time
 
   res <- scm_design(dat, outcome = "y", unit = "id", time = "time",
-                    T0 = 2, T_fit = 1, m = 2, method = "unit_level", xi = 1)
+                    T0 = 2, T_fit = 1, m_min = 2L, m_max = 2L,
+                    design = "unit_level", xi = 1)
   expect_true(is.finite(res$objective))
   expect_equal(sum(res$w), 1, tolerance = 1e-6)
   expect_equal(sum(res$v), 1, tolerance = 1e-6)
 
   expect_error(
     scm_design(dat, outcome = "y", unit = "id", time = "time",
-               T0 = 3, m = 1, method = "base"),
+               T0 = 3, m_min = 1L, m_max = 1L, design = "base"),
     "No experimental periods"
   )
 })

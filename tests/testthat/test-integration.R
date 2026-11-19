@@ -1451,7 +1451,13 @@ test_that("scm_design unit_level: large xi shifts the selected treated set", {
                        m_min = 2L, m_max = 2L, design = "unit_level", xi = 0.1)
   fit_hi <- scm_design(df, "y", "unit", "time", T0 = 14L, T_fit = 10L,
                        m_min = 2L, m_max = 2L, design = "unit_level", xi = 100)
-  expect_false(setequal(fit_lo$treated_units, fit_hi$treated_units))
+  support <- function(fit) sort(names(fit$w)[fit$w > 1e-8])
+  expect_false(identical(support(fit_lo), support(fit_hi)))
+  # At xi = 100 all weight sits on u4, so every pair {u4, x} whose u4 fit
+  # leaves x out ties exactly; the first enumerated pair is kept on every
+  # platform rather than whichever rounding favours.
+  expect_equal(support(fit_hi), "u4")
+  expect_equal(fit_hi$treated_units, c("u1", "u4"))
 })
 
 test_that("scm_design custom population weights f are normalised and applied", {

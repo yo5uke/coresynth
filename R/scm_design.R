@@ -383,7 +383,12 @@ scm_design <- function(
 
       if (is.null(w_sub) || is.null(v_sub) || is.na(obj)) next
 
-      if (obj < best_obj) {
+      # Sets that differ only by a zero-weight unit reach the same objective
+      # exactly, so a strict `<` would let rounding pick the winner and the
+      # reported set would vary across BLAS builds. Treat a relative gap below
+      # 1e-10 as a tie and keep the set enumerated first (smaller m first).
+      if (is.infinite(best_obj) ||
+          obj < best_obj - 1e-10 * max(1, abs(best_obj))) {
         best_obj         <- obj
         best_treated_idx <- S
         w_full           <- numeric(J); w_full[S]    <- w_sub

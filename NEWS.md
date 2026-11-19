@@ -35,6 +35,13 @@ Other estimates are unchanged up to rounding.
   `X_S' X_S`, which drops part of it when that matrix is singular. The
   quadratic program is now solved directly.
 
+- **`scm_design()` returns the same treated set on every platform when
+  candidate sets tie.** Sets that differ only by a unit with zero weight reach
+  exactly the same objective, which happens often under `design =
+  "unit_level"` with a large `xi`; which one was reported depended on
+  rounding. A relative difference below 1e-10 now counts as a tie, and the
+  set enumerated first (the smaller one first) is kept.
+
 - **`scm_design()` stops with "No experimental periods found after T0" when
   `T0` is the last period**, instead of indexing past the end of the panel.
 

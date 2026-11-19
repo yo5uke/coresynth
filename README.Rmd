@@ -114,8 +114,8 @@ data.frame(
 
 | Method | Full name | Reference | Treatment | Covariates | Inference |
 |--------|-----------|-----------|-----------|:----------:|-----------|
-| `scm`  | Synthetic Control Method | Abadie, Diamond & Hainmueller (2010); staggered: Ben-Michael, Feller & Rothstein (2022) | Sharp & Staggered | `pred()` list | `mspe_ratio_pval()`, `scm_inference()`, `conformal_inference()` |
-| `sdid` | Synthetic Difference-in-Differences | Arkhangelsky et al. (2021) | Sharp & Staggered | `covariates=` | `sdid_inference()`, `conformal_inference()` |
+| `scm`  | Synthetic Control Method | Abadie, Diamond & Hainmueller (2010); staggered: Ben-Michael, Feller & Rothstein (2022) | Sharp & Staggered | `pred()` list | `mspe_ratio_pval()`, `scm_rank_pval()`, `scm_inference()`, `conformal_inference()` |
+| `sdid` | Synthetic Difference-in-Differences | Arkhangelsky et al. (2021) | Sharp & Staggered | `covariates=` | `sdid_inference()`, `sdid_event_study()`, `conformal_inference()` |
 | `gsc`  | Generalized Synthetic Control | Xu (2017) | Sharp & Staggered | `covariates=` time-varying | `gsc_boot()`, `gsc_inference()`, `conformal_inference()` |
 | `mc`   | Matrix Completion | Athey et al. (2021) | Sharp & Staggered | — | `conformal_inference()` |
 | `tasc` | Time-Aware Synthetic Control | Rho et al. (2026) | Sharp & Staggered | — | — |
@@ -338,6 +338,8 @@ Windows 11 / R 4.6.1.
 |---|---:|---:|---:|---:|
 | 40 donors, 2 yr pre / 5 mo post   | 5.8 s | 3 ms  | 3.5 min  | 12 ms |
 | 100 donors, 8 yr pre / 2 yr post (monthly) | 70 s  | 20 ms | ~97 min | 0.4 s |
+
+Predictor-specified SCM (`pred()`) stays fast on large donor pools as well (e.g., 240 donors, 3 predictors: 50 ms fit, 2.1 s full in-space placebo test across all 240 donors). For SDID, full Algorithm 4 placebo re-estimation (`sdid_inference(method = "placebo")`) runs in ~1 ms per placebo across 40–100 controls — 250–930× faster than `synthdid` 0.0.9 on the same 60-period panels.
 
 ## References
 

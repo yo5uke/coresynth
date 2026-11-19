@@ -1,4 +1,4 @@
-# coresynth (development version)
+# coresynth 1.2.0
 
 A review of the GSC, TASC, SI, SDID and MC (Matrix Completion) code against
 their papers and against gsynth/fect/MCPanel. Estimates from `method = "gsc"`

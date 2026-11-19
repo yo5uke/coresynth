@@ -29,11 +29,12 @@ static arma::mat gsc_demean(const arma::mat& M, const GscFe& fe) {
   return out;
 }
 
-// Rank-r factors and loadings of M from its SVD; r = 0 gives empty ones.
+// Rank-r factors and loadings of M from its SVD; r = 0 gives empty ones but
+// still the singular values, which the fit reports for every r.
 static void gsc_factors(const arma::mat& M, int r, arma::mat& U, arma::vec& D,
                         arma::mat& V, arma::mat& F, arma::mat& L) {
   if (r == 0) {
-    D.reset();
+    if (!arma::svd(D, M)) D.reset();
     F = arma::zeros(M.n_rows, 0);
     L = arma::zeros(M.n_cols, 0);
     return;
@@ -238,18 +239,19 @@ Rcpp::List gsc_ife_cpp(const arma::mat& Y_co,
       XtMX.diag() += ridge;
       arma::vec beta_new = arma::solve(XtMX, XtMY);
 
+      // Factors given beta: truncated SVD of Y_tilde = Y_d - X_d * beta
+      arma::mat Y_tilde = Y_d;
+      for (int j = 0; j < p; j++)
+        Y_tilde -= X_d.slice(j) * beta_new(j);
+      gsc_factors(Y_tilde, r, U, D, V, F, L_co);
+
+      // Without factors M_F = I, so beta is the closed-form within estimator.
       if (r == 0) {
         beta      = beta_new;
         n_iter    = 1;
         converged = true;
         break;
       }
-
-      // Factors given beta: truncated SVD of Y_tilde = Y_d - X_d * beta
-      arma::mat Y_tilde = Y_d;
-      for (int j = 0; j < p; j++)
-        Y_tilde -= X_d.slice(j) * beta_new(j);
-      gsc_factors(Y_tilde, r, U, D, V, F, L_co);
 
       double delta = arma::norm(beta_new - beta_old, 2) /
                      (1.0 + arma::norm(beta_old, 2));

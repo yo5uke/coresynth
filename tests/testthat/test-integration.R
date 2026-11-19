@@ -7130,6 +7130,26 @@ test_that("GSC additive effects with r = 0 reduce to the imputation by fixed eff
                        r = 0L), "positive integer")
 })
 
+test_that("GSC with r = 0 and covariates is the two-way within estimator", {
+  p   <- .xu_cov_panel()
+  TT  <- nrow(p$Y)
+  Xco <- array(c(p$X1[, p$co], p$X2[, p$co]), c(TT, length(p$co), 2))
+  Xtr <- array(c(p$X1[seq_len(p$T0), p$tr], p$X2[seq_len(p$T0), p$tr]),
+               c(p$T0, length(p$tr), 2))
+  res <- gsc_ife_cpp(p$Y[, p$co], p$Y[seq_len(p$T0), p$tr], 0L, Xco, Xtr,
+                     force = "two-way")
+  within <- function(M) sweep(sweep(M, 1, rowMeans(M)), 2, colMeans(M)) + mean(M)
+  y_d <- as.vector(within(p$Y[, p$co]))
+  X_d <- cbind(as.vector(within(p$X1[, p$co])), as.vector(within(p$X2[, p$co])))
+  beta <- drop(solve(crossprod(X_d), crossprod(X_d, y_d)))
+  expect_true(res$converged)
+  expect_equal(res$n_iter, 1L)
+  expect_equal(drop(res$beta), beta, tolerance = 1e-8)
+  # singular values are reported for r = 0 too, from the final residual panel
+  E_d <- matrix(y_d - drop(X_d %*% beta), TT)
+  expect_equal(drop(res$singular_values), svd(E_d)$d, tolerance = 1e-8)
+})
+
 test_that("GSC refits keep the additive effects the fit used", {
   fit <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "gsc", r = 1L,
                  force = "two-way")

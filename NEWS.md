@@ -1,62 +1,78 @@
 # coresynth (development version)
 
+`augment_scm()` estimates change for every fit whose SCM weights leave an
+imbalance in the pre-treatment outcomes: the bias correction now has the
+correct sign. SDID weights move within the solver tolerance on well-scaled
+panels and become accurate on panels with large unit levels or common trends.
+Other estimates are unchanged up to rounding.
+
 ## Bug fixes
 
-- **`augment_scm()` subtracts the estimated bias correction and includes an
-  unpenalized intercept.** Following Ben-Michael, Feller & Rothstein (2021,
-  JASA), the augmented estimator now computes `tau_aug = tau_SCM - delta` rather
-  than adding `delta`, and centers donor pre-treatment outcomes and
-  post-treatment means in both the ridge regression and `.cv_ridge_scm()`
-  leave-one-out cross-validation. Estimates change whenever `delta != 0`
-  (removing the sign-inverted bias correction, e.g., when a treated unit lies
-  outside the donor convex hull) or when outcomes are not centered, and
-  `att_aug` and `beta_hat` are now invariant to constant outcome level shifts.
+- **`augment_scm()` applied its bias correction with the wrong sign.** Ridge
+  ASCM (Ben-Michael, Feller & Rothstein 2021, Eq. 5) estimates the
+  counterfactual as the SCM counterfactual plus
+  `delta = m_tr - sum_j W_j m_j`, so the effect is `tau_SCM - delta`. Earlier
+  versions computed `tau_SCM + delta`, which doubled the SCM bias instead of
+  removing it: with a treated unit outside the donor hull and a true effect of
+  1.5, SCM gives 5.30, the old `att_aug` 8.68 and the corrected one 1.91. The
+  outcome model now also has an unpenalized intercept (control-unit
+  centering, as in S.4 of the paper), both in the ridge fit and in the
+  leave-one-out choice of `lambda_ridge`, so `beta_hat` and `att_aug` no
+  longer depend on the outcome's level. Given the same SCM weights,
+  `att_aug` matches augsynth's Ridge ASCM to 1e-13.
 
-- **SDID simplex ridge solves are invariant to large unit and time offsets.**
-  `solve_simplex_ridge_ls()` shifts each row by its mean (`(A - a_bar 1', b - a_bar)`),
-  an exact identity on the unit simplex, and `sdid_placebo_cpp()` double-demeans
-  `Y_pre` so large unit fixed effects or common time trends no longer inflate
-  the FISTA Lipschitz bound and trigger premature stopping. Estimates and
-  weights on poorly scaled panels stay consistent across large shifts.
+- **SDID unit and time weights are accurate on panels with large levels or
+  trends.** The weight problems of `method = "sdid"` (and the leave-one-out
+  placebos of `sdid_placebo_cpp()`) are now solved after subtracting each
+  row's mean, which leaves the objective unchanged because the weights sum to
+  one. Without it, unit levels or a common time trend inflated the step-size
+  bound and the solver stopped early: with levels of 50, the unit weights
+  were off by up to 1e-3 and are now within 5e-7 of the exact solution.
 
-- **`scm_design(design = "unit_level")` solves eq. (10) directly when `m > k`.**
-  Instead of projecting the linear loss term through `(X_S' X_S)^{-1} X_S'`,
-  which dropped components in the nullspace of `X_S` when the treated set size
-  exceeded the number of predictors, it now calls `solve_simplex_qp()` directly
-  on `G = X_S' X_S` and `c = X_S' X_bar - (xi / 2) * loss_j`. `scm_design()`
-  also checks `T0 >= max(time)` before indexing experimental periods.
+- **`scm_design(design = "unit_level")` solves Eq. (10) exactly when a
+  candidate set has more units than predictors.** The penalty term on each
+  unit's own fit was folded into the target through a regularized inverse of
+  `X_S' X_S`, which drops part of it when that matrix is singular. The
+  quadratic program is now solved directly.
 
-- **Additional edge-case guards and input validation:**
-  - `fit_gsc_cpp()` rejects non-finite `r` (`NA`/`NaN`/`Inf`) and
-    missing/non-finite covariates; `gsc_boot()` requires at least 2 control
-    units.
-  - `.sdid_partial_out_staggered()` validates covariate finiteness on active
-    (unabsorbed) covariates with an informative error.
-  - `fit_tasc_cpp()` floors initial `R` at `1e-6` when pre-treatment control
-    variance is zero or non-finite.
-  - `mc_cv_cpp()` skips folds where `soft_impute_fe_core()` fails to converge.
-  - `.unit_inference()` warns when jackknife replicates fail (`NA`) and are
-    omitted.
-  - `scm_placebo_x_cpp()` constructs the `donors` index vector inside the
-    OpenMP `try` block.
+- **`scm_design()` stops with "No experimental periods found after T0" when
+  `T0` is the last period**, instead of indexing past the end of the panel.
+
+- **Clearer errors and guards:**
+  - `scm_fit(method = "gsc")` rejects `r = NA`, `NaN` or `Inf`, and covariates
+    with missing or non-finite values. `gsc_boot()` requires at least two
+    control units.
+  - `scm_fit(method = "sdid")` and staggered `method = "scm"` with
+    `covariates` name the covariate that has missing or non-finite values,
+    instead of carrying them into the adjusted outcomes.
+  - `scm_fit(method = "tasc")` keeps the initial noise variance at least
+    `1e-6` when the controls' pre-treatment outcomes are constant.
+  - `scm_fit(method = "mc")` leaves out of the `lambda` cross-validation a
+    fold whose SVD fails, instead of scoring its partial result.
+  - The jackknife of `sdid_inference()`, `gsc_inference()` and
+    `si_inference()` warns with the number of replications that failed and
+    were left out; it used to drop them silently.
+  - `scm_placebo_x_cpp()` (the placebo test of predictor-specified fits)
+    builds each donor set inside its error handler, so a failure marks that
+    placebo `NA` instead of ending the R session.
 
 ## Performance improvements
 
-- **`method = "scm"` and `scm_rank_pval()` eliminate redundant solver work:**
-  `fista_simplex()` uses the cold active-set presolve even when `wolfe = TRUE`;
-  `wolfe_simplex()` rejects zero step sizes (`theta <= 0`) to avoid cycling;
-  `scm_outer_eval` drops a duplicate `wolfe_simplex()` fallback on failure;
-  `scm_coord_descent_core()` updates row `j` of `(B_base, b_base)` in place
-  across grid points; and `scm_rank_pval()` precomputes `Q = X0' X0` and its
-  Lipschitz bound once per unique adoption period `t0` in each permutation
-  draw.
-- **TASC, GSC, SI, and MC solver optimizations:** `kalman_smoother_cpp()`
-  eliminates the materialized `r x n_obs` gain matrix `K` on the diagonal-`R`
-  path; `gsc_ife_cpp()` precomputes `XtX`/`XtY` outside the Bai (2009) loop
-  and skips `svd_econ()` or treated fits when `r == 0` or `n == 0`;
-  `si_pcr_cpp()` right-associates `U_k * (diag(1/S_k) * (V_k' Y_pre_tr))`
-  without forming the full pseudoinverse; and `soft_impute_fe_core()` swaps `L`
-  and computes `||L||_F` in `O(r)` from thresholded singular values.
+- **SCM (`method = "scm"`) does less work in its inner solves.** When the
+  Wolfe solver fails, a cold start goes straight to the gradient
+  presolve instead of an active set started from every donor, the outer `V`
+  search falls back to the warm-started active set instead of solving the
+  same Wolfe problem again, and coordinate descent updates one row of the
+  factored problem per grid point instead of rebuilding it. Every path still
+  returns a KKT-verified optimum.
+- **`scm_rank_pval()`** forms each draw's Gram matrix and step-size bound once
+  per adoption period instead of once per treated unit.
+- **TASC, GSC, SI and MC** avoid redundant work: the TASC Kalman filter no
+  longer forms the gain matrix with diagonal noise, the GSC covariate loop
+  computes the covariate cross-products once and solves `r = 0` in closed
+  form, SI applies the pseudoinverse without forming it, and MC reads the
+  norm of the low-rank part from its singular values. Estimates are identical
+  up to rounding.
 
 # coresynth 1.2.0
 

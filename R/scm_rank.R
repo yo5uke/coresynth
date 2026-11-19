@@ -67,35 +67,45 @@ scm_rank_pval <- function(fit, B = 500L,
   T_adopt <- spec$T_adopt
   pool    <- c(spec$idx_tr, spec$idx_co)
 
-  # Statistic for one unit treated from row t0, against `donors`. Uniform lag
-  # weights, as in Abadie & L'Hour.
-  unit_stat <- function(j, t0, donors) {
-    if (is.na(t0) || t0 < 3L || t0 > nrow(Y)) return(NA_real_)
-    pre  <- seq_len(t0 - 1L)
-    post <- t0:nrow(Y)
-    X0   <- Y[pre, donors, drop = FALSE]
-    if (ncol(X0) < 2L) return(NA_real_)
-    w <- tryCatch(
-      as.numeric(solve_simplex_qp(crossprod(X0), crossprod(X0, Y[pre, j]))),
-      error = function(e) NULL)
-    if (is.null(w)) return(NA_real_)
-    gap <- Y[, j] - drop(Y[, donors, drop = FALSE] %*% w)
-    switch(statistic,
-      effect     = mean(gap[post]),
-      abs_effect = abs(mean(gap[post])),
-      mspe_ratio = {
-        pre_mspe <- mean(gap[pre]^2)
-        if (pre_mspe <= .Machine$double.eps) NA_real_ else
-          mean(gap[post]^2) / pre_mspe
-      })
-  }
-
   # Statistics for one assignment. The units not coded treated form that
   # assignment's donor pool, so every draw sees a pool of the same size.
+  # Precompute Q = X0'X0 and its Lipschitz constant once per unique t0 in the
+  # draw (uniform lag weights, as in Abadie & L'Hour).
   assignment_stats <- function(treated, adopt) {
     donors <- setdiff(pool, treated)
-    vapply(seq_along(treated),
-           function(k) unit_stat(treated[k], adopt[k], donors), numeric(1L))
+    out    <- rep(NA_real_, length(treated))
+    if (length(donors) < 2L) return(out)
+    Y_don <- Y[, donors, drop = FALSE]
+    valid <- !is.na(adopt) & adopt >= 3L & adopt <= nrow(Y)
+    if (!any(valid)) return(out)
+
+    for (t0 in unique(adopt[valid])) {
+      idx  <- which(valid & adopt == t0)
+      pre  <- seq_len(t0 - 1L)
+      post <- t0:nrow(Y)
+      X0   <- Y_don[pre, , drop = FALSE]
+      Q    <- crossprod(X0)
+      G    <- if (nrow(X0) < ncol(X0)) tcrossprod(X0) else Q
+      L    <- max(eigen(G, symmetric = TRUE, only.values = TRUE)$values, 1e-14)
+      for (k in idx) {
+        j <- treated[k]
+        w <- tryCatch(
+          as.numeric(solve_simplex_qp(Q, crossprod(X0, Y[pre, j]),
+                                      lipschitz = L)),
+          error = function(e) NULL)
+        if (is.null(w)) next
+        gap <- Y[, j] - drop(Y_don %*% w)
+        out[k] <- switch(statistic,
+          effect     = mean(gap[post]),
+          abs_effect = abs(mean(gap[post])),
+          mspe_ratio = {
+            pre_mspe <- mean(gap[pre]^2)
+            if (pre_mspe <= .Machine$double.eps) NA_real_ else
+              mean(gap[post]^2) / pre_mspe
+          })
+      }
+    }
+    out
   }
 
   adopt_obs <- T_adopt[spec$idx_tr]

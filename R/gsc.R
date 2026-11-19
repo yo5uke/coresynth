@@ -277,8 +277,8 @@ fit_gsc_cpp <- function(
   .check_control_group(control_group, pan, "GSC")
 
   r_min <- if (force == "none") 1L else 0L
-  if (!is.null(r) && (!is.numeric(r) || length(r) != 1L || r < r_min ||
-                      r != as.integer(r)))
+  if (!is.null(r) && (!is.numeric(r) || length(r) != 1L || !is.finite(r) ||
+                      r < r_min || r != as.integer(r)))
     stop(if (r_min == 1L)
            "r must be NULL (cross-validated) or a single positive integer."
          else
@@ -298,6 +298,8 @@ fit_gsc_cpp <- function(
            call. = FALSE)
     X_all_arr <- build_covariate_array(data, id_var, time_var, covariates,
                                        pan$units, pan$times)
+    if (any(!is.finite(X_all_arr)))
+      stop("Covariates contain missing or non-finite values.", call. = FALSE)
   }
 
   r_cv   <- NULL
@@ -513,6 +515,9 @@ gsc_boot <- function(fit, B = 499L, alpha = 0.05, seed = NULL) {
       n_unconverged <<- n_unconverged + 1L
     ctrl
   }
+
+  if (N_co < 2L)
+    stop("gsc_boot() requires at least 2 control units.", call. = FALSE)
 
   # Step 1: prediction errors, each from a control unit left out as if treated
   pred_err <- matrix(NA_real_, TT, B)

@@ -188,10 +188,10 @@ scm_design <- function(
   }
   E_idx    <- seq_len(TE)
   B_idx    <- setdiff(seq_len(T0_idx), E_idx)
-  post_idx <- seq.int(T0_idx + 1L, TT)
-  if (length(post_idx) == 0L) {
+  if (T0_idx >= TT) {
     stop("No experimental periods found after T0.", call. = FALSE)
   }
+  post_idx <- seq.int(T0_idx + 1L, TT)
 
   # Outcome matrix (TT x J) — vectorised index fill
   Y <- matrix(NA_real_, nrow = TT, ncol = J,
@@ -361,16 +361,18 @@ scm_design <- function(
           loss_j[jj]  <- sum((X_j - drop(X_co %*% v_j))^2)
         }
         if (ok) {
-          # w minimises ||X_bar - X_S w||^2 + xi * sum_j w_j loss_j.  The
-          # linear term is folded into the QP target: any y with
-          # X_S'y = X_S'X_bar - (xi/2) loss yields the same argmin, and the
-          # y below satisfies this identity (tiny ridge for collinear columns).
-          w_sub <- tryCatch({
-            G <- crossprod(X_S)
-            y <- X_bar - (xi / 2) *
-              drop(X_S %*% solve(G + diag(1e-8 * mean(diag(G)), m_S), loss_j))
-            scm_inner_weights_cpp(X_S, y, V_unif)
-          }, error = function(e) NULL)
+          # w minimises ||X_bar - X_S w||^2 + xi * sum_j w_j loss_j,
+          # equivalently (1/2) w' G w - c' w on the simplex with
+          # G = X_S' X_S and c = X_S' X_bar - (xi / 2) * loss_j.
+          w_sub <- if (m_S == 1L) {
+            1.0
+          } else {
+            tryCatch({
+              G     <- crossprod(X_S)
+              c_vec <- drop(crossprod(X_S, X_bar)) - (xi / 2) * loss_j
+              as.numeric(solve_simplex_qp(G, c_vec))
+            }, error = function(e) NULL)
+          }
           if (!is.null(w_sub)) {
             v_sub <- drop(v_mat %*% w_sub)   # aggregate per eq. (11)
             obj   <- sum((X_bar - drop(X_S %*% w_sub))^2) +

@@ -2358,37 +2358,40 @@ loo_donors <- function(fit, weight_threshold = 1e-6) {
 # Internal helper: select ridge lambda via LOO-CV on control units.
 .cv_ridge_scm <- function(A, b, T_pre,
                            lambda_grid = 10^seq(-4, 4, length.out = 30L)) {
-  N_co <- nrow(A)
-  sv   <- svd(A)
-  d2   <- sv$d^2
-  U    <- sv$u
-  U2   <- U^2
-  Utb  <- drop(crossprod(U, b))
-  Ipre <- NULL
-  AtA  <- NULL
-  Atb  <- NULL
+  N_co   <- nrow(A)
+  a_mean <- colMeans(A)
+  b_mean <- mean(b)
+  Ac     <- sweep(A, 2L, a_mean, "-")
+  bc     <- b - b_mean
+  sv     <- svd(Ac)
+  d2     <- sv$d^2
+  U      <- sv$u
+  U2     <- U^2
+  Utbc   <- drop(crossprod(U, bc))
+  Ipre   <- NULL
 
   cv_errors <- vapply(lambda_grid, function(lam) {
     w <- d2 / (d2 + lam)
-    h <- drop(U2 %*% w)
+    h <- (1 / N_co) + drop(U2 %*% w)
     if (all(1 - h > 1e-7)) {
-      hat_b <- drop(U %*% (w * Utb))
-      return(mean(((b - hat_b) / (1 - h))^2))
+      hat_bc <- drop(U %*% (w * Utbc))
+      return(mean(((bc - hat_bc) / (1 - h))^2))
     }
-    if (is.null(AtA)) {
-      Ipre <<- diag(T_pre)
-      AtA  <<- crossprod(A)
-      Atb  <<- drop(crossprod(A, b))
-    }
-    M_lam <- AtA + lam * Ipre
+    if (is.null(Ipre)) Ipre <<- diag(T_pre)
     loo <- vapply(seq_len(N_co), function(i) {
-      ai     <- A[i, ]
+      A_i  <- A[-i, , drop = FALSE]
+      b_i  <- b[-i]
+      am_i <- colMeans(A_i)
+      bm_i <- mean(b_i)
+      Ac_i <- sweep(A_i, 2L, am_i, "-")
+      bc_i <- b_i - bm_i
       beta_i <- tryCatch(
-        solve(M_lam - tcrossprod(ai), Atb - ai * b[i]),
+        solve(crossprod(Ac_i) + lam * Ipre, drop(crossprod(Ac_i, bc_i))),
         error = function(e) rep(NA_real_, T_pre)
       )
       if (anyNA(beta_i)) return(NA_real_)
-      (b[i] - sum(ai * beta_i))^2
+      pred_i <- bm_i + sum((A[i, ] - am_i) * beta_i)
+      (b[i] - pred_i)^2
     }, numeric(1L))
     mean(loo, na.rm = TRUE)
   }, numeric(1L))
@@ -2402,18 +2405,19 @@ loo_donors <- function(fit, weight_threshold = 1e-6) {
 #' following Ben-Michael, Feller & Rothstein (2021, JASA). The corrected
 #' estimator is:
 #'
-#'   tau_aug = tau_SCM + (m_tr_post - sum_j W_j * m_j_post)
+#'   tau_aug = tau_SCM - (m_tr_post - sum_j W_j * m_j_post)
 #'
-#' where m_i_post = Y_pre_i' beta_hat is the ridge outcome model prediction
-#' for unit i's mean post-treatment outcome, and beta_hat is estimated by
-#' ridge regression across control units.
+#' where m_i_post = beta_0 + Y_pre_i' beta_hat is the ridge outcome model
+#' prediction for unit i's mean post-treatment outcome, and (beta_0, beta_hat)
+#' are estimated by ridge regression with an unpenalized intercept across
+#' control units.
 #'
 #' @param fit A `coresynth` object from [scm_fit()] with `method = "scm"`.
 #' @param lambda_ridge Ridge penalty (non-negative). `NULL` (default) selects
 #'   the penalty by leave-one-out cross-validation on the control units.
 #' @return A list with:
 #'   * `att_aug`: Augmented ATT estimate
-#'   * `delta`: Bias correction term (m_tr_post - sum_j W_j m_j_post)
+#'   * `delta`: Counterfactual bias correction term (m_tr_post - sum_j W_j m_j_post)
 #'   * `att_scm`: Original SCM ATT for comparison
 #'   * `lambda_ridge`: Ridge penalty used
 #'   * `beta_hat`: Ridge regression coefficients (length T_pre)
@@ -2442,7 +2446,6 @@ augment_scm <- function(fit, lambda_ridge = NULL) {
   Y_co_post <- fit$Y_co_post
   W         <- fit$unit_weights
   T_pre     <- fit$T_pre
-  N_co      <- ncol(Y_co_pre)
 
   # Design: A[i, t] = pre-treatment outcome of control unit i at time t
   A <- t(Y_co_pre)          # N_co x T_pre
@@ -2452,9 +2455,15 @@ augment_scm <- function(fit, lambda_ridge = NULL) {
     lambda_ridge <- .cv_ridge_scm(A, b, T_pre)
   }
 
+  # Center across control units for an unpenalized intercept (BFR 2021, S.4)
+  a_mean   <- colMeans(A)
+  b_mean   <- mean(b)
+  Ac       <- sweep(A, 2L, a_mean, "-")
+  bc       <- b - b_mean
+
   Ipre     <- diag(T_pre)
-  AtA      <- crossprod(A)            # T_pre x T_pre
-  Atb      <- drop(t(A) %*% b)       # T_pre
+  AtA      <- crossprod(Ac)           # T_pre x T_pre
+  Atb      <- drop(crossprod(Ac, bc)) # T_pre
   beta_hat <- tryCatch(
     solve(AtA + lambda_ridge * Ipre, Atb),
     error = function(e) {
@@ -2468,11 +2477,11 @@ augment_scm <- function(fit, lambda_ridge = NULL) {
   )
 
   Y_tr_pre <- fit$Y_treat[seq_len(T_pre)]
-  m_hat_co <- as.vector(A %*% beta_hat)  # N_co: predicted post-mean per donor
-  m_hat_tr <- sum(Y_tr_pre * beta_hat)   # scalar: predicted post-mean for treated
+  m_hat_co <- b_mean + as.vector(Ac %*% beta_hat)
+  m_hat_tr <- b_mean + sum((Y_tr_pre - a_mean) * beta_hat)
 
   delta   <- m_hat_tr - sum(W * m_hat_co)
-  att_aug <- fit$estimate + delta
+  att_aug <- fit$estimate - delta
 
   list(
     att_aug      = att_aug,

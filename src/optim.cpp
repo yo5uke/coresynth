@@ -163,21 +163,28 @@ arma::vec solve_simplex_qp_factored(const arma::mat& F, const arma::vec& c,
 arma::vec solve_simplex_ridge_ls(const arma::mat& A, const arma::vec& b,
                                  double ridge, int max_iter, double tol) {
   const arma::uword n = A.n_cols;
-  arma::vec x = arma::ones(n) / n;
-  arma::vec c = A.t() * b;
+  if (n <= 1) return arma::ones<arma::vec>(n);
+  // Row-mean shift is an exact identity on the simplex (1'w = 1):
+  // A w - b = (A - a_bar 1') w - (b - a_bar), removing common row offsets
+  // (unit levels for lambda, time trends for omega) that otherwise inflate L.
+  arma::vec a_bar = arma::mean(A, 1);
+  arma::mat Ac    = A.each_col() - a_bar;
+  arma::vec bc    = b - a_bar;
+  arma::vec x     = arma::ones(n) / n;
+  arma::vec c     = Ac.t() * bc;
 
-  if (A.n_rows >= n) {
-    arma::mat Q = A.t() * A;
+  if (Ac.n_rows >= n) {
+    arma::mat Q = Ac.t() * Ac;
     Q.diag() += ridge;
     return fista_simplex_core(
       [&](const arma::vec& y) -> arma::vec { return Q * y - c; },
       x, lambda_max_sym(Q), max_iter, tol);
   }
 
-  double L = lambda_max_sym(A * A.t()) + ridge;
+  double L = lambda_max_sym(Ac * Ac.t()) + ridge;
   return fista_simplex_core(
     [&](const arma::vec& y) -> arma::vec {
-      return A.t() * (A * y) + ridge * y - c;
+      return Ac.t() * (Ac * y) + ridge * y - c;
     },
     x, L, max_iter, tol);
 }

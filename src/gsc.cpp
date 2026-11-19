@@ -32,14 +32,15 @@ static arma::mat gsc_demean(const arma::mat& M, const GscFe& fe) {
 // Rank-r factors and loadings of M from its SVD; r = 0 gives empty ones.
 static void gsc_factors(const arma::mat& M, int r, arma::mat& U, arma::vec& D,
                         arma::mat& V, arma::mat& F, arma::mat& L) {
-  arma::svd_econ(U, D, V, M);
-  if (r > 0) {
-    F = U.cols(0, r - 1) * arma::diagmat(D.subvec(0, r - 1));
-    L = V.cols(0, r - 1);
-  } else {
+  if (r == 0) {
+    D.reset();
     F = arma::zeros(M.n_rows, 0);
     L = arma::zeros(M.n_cols, 0);
+    return;
   }
+  arma::svd_econ(U, D, V, M);
+  F = U.cols(0, r - 1) * arma::diagmat(D.subvec(0, r - 1));
+  L = V.cols(0, r - 1);
 }
 
 // Treated-unit step of Xu (2017), Step 2: each treated unit's loadings -- and
@@ -60,6 +61,13 @@ static GscTreated gsc_treated_fit(const arma::mat& F, const arma::vec& beta,
                                   bool unit_fe) {
   const arma::uword T_pre = Y_tr_pre.n_rows;
   const arma::uword n     = Y_tr_pre.n_cols;
+  GscTreated out;
+  if (n == 0) {
+    out.L_t   = arma::zeros(F.n_cols, 0);
+    out.alpha = arma::zeros<arma::rowvec>(0);
+    out.Y_hat = arma::zeros(F.n_rows, 0);
+    return out;
+  }
   const bool has_xi = xi.n_elem == F.n_rows;
 
   arma::mat Y_dm = Y_tr_pre - mu;
@@ -71,8 +79,6 @@ static GscTreated gsc_treated_fit(const arma::mat& F, const arma::vec& beta,
   if (unit_fe) Z = arma::join_rows(arma::ones(T_pre), Z);
   arma::mat coef = Z.n_cols > 0 ? arma::mat(arma::pinv(Z) * Y_dm)
                                 : arma::mat(0, n);
-
-  GscTreated out;
   out.alpha = unit_fe ? arma::rowvec(coef.row(0)) : arma::zeros<arma::rowvec>(n);
   out.L_t   = unit_fe ? arma::mat(coef.tail_rows(F.n_cols)) : coef;
   out.Y_hat = F * out.L_t + mu;
@@ -201,27 +207,43 @@ Rcpp::List gsc_ife_cpp(const arma::mat& Y_co,
     double ridge = 1e-8;
     converged = false;
 
+    arma::mat XtX(p, p);
+    arma::vec XtY(p);
+    for (int j = 0; j < p; j++) {
+      for (int k = j; k < p; k++)
+        XtX(j, k) = XtX(k, j) = arma::accu(X_d.slice(j) % X_d.slice(k));
+      XtY(j) = arma::accu(X_d.slice(j) % Y_d);
+    }
+
     for (int iter = 0; iter < max_iter; iter++) {
       arma::vec beta_old = beta;
 
-      std::vector<arma::mat> MX(p);
-      for (int j = 0; j < p; j++) {
-        MX[j] = X_d.slice(j);
-        if (r > 0) {
-          arma::mat U_r = U.cols(0, r - 1);
-          MX[j] -= U_r * (U_r.t() * X_d.slice(j));
+      arma::mat XtMX = XtX;
+      arma::vec XtMY = XtY;
+      if (r > 0) {
+        // M_F = I - U_r U_r' => tr(X_j' M_F X_k) = tr(X_j' X_k) - tr(PX_j' PX_k)
+        arma::mat U_r = U.cols(0, r - 1);
+        std::vector<arma::mat> PX(p);
+        for (int j = 0; j < p; j++) PX[j] = U_r.t() * X_d.slice(j);
+        arma::mat PY = U_r.t() * Y_d;
+        for (int j = 0; j < p; j++) {
+          for (int k = j; k < p; k++) {
+            double adj = arma::accu(PX[j] % PX[k]);
+            XtMX(j, k) -= adj;
+            if (k != j) XtMX(k, j) -= adj;
+          }
+          XtMY(j) -= arma::accu(PX[j] % PY);
         }
-      }
-
-      arma::mat XtMX(p, p);
-      arma::vec XtMY(p);
-      for (int j = 0; j < p; j++) {
-        for (int k = j; k < p; k++)
-          XtMX(j, k) = XtMX(k, j) = arma::accu(MX[j] % X_d.slice(k));
-        XtMY(j) = arma::accu(MX[j] % Y_d);
       }
       XtMX.diag() += ridge;
       arma::vec beta_new = arma::solve(XtMX, XtMY);
+
+      if (r == 0) {
+        beta      = beta_new;
+        n_iter    = 1;
+        converged = true;
+        break;
+      }
 
       // Factors given beta: truncated SVD of Y_tilde = Y_d - X_d * beta
       arma::mat Y_tilde = Y_d;

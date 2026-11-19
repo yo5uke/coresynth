@@ -401,7 +401,7 @@ static arma::vec fista_simplex(const arma::mat& B, const arma::vec& b,
                                bool wolfe = false,
                                bool cold = false) {
   x = proj_simplex(x);
-  const bool presolve = cold && !wolfe;
+  const bool presolve = cold;
 
   arma::vec x_as;
   if (wolfe && wolfe_simplex(B, b, x_as)) {
@@ -514,7 +514,7 @@ static bool wolfe_simplex(const arma::mat& B, const arma::vec& b,
           if (denom > 0.0) theta = std::min(theta, alpha(i) / denom);
         }
       }
-      if (!(theta >= 0.0) || !std::isfinite(theta)) return false;
+      if (!(theta > 0.0) || !std::isfinite(theta)) return false;
       arma::vec anew = (1.0 - theta) * alpha + theta * wA;
       std::vector<arma::uword> S2;
       std::vector<double> a2;
@@ -778,6 +778,16 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
       arma::vec local_best_W = best_W;
       arma::vec warm = best_W;
 
+      arma::vec xj;
+      arma::rowvec orig_B_row;
+      double orig_b_j = 0.0;
+      if (gram) {
+        xj = X0.row(j).t();
+      } else {
+        orig_B_row = B_base.row(j);
+        orig_b_j   = b_base(j);
+      }
+
       for (arma::uword g = 0; g < grid.n_elem; g++) {
         if (std::abs(grid(g) - orig_v) < 1e-15) continue;  // current point: ties only
         double vsum = arma::sum(V_diag) - orig_v + grid(g);
@@ -787,16 +797,13 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
         arma::vec cand_W;
         if (gram) {
           // V_j -> V_j + dv adds dv x_j x_j' to Q and dv X1_j x_j to c.
-          arma::vec xj  = X0.row(j).t();
           arma::vec c_g = c_base + (dv * X1(j)) * xj;
           cand_W = fista_simplex_gram(Q_base, xj, dv, c_g, L_g, warm);
         } else {
-          arma::vec V_g = V_diag;
-          V_g(j) = grid(g);
-          arma::mat B_g;
-          arma::vec b_g;
-          scm_make_factor(X0, X1, V_g, B_g, b_g);
-          cand_W = fista_simplex(B_g, b_g, L_g, warm, 10000, 1e-6,
+          double sqg = std::sqrt(std::max(grid(g), 0.0));
+          B_base.row(j) = sqg * X0.row(j);
+          b_base(j)     = sqg * X1(j);
+          cand_W = fista_simplex(B_base, b_base, L_g, warm, 10000, 1e-6,
                                  use_nnls, cheap_face, wolfe);
         }
         warm = cand_W;
@@ -813,9 +820,12 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
         L_base += std::max(dv_acc, 0.0) * row_n2(j);
         V_diag(j) = local_best_v;
         if (gram) {
-          arma::vec xj = X0.row(j).t();
           Q_base += dv_acc * (xj * xj.t());
           c_base += (dv_acc * X1(j)) * xj;
+        } else {
+          double sq_best = std::sqrt(std::max(local_best_v, 0.0));
+          B_base.row(j) = sq_best * X0.row(j);
+          b_base(j)     = sq_best * X1(j);
         }
         double vsum_after = arma::sum(V_diag);
         if (vsum_after > 1e-14) {
@@ -824,11 +834,18 @@ static arma::vec scm_coord_descent_core(const arma::mat& X0, const arma::vec& X1
           if (gram) {
             Q_base /= vsum_after;
             c_base /= vsum_after;
+          } else {
+            double inv_sq = 1.0 / std::sqrt(vsum_after);
+            B_base *= inv_sq;
+            b_base *= inv_sq;
           }
         }
         max_change = std::max(max_change, best_loss - local_best_loss);
         best_loss  = local_best_loss;
         best_W     = local_best_W;
+      } else if (!gram) {
+        B_base.row(j) = orig_B_row;
+        b_base(j)     = orig_b_j;
       }
     }
     if (max_change < tol) break;
@@ -876,11 +893,12 @@ struct scm_outer_eval {
     // without the milliseconds-scale cold solve. The cold reference solver
     // is the last resort.
     arma::vec W;
-    bool got = wolfe
-      ? wolfe_simplex(B, b, W)
-      : active_set_simplex(B, b, arma::find(warm > 1e-10), W, 300);
+    bool got = wolfe && wolfe_simplex(B, b, W);
+    if (!got) {
+      got = active_set_simplex(B, b, arma::find(warm > 1e-10), W, 300);
+    }
     if (!got && !(use_nnls && nnls_rescue(B, b, W))) {
-      W = scm_inner_weights_cpp(X0, X1, V, wolfe);
+      W = scm_inner_weights_cpp(X0, X1, V, false);
     }
     if (!W.is_finite()) return arma::datum::inf;
     warm = W;

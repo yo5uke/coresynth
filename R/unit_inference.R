@@ -110,6 +110,10 @@
     units   <- unique(c(co, tr))
     dropped <- lapply(units, function(u) jack_once(co[co != u], tr[tr != u]))
     jack_var <- function(th) {
+      n_fail <- sum(is.na(th))
+      if (n_fail > 0L)
+        warning(sprintf("%s: %d of %d jackknife replications failed and were omitted.",
+                        label, n_fail, length(th)), call. = FALSE)
       th <- th[!is.na(th)]
       n  <- length(th)
       if (n < 2L) return(NA_real_)

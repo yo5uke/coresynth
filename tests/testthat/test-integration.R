@@ -1751,6 +1751,34 @@ test_that("augment_scm rejects wrong method or missing Y_co_pre", {
   expect_error(augment_scm(fit_bad), "Y_co_pre")
 })
 
+test_that("augment_scm removes upward convex-hull bias (sign check) and is level-shift invariant", {
+  # Treated unit sits strictly above donor convex hull with true ATT = 0
+  set.seed(123L)
+  N <- 10L; TT <- 12L; T_pre <- 8L
+  alpha <- c(10, seq(0, 2, length.out = N - 1L))
+  dat <- expand.grid(time = seq_len(TT), id = paste0("u", seq_len(N)))
+  dat$y <- alpha[match(dat$id, paste0("u", seq_len(N)))] +
+    0.05 * rnorm(nrow(dat))
+  dat$d <- as.integer(dat$id == "u1" & dat$time > T_pre)
+
+  fit <- scm_fit(y ~ d | id + time, data = dat, method = "scm")
+  aug <- augment_scm(fit, lambda_ridge = 1e-4)
+  # SCM has ~+8 upward bias; ASCM must subtract it back near 0
+  expect_true(fit$estimate > 7)
+  expect_true(abs(aug$att_aug) < 0.5)
+  expect_equal(aug$att_aug, aug$att_scm - aug$delta)
+
+  # Adding a constant shift to all outcomes must not alter beta_hat or att_aug
+  dat_shift <- dat
+  dat_shift$y <- dat_shift$y + 1000
+  fit_shift <- scm_fit(y ~ d | id + time, data = dat_shift, method = "scm")
+  aug_shift <- augment_scm(fit_shift)
+  aug_base  <- augment_scm(fit)
+  expect_equal(aug_shift$lambda_ridge, aug_base$lambda_ridge)
+  expect_equal(aug_shift$beta_hat, aug_base$beta_hat, tolerance = 1e-6)
+  expect_equal(aug_shift$att_aug, aug_base$att_aug, tolerance = 1e-6)
+})
+
 # ── Phase 12: SCM 高速化 ──────────────────────────────────────────────────────
 
 test_that("Phase 12b: low-rank path returns valid simplex weights (k=7, N_co=46)", {
@@ -7415,4 +7443,40 @@ test_that("the SDID bootstrap keeps draws with a single control, as Algorithm 2 
   expect_true(all(is.finite(inf$boot_ests)))
   es <- sdid_event_study(fit, n_boot = 40L, seed = 2L)
   expect_equal(es$n_boot_valid + es$n_boot_dropped, 40L)
+})
+
+test_that("SDID weights are invariant to large unit fixed effects and common time trends", {
+  base <- make_panel(N = 12, TT = 20, T_pre = 10)
+  fit0 <- scm_fit(y ~ d | id + time, data = base, method = "sdid")
+
+  # Add large unit-level offsets (+1e4 * unit_idx) and large common time trend (+1e4 * time)
+  shifted <- base
+  u_idx   <- match(shifted$id, unique(shifted$id))
+  shifted$y <- shifted$y + 1e4 * u_idx + 1e4 * shifted$time
+  fit1 <- scm_fit(y ~ d | id + time, data = shifted, method = "sdid")
+
+  expect_equal(unname(fit1$unit_weights), unname(fit0$unit_weights), tolerance = 1e-4)
+  expect_equal(unname(fit1$time_weights), unname(fit0$time_weights), tolerance = 1e-4)
+  expect_equal(fit1$estimate, fit0$estimate, tolerance = 1e-4)
+})
+
+test_that("scm_design unit_level solves eq. 10 exactly when m > k and guards T0 == max(time)", {
+  # k = 1 predictor (T_fit = 1) with m = 2 treated units => rank(X_S) = 1 < m
+  # Unit values at t = 1: u1 = 1, u2 = 2, u3 = 0, u4 = 1.8; X_bar = 1.2
+  # With T0 = 2 and T = 3, verify T0 == max(time) errors cleanly.
+  dat <- expand.grid(time = 1:3, id = paste0("u", 1:5))
+  x1  <- c(u1 = 1.0, u2 = 2.0, u3 = 0.0, u4 = 1.5, u5 = 3.0)
+  dat$y <- x1[dat$id] + 0.1 * dat$time
+
+  res <- scm_design(dat, outcome = "y", unit = "id", time = "time",
+                    T0 = 2, T_fit = 1, m = 2, method = "unit_level", xi = 1)
+  expect_true(is.finite(res$objective))
+  expect_equal(sum(res$w), 1, tolerance = 1e-6)
+  expect_equal(sum(res$v), 1, tolerance = 1e-6)
+
+  expect_error(
+    scm_design(dat, outcome = "y", unit = "id", time = "time",
+               T0 = 3, m = 1, method = "base"),
+    "No experimental periods"
+  )
 })

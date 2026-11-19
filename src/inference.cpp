@@ -62,6 +62,7 @@ arma::vec sdid_placebo_cpp(const arma::mat& Y_pre, const arma::mat& Y_post,
   // The difference-in-differences itself is intercept-free and uses Y_pre.
   arma::mat Yc = Y_pre;
   Yc.each_row() -= arma::mean(Y_pre, 0);
+  Yc.each_col() -= arma::mean(Yc, 1);
 
   // Precompute cross-products shared across all N_co leave-one-out problems.
   const arma::vec co_pre_wt_all    = Y_pre.t() * time_weights;
@@ -329,10 +330,10 @@ Rcpp::List scm_placebo_x_cpp(const arma::mat& X0,
 
   #pragma omp parallel for schedule(dynamic, 1) num_threads(n_threads)
   for (int i = 0; i < N_co; i++) {
-    arma::uvec donors = all_idx(arma::find(all_idx != (arma::uword)i));
     // Exceptions must not escape the OpenMP region; a failed solver marks
     // this unit NaN (same contract as the previous R-level tryCatch).
     try {
+      arma::uvec donors  = all_idx(arma::find(all_idx != (arma::uword)i));
       arma::vec x1_i     = X0.col(i);
       arma::mat X0_d     = X0.cols(donors);
       arma::vec y_pre_i  = Y_pre.col(i);

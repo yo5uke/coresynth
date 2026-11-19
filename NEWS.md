@@ -1,3 +1,63 @@
+# coresynth (development version)
+
+## Bug fixes
+
+- **`augment_scm()` subtracts the estimated bias correction and includes an
+  unpenalized intercept.** Following Ben-Michael, Feller & Rothstein (2021,
+  JASA), the augmented estimator now computes `tau_aug = tau_SCM - delta` rather
+  than adding `delta`, and centers donor pre-treatment outcomes and
+  post-treatment means in both the ridge regression and `.cv_ridge_scm()`
+  leave-one-out cross-validation. Estimates change whenever `delta != 0`
+  (removing the sign-inverted bias correction, e.g., when a treated unit lies
+  outside the donor convex hull) or when outcomes are not centered, and
+  `att_aug` and `beta_hat` are now invariant to constant outcome level shifts.
+
+- **SDID simplex ridge solves are invariant to large unit and time offsets.**
+  `solve_simplex_ridge_ls()` shifts each row by its mean (`(A - a_bar 1', b - a_bar)`),
+  an exact identity on the unit simplex, and `sdid_placebo_cpp()` double-demeans
+  `Y_pre` so large unit fixed effects or common time trends no longer inflate
+  the FISTA Lipschitz bound and trigger premature stopping. Estimates and
+  weights on poorly scaled panels stay consistent across large shifts.
+
+- **`scm_design(design = "unit_level")` solves eq. (10) directly when `m > k`.**
+  Instead of projecting the linear loss term through `(X_S' X_S)^{-1} X_S'`,
+  which dropped components in the nullspace of `X_S` when the treated set size
+  exceeded the number of predictors, it now calls `solve_simplex_qp()` directly
+  on `G = X_S' X_S` and `c = X_S' X_bar - (xi / 2) * loss_j`. `scm_design()`
+  also checks `T0 >= max(time)` before indexing experimental periods.
+
+- **Additional edge-case guards and input validation:**
+  - `fit_gsc_cpp()` rejects non-finite `r` (`NA`/`NaN`/`Inf`) and
+    missing/non-finite covariates; `gsc_boot()` requires at least 2 control
+    units.
+  - `.sdid_partial_out_staggered()` validates covariate finiteness on active
+    (unabsorbed) covariates with an informative error.
+  - `fit_tasc_cpp()` floors initial `R` at `1e-6` when pre-treatment control
+    variance is zero or non-finite.
+  - `mc_cv_cpp()` skips folds where `soft_impute_fe_core()` fails to converge.
+  - `.unit_inference()` warns when jackknife replicates fail (`NA`) and are
+    omitted.
+  - `scm_placebo_x_cpp()` constructs the `donors` index vector inside the
+    OpenMP `try` block.
+
+## Performance improvements
+
+- **`method = "scm"` and `scm_rank_pval()` eliminate redundant solver work:**
+  `fista_simplex()` uses the cold active-set presolve even when `wolfe = TRUE`;
+  `wolfe_simplex()` rejects zero step sizes (`theta <= 0`) to avoid cycling;
+  `scm_outer_eval` drops a duplicate `wolfe_simplex()` fallback on failure;
+  `scm_coord_descent_core()` updates row `j` of `(B_base, b_base)` in place
+  across grid points; and `scm_rank_pval()` precomputes `Q = X0' X0` and its
+  Lipschitz bound once per unique adoption period `t0` in each permutation
+  draw.
+- **TASC, GSC, SI, and MC solver optimizations:** `kalman_smoother_cpp()`
+  eliminates the materialized `r x n_obs` gain matrix `K` on the diagonal-`R`
+  path; `gsc_ife_cpp()` precomputes `XtX`/`XtY` outside the Bai (2009) loop
+  and skips `svd_econ()` or treated fits when `r == 0` or `n == 0`;
+  `si_pcr_cpp()` right-associates `U_k * (diag(1/S_k) * (V_k' Y_pre_tr))`
+  without forming the full pseudoinverse; and `soft_impute_fe_core()` swaps `L`
+  and computes `||L||_F` in `O(r)` from thresholded singular values.
+
 # coresynth 1.2.0
 
 A review of the GSC, TASC, SI, SDID and MC (Matrix Completion) code against

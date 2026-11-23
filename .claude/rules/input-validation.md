@@ -4,12 +4,12 @@ paths:
   - "R/scm_fit.R"
 ---
 
-# 入力検証
+# 入力検証の設計原則と罠
 
-- **`panel_to_matrices()`**（fit 全手法の共通入口）: ①0 行データ ②NA の id/time ③NA の処置指標（従来は該当ユニットが無言で脱落）④負の d ⑤処置ユニットなし ⑥sharp 時コントロールなし、を明示エラー。⑥が **sharp 限定**なのが重要 — staggered で全ユニットが最終的に処置されても MC/TASC は未処置セルから補完できる。コホート再フィット型の never-treated 不足（SCM/GSC/SI は 2 未満、SDID は 0 — `min_controls` 引数）は `.check_control_group()` が手法名つきで明示エラーにする（同関数は `"clean"` の非推奨警告も出す）。`scm_design()` にも 0 行チェックと、フィット期間のアウトカム欠損セルの名指しエラー（以前は全候補集合が失敗して「no feasible treatment set found」になっていた）。⑥の「MC は補完できる」は**未処置ユニットが残っている期間に限る** — never-treated 0 のパネルは最終採用時点以降が識別不能で、MC はその期間を警告つきで落とす（`mc.md`）。**処置指標が 1 → 0 に戻るユニットは警告**（採用は吸収的として扱い、推定値は解除なしと同一。データに存在するセルだけで判定するので、採用後の行の欠落は解除と読まない）
-- **`.check_panel_complete()`**: SCM/SDID/GSC/SI の fit 入口で `!is.finite(Y)` セルをユニット・時点つきで明示エラー（従来は `eig_sym(): decomposition failed` 等の C++ エラー）。欠損対応の MC/TASC は呼ばない — MC は O マスクで、TASC は初期化のみ列平均補完（EM 本体は NA のままカルマン + per-unit M-step）で欠損を扱う
-- **`scm_fit()` 型検証**: factor/character の outcome・treatment を拒否（`as.numeric(factor)` はレベルコードを返しデータを無言破壊）。非整数 d も拒否（`as.integer` 切り捨てで 0.9→0 の罠）、coerce は `as.integer(round())`
-- **`build_predictor_matrices()`**: X0/X1 の非有限値を predictor 名つきで即エラー（`pred()` の時間窓にデータがないケースで下流 QP が壊れるのを防止）
-- **`.check_pred_windows()`**（sharp SCM の予測子経路のみ）: ①パネルに無い時点を含む窓（重なりが一部でもあれば集約は成功してしまい、ラベルだけが嘘になる）②処置後期間に届く窓（処置で動いた値を集約する）を警告。重なりゼロの窓は上記の非有限エラーに任せる（二重通知を避ける）
-- **`panel_to_tensor()` の T_adopt**: 採用時点判定は `which(D[, j] > 0L)`（`== 1` だと arm≥2 のユニットが NA になり is_sharp 誤判定）
-- **`scm_fit()` の引数検証**（`.check_method_args()`）: ①手法非対応の formal（`predictors`/`nu`/`fixedeff` 等は scm 限定、`covariates` は scm/sdid/gsc）を渡したらエラー ②`...` に当該手法の fit 関数の formal に無い名前があればエラー（誤記・`control_group` を mc/tasc に渡す等）。**`...` は推定量固有 formal より前に置く** — 後ろに置くと R の部分マッチで `lambda`（mc）が `lambda_pen`（scm 限定）に吸われ、MC のペナルティが無言で届かなくなる。`...` より後ろの引数は完全名でしか一致しない性質を利用している
+- **`scm_fit()` で `...` を推定量固有 formal より前に置く**: 後ろに置くと R の部分マッチで MC の `lambda` が SCM の `lambda_pen` に吸われ無言で無効になる。`...` より前の引数は `.check_method_args()` で非対応手法への混入を拒否する（`...` 以降の引数は完全名でしか一致しない）
+- **型チェック**: `scm_fit()` は factor/character の outcome・treatment を拒否する（`as.numeric(factor)` はレベルコードを返しデータを無言破壊する）。非整数 `d` も `as.integer()` 切り捨てを防ぐため拒否し、`as.integer(round())` で coerce する
+- **sharp 限定の対照ゼロ拒否**: `panel_to_matrices()` がコントロール 0 をエラーにするのは sharp のみ。staggered では never-treated 0 でも MC/TASC が未処置セルから補完できるため通す。再フィット型（SCM/GSC/SI: 2 未満、SDID: 0）は `.check_control_group()` で手法名つきエラー（兼 `"clean"` の非推奨警告）を出す
+- **欠損値の扱い**: `.check_panel_complete()`（非有限値エラー）は SCM/SDID/GSC/SI の入口でのみ呼び、MC/TASC では呼ばない（MC は観測マスク `O`、TASC は列平均初期化＋観測期間のみ EM）。一方、`never-treated = 0` 等で識別不能になった期間・ユニットは `.drop_unidentified()` が警告つきで落としてパネルを組み直す（TASC は状態方程式で外挿できるためユニットのみ落とす）
+- **処置解除（`1 -> 0`）**: 警告を出したうえで吸収的処置として扱う（データ上の存在セルのみで判定し、採用後の行欠落は解除とみなさない）
+- **`panel_to_tensor()` の採用時点判定**: `which(D[, j] > 0L)` を使う（`== 1` だと multi-arm の `d >= 2` が `NA` になり `is_sharp` を誤判定する）
+- **`.check_pred_windows()` の役割分担**: パネル外の時点を含む窓（一部重なりでラベルと中身が乖離）と処置後に届く窓には警告を出す。重なりゼロの窓は下流の `build_predictor_matrices()` の非有限値エラーに任せ、二重通知を避ける

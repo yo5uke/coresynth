@@ -5,13 +5,11 @@ paths:
 
 # plot 内部規約
 
-**既知の制限**: staggered fit は `Y_synth = NULL` のため `plot()` 未対応（明示エラー）。cohort 別の系列は `augment()` の long df を使う。
-
-- **`.line_style(default, override)`** は `list` なら `modifyList` マージ、`NULL`/`FALSE` なら NULL（＝非表示）— `geom_vline`/`geom_hline` は一度追加すると除去できないため、抑制判定は**レイヤー追加前**に行う。`colors`/`labels`/`linetypes` のユーザー向けキーは 1 単語識別子（`treated`/`synthetic`/`donors`/`placebo`）— `key_map`（識別子→表示名）でマージ後に表示名キーへ変換して ggplot スケールに渡す（キー＝表示文字列だと `labels` での relabel と系列指定が混線するため識別子に分離している）。`.merge_named_vec()` は未知の系列名をエラー（有効名一覧を提示）。trend の `labels` は color/linetype **両スケール**に同一値を渡す（片方だけだと統合凡例が分裂）。plot 引数はすべてデフォルトで既存の見た目を完全再現（後方互換）
-- **`linetypes`（trend/gap/scm_placebo gaps）**: `colors` と同じ形（trend・placebo gaps は名前付きベクトル、gap は単一値）。`.as_linetype()` が数値コード 0:6 を名前に変換してから `.merge_named_vec()` に渡す — マージ後のベクトルは character なので、素の `2` を混ぜると ggplot が hex ダッシュパターンとして解釈してしまうため。scm_placebo gaps は既定が両系列 solid（＝見た目不変）だが、linetype スケール自体は常に追加し `breaks`/`labels` を color スケールと揃える（凡例統合の維持）。bar chart 系（weights/pred_weights）と `type = "ratios"`（点）では無視
-- **`plot.scm_placebo(type = "ratios")` も `mspe_prune` を適用する**。サブタイトルが `n_placebo_used`（p 値が乗っている本数）を出す以上、剪定された run を描くと図が自分の caption と矛盾する。さらに `statistic = "post_mspe"` の結果では**検定がランク付けした量**（事後 MSPE）を描き、軸・タイトルも切り替える。剪定・非有限の落とし分は caption にまとめる。`plot_data()` 側は両統計量（`ratio` / `post_mspe`）を返し、剪定は同じく適用するが `mspe_threshold` 由来の非有限行は残す（プロットが落とし、フレームは報告する）
-- **plot の `align`**: `.align_offset()` が合成系列のプリ期間レベル差を返し、trend/gap 共通で `Y_synth` に加算。SDID 固有の λ 加重整列は `sdid.md` 参照。他手法は単純プリ平均差（ほぼ 0 の微修正）
-- **trend の `show_donors`**: `Donors` 系列は color/linetype 両スケールに追加して凡例統合を維持。`breaks` は donors 表示時のみ明示（非表示時に `breaks=NULL` を渡すと凡例自体が消えるので `waiver()`）。ドナー選択は `unit_weights` 降順 → GSC/MC/TASC は明示エラー
-- **SDID weights 2 パネル**: `coord_flip` は `facet_wrap(scales="free")` と併用不可のため SDID パスのみ native 横棒で実装。詳細は `sdid.md` 参照
-- **`vline_offset`（trend/gap/scm_placebo gaps 共通）**: `.vline_position()` が `T_pre + 1 + offset` を実数インデックスとして扱い、整数部で `times` を引いて小数部を隣接時点差で線形補間 — Date/POSIXct は `times` が既に数値化されているため同じ式で動く。範囲外は警告して線を描かない（`NA` を返し `anyNA(treat_time)` でレイヤーごと抑制）。`vline = list(xintercept = ...)` は `.vline_split()` が style リストから分離し（文字列は軸クラスに coerce）、`vline_offset` との併用はエラー — 位置指定が二重にならないようにするための排他制御
-- **既定は `.VLINE_OFFSET_DEFAULT = -1`**（最終プリ期間）。offset 0 だとその時点で既に処置が効いており処置系列と反実仮想が乖離済みなので、線より左が「一致を要求した区間」に見えなくなる。**範囲外警告と `xintercept` 併用エラーの判定はこの定数と比較する**（リテラル 0 と比べると、既定のまま `xintercept` を渡しただけで併用エラーになり、T_pre=0 のパネルで既定が警告を出す）
+- **staggered fit は `plot()` 未対応**: `Y_synth = NULL` のため明示エラーとし、`augment()` のコホート別 long df へ誘導する
+- **参照線の抑止はレイヤー追加前に判定**: `geom_vline`/`geom_hline` は追加後に除去できないため、`.line_style()` が `NULL`/`FALSE` で `NULL` を返し、追加自体をスキップする
+- **1 単語識別子キーと `key_map`**: `colors` / `labels` / `linetypes` のユーザー向けキーは `treated` / `synthetic` / `donors` / `placebo` とし、マージ後に `key_map` で表示名へ変換する（キーと表示文字列を混用すると `labels` のリラベル時に系列指定と衝突するため）。`trend` の `labels` は color と linetype 両スケールに同一値を渡して統合凡例を維持する
+- **`linetypes` の数値変換**: マージ先が character ベクトルのため、`.as_linetype()` で数値コード `0:6` を名前に変換してから `.merge_named_vec()` に渡す（生の数値を混ぜると ggplot が hex ダッシュパターンと誤認する）。`scm_placebo` gaps は既定が両系列 solid でも linetype スケールを常に追加して凡例を統合する
+- **trend の `show_donors`**: 非表示時に `breaks = NULL` を渡すと凡例自体が消えるため `waiver()` を使う。ドナー上位選択は `unit_weights` 降順を使うため、重みを持たない GSC/MC/TASC では明示エラーにする
+- **`plot.scm_placebo(type = "ratios")`**: サブタイトルが `n_placebo_used` を出すため `mspe_prune` を同じように適用し、`statistic = "post_mspe"` では事後 MSPE を描く。`plot_data()` は剪定を適用しつつ `mspe_threshold` 由来の非有限行は残して報告する
+- **SDID weights 2 パネル**: `coord_flip()` は `facet_wrap(scales = "free")` と併用できないため SDID のみ native 横棒で描画する。`align` の SDID 固有定義は `sdid` ルール参照
+- **`vline_offset` と `.VLINE_OFFSET_DEFAULT = -1`**: `.vline_position()` が `T_pre + 1 + offset` を線形補間する（Date/POSIXct も同じ式）。範囲外警告および `vline = list(xintercept = ...)` との排他エラーは必ず定数 `.VLINE_OFFSET_DEFAULT`（リテラル `0` ではない）と比較して判定する

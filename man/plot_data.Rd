@@ -6,6 +6,7 @@
 \alias{plot_data.coresynth}
 \alias{plot_data.scm_placebo}
 \alias{plot_data.sdid_event_study}
+\alias{plot_data.unit_conformal}
 \title{Extract the tidy data behind a coresynth plot}
 \usage{
 plot_data(x, ...)
@@ -24,6 +25,8 @@ plot_data(x, ...)
 \method{plot_data}{scm_placebo}(x, type = c("gaps", "ratios"), mspe_prune = NULL, ...)
 
 \method{plot_data}{sdid_event_study}(x, ci_type = NULL, ...)
+
+\method{plot_data}{unit_conformal}(x, include_pre = TRUE, ...)
 }
 \arguments{
 \item{x}{A \code{coresynth} fit (from \code{\link[=scm_fit]{scm_fit()}}), a \code{scm_placebo} object
@@ -57,6 +60,9 @@ run.}
 \item{ci_type}{For a \code{sdid_event_study} object: which confidence interval
 (\code{"normal"} or \code{"percentile"}) fills \code{conf.low}/\code{conf.high}, as in
 \code{\link[=plot.sdid_event_study]{plot.sdid_event_study()}}. \code{NULL} (default) uses the object's \code{ci_type}.}
+
+\item{include_pre}{Logical; for \code{unit_conformal} objects, include rolling
+pre-treatment diagnostics when available (default \code{TRUE}).}
 }
 \value{
 A tidy \code{data.frame}. Columns by \code{type}:

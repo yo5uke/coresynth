@@ -44,6 +44,81 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
     if (!is.na(t0) && t0 <= TT) Y_obs[t0:TT, j] <- NA_real_
   }
 
+  em_res    <- .tasc_em_fit(Y_obs, T_pre, idx_tr, idx_co, r = r,
+                            em_iter = em_iter, em_tol = em_tol,
+                            fix_A = fix_A, intercept = intercept,
+                            warn_unconverged = TRUE)
+  par       <- em_res$par
+  Z_smooth  <- em_res$Z_smooth
+  Y_hat_all <- em_res$Y_hat_all
+  n_iter    <- em_res$n_iter
+  converged <- em_res$converged
+
+  Y_treat   <- Y[, idx_tr, drop = FALSE]
+  Y_hat_tr  <- Y_hat_all[, idx_tr, drop = FALSE]
+
+  gap <- Y_treat - Y_hat_tr
+  # ATT: average gap over each unit's own post-treatment period
+  gap_post_vals <- vapply(seq_along(idx_tr), function(k) {
+    j  <- idx_tr[k]
+    t0 <- pan$T_adopt[j]
+    if (is.na(t0) || t0 > TT) return(NA_real_)
+    mean(gap[t0:TT, k, drop = FALSE], na.rm = TRUE)
+  }, numeric(1L))
+  att <- mean(gap_post_vals, na.rm = TRUE)
+
+  # Staggered adoption needs no cohort-by-cohort re-fitting here: Y_obs is
+  # already NA from each treated unit's own adoption date, so the single
+  # state-space fit is the staggered fit. Only the aggregation changes -- the
+  # cohort ATTs combine with the N_treated,g * T_post,g weights of Clarke et
+  # al. (2024), as in every other estimator, instead of weighting each treated
+  # unit equally.
+  stag <- if (!pan$is_sharp) .impute_cohort_fits(pan, gap, Y_treat, Y_hat_tr)
+
+  c(list(
+    method       = "tasc",
+    r            = r,
+    A            = par$A,
+    W            = par$W,
+    mu           = stats::setNames(par$mu, colnames(Y)),
+    C            = par$C,
+    Q            = par$Q,
+    R            = diag(par$R, N),
+    z0           = par$z0,
+    P0           = par$P0,
+    intercept    = isTRUE(intercept),
+    fix_A        = isTRUE(fix_A),
+    em_iter      = as.integer(em_iter),
+    em_tol       = em_tol,
+    n_iter       = n_iter,
+    converged    = converged,
+    Z_smooth     = Z_smooth,
+    Y_hat        = Y_hat_all,
+    Y_treat      = Y_treat,
+    Y_co_all     = Y[, idx_co, drop = FALSE],
+    gap          = gap,
+    times        = pan$times,
+    T_pre        = T_pre,
+    idx_co       = idx_co,
+    idx_tr       = idx_tr,
+    dropped_units = pan$dropped_units,
+    unit_weights = NULL,
+    estimate     = stag$estimate %||% att
+  ), if (!is.null(stag)) list(
+    staggered        = TRUE,
+    cohort_estimates = stag$cohort_estimates,
+    cohort_fits      = stag$cohort_fits
+  ))
+}
+
+# ── Internal: TASC SVD initialisation + EM loop ──────────────────────────────
+.tasc_em_fit <- function(Y_obs, T_pre, idx_tr, idx_co, r = 2,
+                         em_iter = 2000L, em_tol = 1e-6,
+                         fix_A = FALSE, intercept = TRUE,
+                         warn_unconverged = TRUE) {
+  TT <- nrow(Y_obs)
+  N  <- ncol(Y_obs)
+
   # The EM (Kalman smoother + per-unit M-steps) handles missing cells in
   # Y_obs, but the SVD/OLS initialisation below cannot: impute missing cells
   # with the column mean for the starting values only.
@@ -73,7 +148,7 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
     stop("r (", r, ") cannot exceed the number of units (", N, ").",
          call. = FALSE)
 
-  Y_pre <- impute_col_mean(Y[seq_len(T_pre), , drop = FALSE])
+  Y_pre <- impute_col_mean(Y_obs[seq_len(T_pre), , drop = FALSE])
   mu    <- if (isTRUE(intercept)) colMeans(Y_pre) else rep(0.0, N)
   Y_pre <- sweep(Y_pre, 2L, mu)
 
@@ -93,7 +168,7 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
 
   # Treated rows: least-squares loadings from pre-treatment fit
   # F_pre = U * diag(D): T_pre x r time-factor matrix
-  if(T_pre >= r && length(idx_rest) > 0L) {
+  if (T_pre >= r && length(idx_rest) > 0L) {
     F_pre <- svd_res$u %*% diag(svd_res$d[seq_len(r)], r, r)   # T_pre x r
     L_tr  <- solve(t(F_pre) %*% F_pre + diag(1e-8, r),
                    t(F_pre) %*% Y_pre[, idx_rest, drop = FALSE])
@@ -154,7 +229,7 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
     par    <- .tasc_mstep(Y_obs, ks, par, fix_A, isTRUE(intercept), obs_cache)
     n_iter <- em
   }
-  if (!converged)
+  if (!converged && isTRUE(warn_unconverged))
     warning(sprintf(paste0(
       "TASC: EM did not converge in %d iterations (em_tol = %g); raise ",
       "em_iter or loosen em_tol."), em_iter, em_tol), call. = FALSE)
@@ -164,59 +239,15 @@ fit_tasc_cpp <- function(y, d, id, time, r = 2, em_iter = 2000L, em_tol = 1e-6,
     kalman_smoother_cpp(Y_obs_t - as.numeric(par$mu), par$W, par$A,
                         par$C, par$Q, par$R, par$z0, par$P0)
   Z_smooth <- ks_final$z_smooth   # r x T
-
   Y_hat_all <- sweep(t(par$W %*% Z_smooth), 2L, par$mu, "+")   # T x N
-  Y_treat   <- Y[, idx_tr, drop = FALSE]
-  Y_hat_tr  <- Y_hat_all[, idx_tr, drop = FALSE]
 
-  gap <- Y_treat - Y_hat_tr
-  # ATT: average gap over each unit's own post-treatment period
-  gap_post_vals <- vapply(seq_along(idx_tr), function(k) {
-    j  <- idx_tr[k]
-    t0 <- pan$T_adopt[j]
-    if (is.na(t0) || t0 > TT) return(NA_real_)
-    mean(gap[t0:TT, k, drop = FALSE], na.rm = TRUE)
-  }, numeric(1L))
-  att <- mean(gap_post_vals, na.rm = TRUE)
-
-  # Staggered adoption needs no cohort-by-cohort re-fitting here: Y_obs is
-  # already NA from each treated unit's own adoption date, so the single
-  # state-space fit is the staggered fit. Only the aggregation changes -- the
-  # cohort ATTs combine with the N_treated,g * T_post,g weights of Clarke et
-  # al. (2024), as in every other estimator, instead of weighting each treated
-  # unit equally.
-  stag <- if (!pan$is_sharp) .impute_cohort_fits(pan, gap, Y_treat, Y_hat_tr)
-
-  c(list(
-    method       = "tasc",
-    r            = r,
-    A            = par$A,
-    W            = par$W,
-    mu           = stats::setNames(par$mu, colnames(Y)),
-    C            = par$C,
-    Q            = par$Q,
-    R            = diag(par$R, N),
-    z0           = par$z0,
-    P0           = par$P0,
-    intercept    = isTRUE(intercept),
-    n_iter       = n_iter,
-    converged    = converged,
-    Z_smooth     = Z_smooth,
-    Y_hat        = Y_hat_all,
-    Y_treat      = Y_treat,
-    gap          = gap,
-    times        = pan$times,
-    T_pre        = T_pre,
-    idx_co       = idx_co,
-    idx_tr       = idx_tr,
-    dropped_units = pan$dropped_units,
-    unit_weights = NULL,
-    estimate     = stag$estimate %||% att
-  ), if (!is.null(stag)) list(
-    staggered        = TRUE,
-    cohort_estimates = stag$cohort_estimates,
-    cohort_fits      = stag$cohort_fits
-  ))
+  list(
+    Y_hat_all = Y_hat_all,
+    par       = par,
+    n_iter    = n_iter,
+    converged = converged,
+    Z_smooth  = Z_smooth
+  )
 }
 
 # ── Internal: TASC M-step (Rho et al. 2026, Algorithm 7) ─────────────────────

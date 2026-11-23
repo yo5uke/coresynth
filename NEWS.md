@@ -6,6 +6,26 @@ correct sign. SDID weights move within the solver tolerance on well-scaled
 panels and become accurate on panels with large unit levels or common trends.
 Other estimates are unchanged up to rounding.
 
+## New features
+
+- **Unit-level conformal inference, relabeling test, and overlap check (Liu & Xu 2026).**
+  - `unit_conformal()` constructs finite-sample confidence sets and p-values from
+    across-unit exchangeability of out-of-sample prediction errors (no
+    stationarity assumption), supporting closed-form Full Conformal inference for
+    outcomes-only `"scm"` and `"si"` and Jackknife+ across all six estimators
+    (`"scm"`, `"sdid"`, `"gsc"`, `"mc"`, `"tasc"`, and `"si"`), with optional
+    studentized scores, simultaneous confidence bands (`band = TRUE`), rolling
+    pre-treatment diagnostics (`pre_diagnostics`), and `plot()` / `tidy()` /
+    `glance()` / `plot_data()` methods.
+  - `relabeling_test()` performs the Monte Carlo relabeling permutation test for
+    sharp nulls across all six estimators in both sharp (including multiple
+    treated units) and staggered panels, providing finite-sample randomization
+    inference for `"mc"` and `"tasc"` staggered fits.
+  - `overlap_check()` implements the model-free pre-treatment convex-hull
+    overlap diagnostic across sharp, staggered, and multi-arm fits.
+  - `donor_outcomes()` now returns the control outcome matrix for
+    `method = "tasc"` fits (`Y_co_all`).
+
 ## Bug fixes
 
 - **`augment_scm()` applied its bias correction with the wrong sign.** Ridge

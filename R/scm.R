@@ -731,6 +731,7 @@ fit_scm_cpp <- function(
     X0_mat          = if (use_cov) X0 else NULL,
     X1_vec          = if (use_cov) X1 else NULL,
     v_rows          = v_rows_used,
+    t_train         = if (t_train > 0L) t_train,
     v_window        = if (!is.null(z_rows)) pan$times[z_rows] else NULL,
     z_rows          = z_rows,
     v_optim_effective = effective_outer,

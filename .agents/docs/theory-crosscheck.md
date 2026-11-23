@@ -19,6 +19,7 @@
 | SI-PCR 多アーム（sharp） | ユニット因子 v_il の arm 非依存性: コントロール arm SVD 基底を全 arm で共有。加重平均 ATT | Agarwal et al. (2025) §5 |
 | SI-PCR 多アーム + staggered | (g,d) セルの二重加重平均・コホート内 SVD 基底共有・shared donor pool を保つ推論 | Agarwal et al. (2025) §5 + Clarke et al. (2024) |
 | Conformal | 全 T 再推定・moving-block 置換・test inversion CI（Algorithm 1 の `p > α`） | Chernozhukov, Wüthrich & Zhu (2021) |
+| Unit-Level Conformal | Full Conformal（閉形式二次不等式・outer 同時バンド）・Jackknife+（全 6 手法、`q_gamma`、interval-dual p 値、Prop. 6 失敗処理）・rolling 事前診断（Alg. 3）・`relabeling_test()`（S.5 / Alg. 6 / Prop. 6）・`overlap_check()`（S.6.2 / SM A2.5） | Liu & Xu (2026) |
 | SCM 検証ツール | in-time placebo（backdating）・ドナー LOO（V 固定, fn.20）・placebo gap プロット（Fig 4–8, mspe_prune 20/5/2） | ADH (2015)・ADH (2010) §3.4 |
 | SCM staggered | partially pooled SCM（Eq. 6 の ν 目的関数）・intercept shift（Eq. 8–10）・jackknife（App. A.1）・wild bootstrap（Eq. 12 の全ユニット和 ＋ Otsu & Rai 2017 Eq. 8–9）・コホート内完全プーリング（App A.2 の和パラメータ化）。augsynth と不等コホートサイズ含め 4〜5 桁一致 | Ben-Michael, Feller & Rothstein (2022) 本文 + App A.1/A.2 + augsynth・Otsu & Rai (2017) |
 | SCM 共変量 | balance で扱う（ADH 2010 S.2.3 の V 加重予測子、BFR S.5.2 Eq. 11 の `cov_method = "balance"`）。sharp の `covariates`（partial-out）は明示エラー。staggered の `partial_out` は Clarke S.2.2 の借用 | Abadie et al. (2010) S.2.3・BFR (2022) S.4/S.5.2 |
@@ -33,6 +34,7 @@
 | 順列検定 | ADH 2010 Fig. 8 | ADH 予測子指定で p=1/39=0.0256 を再現 |
 | SDID | synthdid 0.0.9 | Prop 99 で −15.6046 vs −15.6038、重み相関 0.9998。真の最適解（`solve_simplex_qp` tol 1e-15）からの ω 最大誤差は coresynth 7e-7〜1.6e-6 対 synthdid 1e-4〜1.8e-3（12 パネルで点推定差平均 1.5e-3・最大 4.8e-3）。ζ は synthdid が `sd()`（n-1 除算）、coresynth は 1/n 除算（比 0.99943） |
 | Conformal | scinference | p=0.096774 完全一致 |
+| Unit-Level Conformal | Liu & Xu (2026) S.6.2 | Prop 99（outcomes-only SCM・`level = 0.90`・`pre_diagnostics = 4`）で保証被覆率 0.923 / $q_\gamma = 2$、Full Conformal ATT CI `[-35.054, -3.973]`（`p = 0.077`、post 5/12 有意・pre 0/4）、Jackknife+ ATT CI `[-44.985, 5.958]`（`p = 0.128`、post 0/12・pre 0/4）が公表値と一致 |
 | GSC | gsynth / fect | `force` = unit/time/two-way は r=0,1,2 で ATT 1e-15 一致。`"none"` は gsynth が総平均 μ を持つ分だけ違う（Y から総平均を引けば一致）。共変量つき（Xu 式 3 の DGP、30 draws）で ATT 平均差 0.029 |
 | MC | MCPanel / fect | 2.9507 vs 2.9515 / 2.9138（真値 3）。水準別バイアス検証（N_co=20・40 draws）: FE ありで level=0/20 とも −0.018/−0.020（MCPanel 既定 −0.016 と一致）；FE なしは level=20 で +0.230（MCPanel FE 無効 +0.254）。TWFE 残差 σ_max 化後は level 0〜10000 で RMSE 0.3455 と完全不変 |
 

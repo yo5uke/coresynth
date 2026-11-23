@@ -45,6 +45,8 @@ reference:
     for the supported estimators.
   contents:
   - conformal_inference
+  - unit_conformal
+  - relabeling_test
   - mspe_ratio_pval
   - scm_rank_pval
   - scm_balance_frontier
@@ -58,10 +60,12 @@ reference:
 
 - title: Diagnostics & robustness checks
   desc: >
-    Validation exercises recommended by Abadie, Diamond & Hainmueller (2015).
+    Validation exercises recommended by Abadie, Diamond & Hainmueller (2015)
+    and Liu & Xu (2026).
   contents:
   - placebo_in_time
   - loo_donors
+  - overlap_check
 
 - title: Augmentation & broom tidiers
   desc: >
@@ -85,6 +89,7 @@ reference:
   - plot.scm_placebo
   - plot.scm_design
   - plot.sdid_event_study
+  - plot.unit_conformal
   - plot_data
   - export_json
 

@@ -1136,3 +1136,153 @@ plot.sdid_event_study <- function(x, ci_type = NULL,
   p
 }
 
+#' @rdname plot_data
+#' @param include_pre Logical; for `unit_conformal` objects, include rolling
+#'   pre-treatment diagnostics when available (default `TRUE`).
+#' @export
+plot_data.unit_conformal <- function(x, include_pre = TRUE, ...) {
+  tidy.unit_conformal(x, conf.int = TRUE, include_pre = include_pre)
+}
+
+#' Plot Unit-Level Conformal Inference Results
+#'
+#' Draws the period-wise effect estimates, confidence intervals, optional
+#' simultaneous confidence bands, and (when computed via
+#' `pre_diagnostics > 0`) rolling pre-treatment diagnostic intervals returned
+#' by [unit_conformal()].
+#'
+#' @param x A `unit_conformal` object from [unit_conformal()].
+#' @param show_band Logical; draw the simultaneous confidence band behind the
+#'   period-wise intervals when available (default `TRUE`).
+#' @param include_pre Logical; include rolling pre-treatment diagnostics on
+#'   the left of the treatment line when available (default `TRUE`).
+#' @param colors Optional color specification: either a single color string for
+#'   post-treatment estimates/intervals (pre-treatment diagnostics stay
+#'   `"gray45"`), or a named character vector with `"pre"` / `"post"`.
+#' @param connect Logical; connect adjacent period estimates with a line
+#'   (default `FALSE`).
+#' @param vline Aesthetic overrides for the vertical treatment-time reference
+#'   line, as a list passed to [ggplot2::geom_vline()], or `NULL`/`FALSE` to
+#'   hide it. Shown when pre-treatment diagnostics are plotted or when
+#'   `xintercept` is explicitly supplied.
+#' @param vline_offset Where to draw the vertical treatment line relative to the
+#'   first post-treatment period (default `-1`, the last pre-treatment period).
+#' @param hline Aesthetic overrides for the horizontal zero reference line, as
+#'   a list passed to [ggplot2::geom_hline()], or `NULL`/`FALSE` to hide it.
+#' @param ... Ignored.
+#'
+#' @return A `ggplot` object.
+#' @seealso [unit_conformal()], [plot_data()]
+#' @export
+plot.unit_conformal <- function(x, show_band = TRUE, include_pre = TRUE,
+                                colors = NULL, connect = FALSE,
+                                vline = list(),
+                                vline_offset = .VLINE_OFFSET_DEFAULT,
+                                hline = list(), ...) {
+  if (!isTRUE(show_band) && !isFALSE(show_band))
+    stop("`show_band` must be TRUE or FALSE.", call. = FALSE)
+  if (!isTRUE(include_pre) && !isFALSE(include_pre))
+    stop("`include_pre` must be TRUE or FALSE.", call. = FALSE)
+  if (!isTRUE(connect) && !isFALSE(connect))
+    stop("`connect` must be TRUE or FALSE.", call. = FALSE)
+  .check_vline_offset(vline_offset)
+
+  df <- plot_data.unit_conformal(x, include_pre = include_pre)
+  if (!"period" %in% names(df)) df$period <- "post"
+  df$period <- factor(df$period, levels = c("pre", "post"))
+
+  coerce_time <- function(v) {
+    if (is.character(v) || is.factor(v)) {
+      nv <- suppressWarnings(as.numeric(as.character(v)))
+      if (!anyNA(nv)) return(nv)
+    }
+    v
+  }
+  df$time   <- coerce_time(df$time)
+  all_times <- coerce_time(x$times %||% df$time)
+
+  pal <- if (is.null(colors)) {
+    c(pre = "gray45", post = "#1a9641")
+  } else if (length(colors) == 1L && is.null(names(colors))) {
+    c(pre = "gray45", post = unname(colors[[1L]]))
+  } else {
+    .merge_named_colors(c(pre = "gray45", post = "#1a9641"), colors)
+  }
+
+  vline_style <- .line_style(list(color = "gray40", linetype = "dotted"), vline)
+  hline_style <- .line_style(list(color = "gray50", linetype = "dashed"), hline)
+  vl          <- .vline_split(vline_style, all_times, vline_offset)
+  vline_style <- vl$style
+  has_pre     <- any(df$period == "pre")
+  treat_time  <- if (!is.null(vl$at)) vl$at
+                 else if (has_pre && !is.null(x$T_pre))
+                   .vline_position(all_times, x$T_pre, vline_offset)
+                 else NA
+
+  df_ci <- df[is.finite(df$conf.low) & is.finite(df$conf.high), , drop = FALSE]
+  has_band_cols <- isTRUE(show_band) &&
+    all(c("band.low", "band.high") %in% names(df))
+  df_band <- if (has_band_cols) {
+    df[df$period == "post" & is.finite(df$band.low) & is.finite(df$band.high),
+       , drop = FALSE]
+  } else {
+    df[0L, , drop = FALSE]
+  }
+
+  times_u <- sort(unique(df$time))
+  eb_width <- if (is.numeric(times_u) && length(times_u) > 1L) {
+    0.2 * min(diff(times_u))
+  } else {
+    0.2
+  }
+
+  proc_label <- if (identical(x$procedure, "full_conformal")) {
+    "full conformal"
+  } else {
+    "Jackknife+"
+  }
+  has_fin_post <- any(df$period == "post" & is.finite(df$conf.low) &
+                        is.finite(df$conf.high))
+  sub_str <- sprintf(
+    "ATT = %s; %g%% %s (guaranteed coverage >= %.3f, %s score%s)",
+    formatC(x$estimate, digits = 4, format = "g"),
+    100 * x$level,
+    proc_label,
+    x$guaranteed_coverage,
+    x$score,
+    if (!has_fin_post) "; intervals unbounded" else ""
+  )
+
+  p <- ggplot(df, aes(x = time, y = estimate, color = period)) +
+    {if (!is.null(hline_style))
+      do.call(geom_hline, c(list(yintercept = 0), hline_style))} +
+    {if (!is.null(vline_style) && !anyNA(treat_time))
+      do.call(geom_vline, c(list(xintercept = treat_time), vline_style))} +
+    {if (nrow(df_band) > 0L)
+      geom_linerange(data = df_band,
+                     aes(x = time, ymin = band.low, ymax = band.high,
+                         color = period),
+                     alpha = 0.25, linewidth = 2.5, inherit.aes = FALSE)} +
+    {if (nrow(df_ci) > 0L)
+      geom_errorbar(data = df_ci,
+                    aes(x = time, ymin = conf.low, ymax = conf.high,
+                        color = period),
+                    width = eb_width, linewidth = 0.6, inherit.aes = FALSE)} +
+    {if (isTRUE(connect))
+      geom_line(aes(group = 1L), linewidth = 0.7)} +
+    geom_point(size = 2.2) +
+    scale_color_manual(values = pal, guide = if (has_pre) "legend" else "none") +
+    {if (is.numeric(times_u) && length(times_u) <= 30L)
+      scale_x_continuous(breaks = times_u)} +
+    theme_minimal(base_size = 13) +
+    labs(
+      title    = sprintf("Unit-Level Conformal Inference  [%s]",
+                         toupper(x$base_method)),
+      subtitle = sub_str,
+      x        = "Time",
+      y        = "Treatment Effect",
+      color    = NULL
+    )
+  p
+}
+

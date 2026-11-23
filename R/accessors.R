@@ -143,7 +143,7 @@ donor_outcomes.coresynth_mc <- function(x, ...) x$Y_co_all
 
 #' @rdname treated_outcomes
 #' @export
-donor_outcomes.coresynth_tasc <- function(x, ...) NULL
+donor_outcomes.coresynth_tasc <- function(x, ...) x$Y_co_all
 
 #' @rdname treated_outcomes
 #' @export

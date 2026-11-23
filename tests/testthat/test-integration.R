@@ -7511,3 +7511,529 @@ test_that("scm_design unit_level solves eq. 10 exactly when m > k and guards T0 
     "No experimental periods"
   )
 })
+
+# ── Liu & Xu (2026): overlap_check() and unit_conformal() ────────────────────
+
+test_that("unit_conformal calibration matches Liu & Xu (2026) Table 4", {
+  Ns <- c(10L, 17L, 20L, 30L, 39L, 50L)
+
+  # gamma = 0.10 (level = 0.90)
+  fc_90 <- vapply(Ns, function(N) .uc_guaranteed_coverage(N, 0.10, "full_conformal"),
+                  numeric(1L))
+  j_90  <- vapply(Ns, function(N) .uc_guaranteed_coverage(N, 0.10, "jackknife_plus"),
+                  numeric(1L))
+  expect_equal(round(fc_90, 3), c(0.900, 0.941, 0.900, 0.900, 0.923, 0.900))
+  expect_equal(round(j_90,  3), c(0.900, 0.941, 0.950, 0.900, 0.923, 0.900))
+
+  # gamma = 0.05 (level = 0.95): N = 10, 17 give q_gamma = 0 (unbounded R)
+  expect_equal(.uc_q_gamma(10L, 0.05), 0L)
+  expect_equal(.uc_q_gamma(17L, 0.05), 0L)
+  expect_equal(.uc_guaranteed_coverage(10L, 0.05, "full_conformal"), 1.0)
+  expect_equal(.uc_guaranteed_coverage(17L, 0.05, "jackknife_plus"), 1.0)
+
+  fc_95 <- vapply(Ns[3:6], function(N) .uc_guaranteed_coverage(N, 0.05, "full_conformal"),
+                  numeric(1L))
+  j_95  <- vapply(Ns[3:6], function(N) .uc_guaranteed_coverage(N, 0.05, "jackknife_plus"),
+                  numeric(1L))
+  expect_equal(round(fc_95, 3), c(0.950, 0.967, 0.974, 0.960))
+  expect_equal(round(j_95,  3), c(0.950, 0.967, 0.974, 0.980))
+
+  # When gamma < 1/N (e.g. N = 12, level = 0.95), intervals are [-Inf, Inf]
+  p_small <- make_panel(N = 12, T = 16, T_pre = 10, effect = 3.0, seed = 7)
+  fit_s   <- scm_fit(y ~ d | id + time, data = p_small, method = "scm")
+  uc_s    <- unit_conformal(fit_s, level = 0.95)
+  expect_equal(uc_s$ci_lower, -Inf)
+  expect_equal(uc_s$ci_upper,  Inf)
+  expect_true(all(uc_s$terms$conf.low  == -Inf))
+  expect_true(all(uc_s$terms$conf.high ==  Inf))
+})
+
+test_that("unit_conformal Jackknife+ obeys interval-dual p-value duality (Proposition 5)", {
+  p_duality <- make_panel(N = 12, T = 18, T_pre = 12, effect = 4.0, seed = 11)
+  for (m in c("scm", "sdid", "gsc", "mc", "si")) {
+    fit <- suppressMessages(scm_fit(y ~ d | id + time, data = p_duality, method = m))
+    uc  <- unit_conformal(fit, procedure = "jackknife_plus", level = 0.90)
+    gamma_tol <- (1 - 0.90) + 1e-9
+    out_of_ci <- (0 < uc$terms$conf.low) | (0 > uc$terms$conf.high)
+    expect_identical(out_of_ci, uc$terms$p.value <= gamma_tol,
+                     info = paste("period duality failed for", m))
+    expect_identical((0 < uc$ci_lower) || (0 > uc$ci_upper),
+                     uc$p_value <= gamma_tol,
+                     info = paste("overall duality failed for", m))
+  }
+})
+
+test_that("closed-form Full Conformal matches brute-force Algorithm 1 grid for SCM and SI", {
+  p_fc <- make_panel(N = 12, T = 16, T_pre = 10, effect = 3.0, seed = 21)
+
+  check_against_grid <- function(fit) {
+    uc <- unit_conformal(fit, procedure = "full_conformal", level = 0.90, band = FALSE)
+    Yco    <- donor_outcomes(fit)
+    y1     <- treated_outcomes(fit)
+    T_pre  <- fit$T_pre
+    TT     <- length(y1)
+    N_co   <- ncol(Yco)
+    N      <- N_co + 1L
+    pre    <- seq_len(T_pre)
+    post   <- (T_pre + 1L):TT
+    Y_all  <- cbind(y1, Yco)
+
+    # Check the first post-treatment period on a dense grid covering the closed-form CI
+    t_idx <- post[1L]
+    est   <- uc$terms$estimate[1L]
+    lo    <- uc$terms$conf.low[1L]
+    hi    <- uc$terms$conf.high[1L]
+    span  <- max(abs(hi - lo), 1)
+    grid  <- seq(lo - 0.1 * span, hi + 0.1 * span, length.out = 201L)
+
+    # Pre-fit each unit's weights once (independent of c for SCM/SI)
+    W_list <- lapply(seq_len(N), function(idx) {
+      Y_tr_p <- Y_all[pre, -idx, drop = FALSE]
+      y_p    <- Y_all[pre, idx]
+      if (identical(fit$method, "scm")) {
+        .uc_scm_fit_weights(Y_tr_p, y_p, fit = fit)
+      } else {
+        k_si <- min(fit$k, T_pre, N_co)
+        drop(si_pcr_cpp(Y_tr_p, Y_all[post, -idx, drop = FALSE],
+                        matrix(y_p, ncol = 1L), k_si)$W)
+      }
+    })
+
+    p_grid <- vapply(grid, function(c_val) {
+      y_col <- Y_all[t_idx, ]
+      y_col[1L] <- y_col[1L] - c_val
+      scores <- vapply(seq_len(N), function(idx) {
+        abs(y_col[idx] - sum(W_list[[idx]] * y_col[-idx]))
+      }, numeric(1L))
+      mean(scores >= scores[1L] - 1e-12)
+    }, numeric(1L))
+
+    acc <- grid[p_grid > (1 - 0.90) + 1e-9]
+    step <- grid[2L] - grid[1L]
+    expect_equal(lo, min(acc), tolerance = 2 * step)
+    expect_equal(hi, max(acc), tolerance = 2 * step)
+  }
+
+  fit_scm <- suppressMessages(scm_fit(y ~ d | id + time, data = p_fc, method = "scm"))
+  fit_si  <- scm_fit(y ~ d | id + time, data = p_fc, method = "si")
+  check_against_grid(fit_scm)
+  check_against_grid(fit_si)
+})
+
+test_that("unit_conformal works across all 6 estimators, covariates, studentized scores, and bands", {
+  set.seed(123)
+  N <- 14L; TT <- 20L; T_pre <- 14L
+  p_cov <- make_panel(N = N, T = TT, T_pre = T_pre, effect = 3.0, seed = 123)
+  p_cov$x1 <- rnorm(nrow(p_cov)) + 0.3 * p_cov$y
+
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
+    fit <- suppressMessages(
+      if (identical(m, "tasc"))
+        scm_fit(y ~ d | id + time, data = p_cov, method = m, r = 1L)
+      else
+        scm_fit(y ~ d | id + time, data = p_cov, method = m)
+    )
+    uc  <- unit_conformal(fit, level = 0.90, band = TRUE)
+    expect_s3_class(uc, c("unit_conformal", "coresynth_inference"))
+    expect_equal(nrow(uc$terms), TT - T_pre)
+    expect_true(all(c("time", "estimate", "conf.low", "conf.high", "p.value",
+                      "band.low", "band.high") %in% names(uc$terms)))
+    # Simultaneous band always contains the period-wise CI
+    expect_true(all(uc$terms$band.low  <= uc$terms$conf.low  + 1e-10))
+    expect_true(all(uc$terms$band.high >= uc$terms$conf.high - 1e-10))
+    expect_true(is.finite(uc$ci_lower) && is.finite(uc$ci_upper))
+    expect_lte(uc$ci_lower, uc$ci_upper)
+    expect_true(uc$p_value >= 0 && uc$p_value <= 1)
+
+    # S3 print, tidy, glance
+    expect_output(print(uc), "Unit-Level Conformal Inference")
+    td <- broom::tidy(uc)
+    expect_identical(nrow(td), TT - T_pre)
+    td_noci <- broom::tidy(uc, conf.int = FALSE)
+    expect_false("conf.low" %in% names(td_noci))
+    gl <- broom::glance(uc)
+    expect_identical(nrow(gl), 1L)
+    expect_identical(gl$method, uc$method)
+
+    # Studentized score
+    uc_st <- unit_conformal(fit, level = 0.90, score = "studentized", band = TRUE)
+    expect_true(all(uc_st$terms$band.low  <= uc_st$terms$conf.low  + 1e-10))
+    expect_true(all(uc_st$terms$band.high >= uc_st$terms$conf.high - 1e-10))
+  }
+
+  # Predictor-based SCM (auto -> jackknife_plus)
+  fit_scm_pred <- suppressMessages(scm_fit(
+    y ~ d | id + time, data = p_cov, method = "scm",
+    predictors = list(pred("y", 1:7, "mean"), pred("x1", 1:14, "mean"))
+  ))
+  uc_pred <- unit_conformal(fit_scm_pred, level = 0.90)
+  expect_identical(uc_pred$procedure, "jackknife_plus")
+  expect_true(all(is.finite(uc_pred$terms$conf.low)))
+
+  # Covariate SDID and GSC
+  fit_sdid_cov <- scm_fit(y ~ d | id + time, data = p_cov, method = "sdid",
+                          covariates = "x1")
+  uc_sdid_cov <- unit_conformal(fit_sdid_cov, level = 0.90)
+  expect_identical(uc_sdid_cov$procedure, "jackknife_plus")
+  expect_true(all(is.finite(uc_sdid_cov$terms$conf.low)))
+
+  fit_gsc_cov <- scm_fit(y ~ d | id + time, data = p_cov, method = "gsc",
+                         covariates = "x1", r = 1L)
+  uc_gsc_cov <- unit_conformal(fit_gsc_cov, level = 0.90)
+  expect_identical(uc_gsc_cov$procedure, "jackknife_plus")
+  expect_true(all(is.finite(uc_gsc_cov$terms$conf.low)))
+})
+
+test_that("unit_conformal rejects staggered, multi-arm, multi-treated, and invalid full_conformal", {
+  stag <- make_panel(N = 12, T = 20, T_pre = 10)
+  stag$d <- as.integer((stag$id == "u1" & stag$time > 10) |
+                         (stag$id == "u2" & stag$time > 14))
+  fit_stag <- scm_fit(y ~ d | id + time, data = stag, method = "sdid")
+  expect_error(unit_conformal(fit_stag), "sharp, single-treated-unit")
+
+  fit_tr3 <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid")
+  expect_error(unit_conformal(fit_tr3), "single treated unit")
+
+  set.seed(5)
+  ma <- expand.grid(id = paste0("u", 1:12), time = 1:20, stringsAsFactors = FALSE)
+  arm <- c(u1 = 1L, u2 = 2L)
+  a_val <- ifelse(ma$id %in% names(arm), arm[ma$id], 0L)
+  ma$d <- ifelse(a_val > 0L & ma$time > 14L, a_val, 0L)
+  ma$y <- rnorm(nrow(ma)) + ma$d
+  fit_ma <- scm_fit(y ~ d | id + time, data = ma, method = "si")
+  expect_error(unit_conformal(fit_ma), "sharp, single-treated-unit")
+
+  p1 <- make_panel(N = 12, T = 16, T_pre = 10)
+  for (m in c("sdid", "gsc", "mc", "tasc")) {
+    fit_m <- scm_fit(y ~ d | id + time, data = p1, method = m)
+    expect_error(unit_conformal(fit_m, procedure = "full_conformal"),
+                 "jackknife_plus")
+  }
+  p1$x1 <- rnorm(nrow(p1))
+  fit_pred <- scm_fit(y ~ d | id + time, data = p1, method = "scm",
+                      predictors = list(pred("y", 1:5, "mean"), pred("x1", 1:10, "mean")))
+  expect_error(unit_conformal(fit_pred, procedure = "full_conformal"),
+               "jackknife_plus")
+})
+
+test_that("overlap_check flags convex-hull outliers and handles edge cases", {
+  set.seed(99)
+  N <- 16L; TT <- 18L; T_pre <- 12L
+  rows <- expand.grid(time = seq_len(TT), id = paste0("u", seq_len(N)),
+                      stringsAsFactors = FALSE)
+  rows <- rows[order(rows$id, rows$time), ]
+  # Controls oscillate modestly; u1 has an extreme pre-treatment trend outside the hull
+  trend <- seq_len(TT)
+  slope <- c(10.0, stats::runif(N - 1L, -0.3, 0.3))
+  names(slope) <- paste0("u", seq_len(N))
+  rows$y <- slope[rows$id] * trend + rnorm(nrow(rows), 0, 0.2)
+  rows$d <- as.integer(rows$id == "u1" & rows$time > T_pre)
+  rows$y[rows$d == 1] <- rows$y[rows$d == 1] + 2.0
+
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
+    fit_out <- suppressMessages(scm_fit(y ~ d | id + time, data = rows, method = m))
+    ov <- overlap_check(fit_out)
+    expect_s3_class(ov, "coresynth_overlap")
+    expect_true(ov$any_flagged, info = paste("outlier not flagged for", m))
+    expect_identical(ov$units$status, "flagged")
+    expect_output(print(ov), "Flagged:")
+    expect_identical(nrow(broom::tidy(ov)), 1L)
+  }
+
+  # Interior treated unit (same DGP as controls) should not be flagged
+  rows_in <- rows
+  rows_in$y[rows_in$id == "u1"] <- 0.0 * trend + rnorm(TT, 0, 0.1)
+  fit_in <- suppressMessages(scm_fit(y ~ d | id + time, data = rows_in, method = "scm"))
+  ov_in  <- overlap_check(fit_in)
+  expect_false(ov_in$any_flagged)
+  expect_identical(ov_in$units$status, "ok")
+
+  # Staggered panel works across methods
+  stag <- make_panel(N = 14, T = 20, T_pre = 10)
+  stag$d <- as.integer((stag$id == "u1" & stag$time > 10) |
+                         (stag$id == "u2" & stag$time > 14))
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
+    fit_st <- suppressMessages(scm_fit(y ~ d | id + time, data = stag, method = m))
+    ov_st  <- overlap_check(fit_st)
+    expect_identical(nrow(ov_st$units), 2L)
+    expect_true(all(ov_st$units$status %in% c("ok", "flagged")))
+  }
+
+  # Too few pre-periods (< 4) or controls (< 5) -> not_assessed
+  p_short <- make_panel(N = 10, T = 8, T_pre = 3)
+  fit_short <- suppressMessages(scm_fit(y ~ d | id + time, data = p_short, method = "scm"))
+  ov_short <- overlap_check(fit_short)
+  expect_identical(ov_short$units$status, "not_assessed")
+  expect_true(is.na(ov_short$units$flagged))
+
+  p_few_co <- make_panel(N = 5, T = 12, T_pre = 8)
+  fit_few  <- suppressMessages(scm_fit(y ~ d | id + time, data = p_few_co, method = "scm"))
+  ov_few   <- overlap_check(fit_few)
+  expect_identical(ov_few$units$status, "not_assessed")
+})
+
+test_that("unit_conformal attains finite-sample coverage under exchangeable AR(1)/RW errors", {
+  # Exchangeable units with random-walk factors + AR(1) idiosyncratic noise
+  # (where time-based CWZ degrades). Verify 90% coverage across 30 replications.
+  set.seed(2026)
+  n_rep <- 30L
+  N <- 12L; TT <- 15L; T_pre <- 12L; tau_true <- 2.0
+
+  cov_mat <- matrix(FALSE, nrow = n_rep, ncol = 4L)
+  colnames(cov_mat) <- c("scm", "gsc", "mc", "tasc")
+
+  for (rep_i in seq_len(n_rep)) {
+    f1 <- cumsum(rnorm(TT, 0, 0.4))
+    lam <- rnorm(N, 1, 0.3)
+    alpha <- rnorm(N, 0, 0.5)
+    E <- matrix(0.0, TT, N)
+    for (j in seq_len(N)) {
+      eps <- numeric(TT)
+      eps[1L] <- rnorm(1L, 0, 0.4)
+      for (t in 2:TT) eps[t] <- 0.7 * eps[t - 1L] + rnorm(1L, 0, 0.3)
+      E[, j] <- eps
+    }
+    Y <- outer(rep(1, TT), alpha) + outer(f1, lam) + E
+    df <- expand.grid(time = seq_len(TT), id = paste0("u", seq_len(N)),
+                      stringsAsFactors = FALSE)
+    df <- df[order(df$id, df$time), ]
+    df$y <- as.vector(Y)
+    df$d <- as.integer(df$id == "u1" & df$time > T_pre)
+    df$y[df$d == 1L] <- df$y[df$d == 1L] + tau_true
+
+    fit_scm  <- suppressMessages(scm_fit(y ~ d | id + time, data = df, method = "scm"))
+    fit_gsc  <- scm_fit(y ~ d | id + time, data = df, method = "gsc", r = 1L)
+    fit_mc   <- scm_fit(y ~ d | id + time, data = df, method = "mc", lambda = 2.0)
+    fit_tasc <- scm_fit(y ~ d | id + time, data = df, method = "tasc",
+                        r = 1L, em_iter = 2000L, em_tol = 1e-4)
+
+    uc_scm  <- unit_conformal(fit_scm,  level = 0.90, band = FALSE)
+    uc_gsc  <- unit_conformal(fit_gsc,  level = 0.90, band = FALSE)
+    uc_mc   <- unit_conformal(fit_mc,   level = 0.90, band = FALSE)
+    uc_tasc <- unit_conformal(fit_tasc, level = 0.90, band = FALSE)
+
+    t1 <- 1L
+    cov_mat[rep_i, "scm"]  <- tau_true >= uc_scm$terms$conf.low[t1]  && tau_true <= uc_scm$terms$conf.high[t1]
+    cov_mat[rep_i, "gsc"]  <- tau_true >= uc_gsc$terms$conf.low[t1]  && tau_true <= uc_gsc$terms$conf.high[t1]
+    cov_mat[rep_i, "mc"]   <- tau_true >= uc_mc$terms$conf.low[t1]   && tau_true <= uc_mc$terms$conf.high[t1]
+    cov_mat[rep_i, "tasc"] <- tau_true >= uc_tasc$terms$conf.low[t1] && tau_true <= uc_tasc$terms$conf.high[t1]
+  }
+
+  # Guaranteed coverage at N = 12, level = 0.90 is 1 - 1/12 = 0.917.
+  # With 30 draws (SE ~ 0.05), require >= 0.75 across all four estimators.
+  rates <- colMeans(cov_mat)
+  expect_true(all(rates >= 0.75),
+              info = paste("coverage rates:", paste(names(rates), round(rates, 3), collapse = ", ")))
+})
+
+test_that("unit_conformal rolling pre_diagnostics works for target-date and full-path estimators", {
+  set.seed(303)
+  p_diag <- make_panel(N = 14, T = 20, T_pre = 12, effect = 3.0, seed = 303)
+  p_diag$x1 <- rnorm(nrow(p_diag)) + 0.2 * p_diag$y
+
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
+    fit <- suppressMessages(
+      if (identical(m, "tasc"))
+        scm_fit(y ~ d | id + time, data = p_diag, method = m, r = 1L)
+      else if (identical(m, "gsc"))
+        scm_fit(y ~ d | id + time, data = p_diag, method = m, r = 1L)
+      else
+        scm_fit(y ~ d | id + time, data = p_diag, method = m)
+    )
+    uc <- unit_conformal(fit, level = 0.90, pre_diagnostics = 3L)
+    expect_identical(uc$pre_diagnostics, 3L)
+    expect_s3_class(uc$pre_terms, "data.frame")
+    expect_identical(nrow(uc$pre_terms), 3L)
+    expect_identical(uc$pre_terms$time, fit$times[10:12])
+    expect_true(all(is.finite(uc$pre_terms$estimate)))
+    expect_true(all(is.finite(uc$pre_terms$conf.low) &
+                      is.finite(uc$pre_terms$conf.high)))
+    expect_true(all(uc$pre_terms$conf.low <= uc$pre_terms$conf.high))
+    expect_true(all(uc$pre_terms$p.value > 0 & uc$pre_terms$p.value <= 1))
+
+    if (identical(uc$procedure, "jackknife_plus")) {
+      gamma_tol <- (1 - 0.90) + 1e-9
+      out_pre <- (0 < uc$pre_terms$conf.low) | (0 > uc$pre_terms$conf.high)
+      expect_identical(out_pre, uc$pre_terms$p.value <= gamma_tol)
+    }
+
+    expect_output(print(uc), "Pre-treatment diagnostics \\(m = 3\\):")
+    # Default tidy() remains backwards compatible (post-treatment rows only)
+    expect_identical(nrow(broom::tidy(uc)), 8L)
+    td_all <- broom::tidy(uc, include_pre = TRUE)
+    expect_identical(nrow(td_all), 11L)
+    expect_identical(td_all$period, c(rep("pre", 3L), rep("post", 8L)))
+  }
+
+  # SDID with covariates
+  fit_sdid_c <- scm_fit(y ~ d | id + time, data = p_diag, method = "sdid",
+                        covariates = "x1")
+  uc_sdid_c  <- unit_conformal(fit_sdid_c, level = 0.90, pre_diagnostics = 2L)
+  expect_identical(nrow(uc_sdid_c$pre_terms), 2L)
+  expect_true(all(is.finite(uc_sdid_c$pre_terms$conf.low)))
+
+  # Error guards
+  fit_scm <- suppressMessages(scm_fit(y ~ d | id + time, data = p_diag, method = "scm"))
+  expect_error(unit_conformal(fit_scm, pre_diagnostics = 12L), "at least 1 is required")
+  fit_sdid <- scm_fit(y ~ d | id + time, data = p_diag, method = "sdid")
+  expect_error(unit_conformal(fit_sdid, pre_diagnostics = 11L), "at least 2 periods")
+  fit_gsc <- scm_fit(y ~ d | id + time, data = p_diag, method = "gsc", r = 2L)
+  expect_error(unit_conformal(fit_gsc, pre_diagnostics = 11L), "at least 2 periods")
+  fit_pred <- suppressMessages(scm_fit(
+    y ~ d | id + time, data = p_diag, method = "scm",
+    predictors = list(pred("y", 1:6, "mean"), pred("x1", 1:12, "mean"))
+  ))
+  expect_error(unit_conformal(fit_pred, pre_diagnostics = 2L), "predictor-based SCM")
+})
+
+test_that("plot.unit_conformal and plot_data.unit_conformal build valid ggplots", {
+  p_pl <- make_panel(N = 14, T = 20, T_pre = 12, effect = 3.0, seed = 404)
+  fit_scm <- suppressMessages(scm_fit(y ~ d | id + time, data = p_pl, method = "scm"))
+  uc_pre  <- unit_conformal(fit_scm, level = 0.90, band = TRUE, pre_diagnostics = 4L)
+
+  pd_all  <- plot_data(uc_pre)
+  pd_post <- plot_data(uc_pre, include_pre = FALSE)
+  expect_identical(nrow(pd_all), 12L)
+  expect_identical(nrow(pd_post), 8L)
+
+  g1 <- plot(uc_pre)
+  g2 <- plot(uc_pre, show_band = FALSE, include_pre = FALSE, connect = TRUE,
+             colors = "#2b83ba")
+  expect_s3_class(g1, "ggplot")
+  expect_s3_class(g2, "ggplot")
+  expect_no_error(ggplot2::ggplot_build(g1))
+  expect_no_error(ggplot2::ggplot_build(g2))
+
+  # Unbounded intervals (gamma < 1/N) render cleanly without error
+  p_small <- make_panel(N = 10, T = 16, T_pre = 10, effect = 2.0, seed = 405)
+  fit_sm  <- suppressMessages(scm_fit(y ~ d | id + time, data = p_small, method = "scm"))
+  uc_unb  <- unit_conformal(fit_sm, level = 0.95)
+  g_unb   <- plot(uc_unb)
+  expect_s3_class(g_unb, "ggplot")
+  expect_no_error(ggplot2::ggplot_build(g_unb))
+})
+
+test_that("relabeling_test works across all 6 estimators (sharp multi-treated & staggered)", {
+  # Sharp multi-treated across all 6 estimators
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
+    fit <- suppressMessages(
+      if (identical(m, "tasc"))
+        scm_fit(y ~ d | id + time, data = panel_tr3, method = m, r = 1L, em_tol = 1e-4)
+      else if (identical(m, "gsc"))
+        scm_fit(y ~ d | id + time, data = panel_tr3, method = m, r = 2L)
+      else
+        scm_fit(y ~ d | id + time, data = panel_tr3, method = m)
+    )
+    set.seed(12345L)
+    seed_before <- .Random.seed
+    rt1 <- relabeling_test(fit, B = 19L, seed = 77L)
+    expect_identical(.Random.seed, seed_before)
+    rt2 <- relabeling_test(fit, B = 19L, seed = 77L)
+    expect_identical(rt1$p_value, rt2$p_value)
+    expect_identical(rt1$boot_ests, rt2$boot_ests)
+
+    expect_s3_class(rt1, c("relabeling_test", "coresynth_inference"))
+    expect_true(rt1$p_value >= 1 / 20 && rt1$p_value <= 1)
+    expect_output(print(rt1), "Relabeling Permutation Test")
+    td <- broom::tidy(rt1)
+    gl <- broom::glance(rt1)
+    expect_identical(td$method, "relabeling")
+    expect_identical(gl$n_boot_valid, 19L)
+  }
+
+  # Staggered adoption across all 6 estimators (including MC and TASC!)
+  stag <- make_panel(N = 12, T = 18, T_pre = 10, effect = 4.0, seed = 505)
+  stag$d <- as.integer((stag$id == "u1" & stag$time > 10) |
+                         (stag$id %in% c("u2", "u3") & stag$time > 13))
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
+    fit_st <- suppressMessages(
+      if (identical(m, "tasc"))
+        scm_fit(y ~ d | id + time, data = stag, method = m, r = 1L, em_tol = 1e-4)
+      else if (identical(m, "gsc"))
+        scm_fit(y ~ d | id + time, data = stag, method = m, r = 1L)
+      else
+        scm_fit(y ~ d | id + time, data = stag, method = m)
+    )
+    rt_st <- relabeling_test(fit_st, B = 19L, seed = 88L)
+    expect_true(isTRUE(rt_st$staggered))
+    # Strong effect (+4.0) should reject or give a small p-value
+    expect_true(rt_st$p_value <= 0.15, info = paste("staggered relabeling for", m))
+  }
+
+  # One-sided test and error guard
+  fit_tr <- scm_fit(y ~ d | id + time, data = panel_tr3, method = "sdid")
+  expect_error(relabeling_test(fit_tr, B = 10L, alternative = "greater"),
+               "statistic = 'att'")
+  rt_gr <- relabeling_test(fit_tr, B = 19L, statistic = "att",
+                           alternative = "greater", seed = 1L)
+  expect_lte(rt_gr$p_value, 0.15)
+})
+
+test_that("unit_conformal aligns control-indexed fit fields when dropping incomplete controls", {
+  set.seed(601)
+  N <- 14L; TT <- 18L; T_pre <- 12L
+  panel <- make_panel(N = N, T = TT, T_pre = T_pre, effect = 3.0, seed = 601)
+  panel$x1 <- rnorm(nrow(panel))
+  panel$y  <- panel$y + 0.5 * panel$x1
+
+  # GSC with covariates: inject an NA into one control column of fit$Y_co_all
+  fit_gsc <- scm_fit(y ~ d | id + time, data = panel, method = "gsc",
+                     covariates = "x1", r = 1L)
+  fit_gsc$Y_co_all[5L, 2L] <- NA_real_
+  expect_message(
+    uc_gsc <- unit_conformal(fit_gsc, level = 0.90, pre_diagnostics = 2L),
+    "excluded 1 control unit"
+  )
+  expect_equal(uc_gsc$n_controls, N - 2L)
+  expect_true(all(is.finite(uc_gsc$terms$estimate)))
+  expect_equal(nrow(uc_gsc$pre_terms), 2L)
+
+  # SDID with covariates: inject an NA into one control column of fit$Y_co_pre
+  fit_sdid <- scm_fit(y ~ d | id + time, data = panel, method = "sdid",
+                      covariates = "x1")
+  fit_sdid$Y_co_pre[3L, 1L] <- NA_real_
+  expect_message(
+    uc_sdid <- unit_conformal(fit_sdid, level = 0.90, pre_diagnostics = 2L),
+    "excluded 1 control unit"
+  )
+  expect_equal(uc_sdid$n_controls, N - 2L)
+  expect_true(all(is.finite(uc_sdid$terms$estimate)))
+  expect_equal(nrow(uc_sdid$pre_terms), 2L)
+
+  # SCM with predictors: inject an NA into one control column of fit$Y_co_pre
+  fit_scm <- suppressMessages(
+    scm_fit(y ~ d | id + time, data = panel, method = "scm",
+            predictors = list(pred("x1", seq_len(T_pre)),
+                              pred("y", seq_len(T_pre))))
+  )
+  fit_scm$Y_co_pre[4L, 3L] <- NA_real_
+  expect_message(
+    uc_scm <- unit_conformal(fit_scm, level = 0.90),
+    "excluded 1 control unit"
+  )
+  expect_equal(uc_scm$n_controls, N - 2L)
+  expect_true(all(is.finite(uc_scm$terms$estimate)))
+})
+
+test_that("relabeling_test counts failed draws in favor of H0 (Proposition 6)", {
+  panel <- make_panel(N = 10, T = 14, T_pre = 9, effect = 5.0, seed = 707)
+  fit   <- scm_fit(y ~ d | id + time, data = panel, method = "sdid")
+
+  draw_i <- 0L
+  testthat::local_mocked_bindings(
+    .relabel_fit_att = function(ctx, tr_b, co_b, adopt_b) {
+      draw_i <<- draw_i + 1L
+      if (draw_i <= 3L) NA_real_ else 0.0
+    },
+    .package = "coresynth"
+  )
+
+  expect_warning(
+    rt <- relabeling_test(fit, B = 9L, seed = 1L),
+    "3 of 9 relabeled refits failed; counted in favor of the null"
+  )
+  # 1 (observed) + 3 (failed) + 0 (valid draws with |0| >= |obs_att|) over B + 1 = 10
+  expect_equal(rt$p_value, 4 / 10)
+  expect_equal(rt$n_valid, 6L)
+  expect_equal(rt$B, 9L)
+})

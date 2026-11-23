@@ -33,9 +33,10 @@
 | SDID | `sdid_inference()`（4 method）/ `sdid_event_study()` | `sdid_inference()` のみ |
 | GSC | `gsc_boot()` / `gsc_inference()` | `gsc_inference()` |
 | MC | — | — |
-| TASC | —（本パッケージで唯一、推論ツールなし） | — |
+| TASC | —（専用リサンプリング推論なし） | — |
 | SI | `si_inference()`（multi-arm 含む） | 同左 |
 
+- **全手法横断推論・診断**: `unit_conformal()`（sharp 単一処置ユニット限定、Full Conformal は outcomes-only SCM / SI、Jackknife+ は全 6 手法対応、`pre_diagnostics` で事前診断）・`relabeling_test()`（sharp 複数処置 / staggered 全 6 手法対応）・`overlap_check()`（全設計・全 6 手法対応）
 - `conformal_inference()` は sharp fit 限定（staggered / multi-arm / TASC はエラー）。`jackknife_global` は staggered 専用
 - `sdid_inference()`・`gsc_inference()`・`si_inference()` は共通ドライバ `.unit_inference()` で**処置ユニットも再抽出・削除**する（`N_tr >= 2` 必須、staggered の jackknife は全コホート `N_tr,g >= 2` 必須）
 

@@ -62,7 +62,7 @@ test_that("multi-arm SI fits gain the coresynth_multiarm subclass", {
 
 test_that("accessors return consistent series for every sharp method", {
   panel <- make_sharp_panel()
-  for (m in c("scm", "sdid", "gsc", "mc", "si")) {
+  for (m in c("scm", "sdid", "gsc", "mc", "tasc", "si")) {
     fit <- scm_fit(gdp ~ treated | unit + year, data = panel, method = m)
     TT  <- length(fit$times)
 
@@ -131,7 +131,9 @@ test_that("donor_outcomes returns NULL where donors are not stored", {
   panel <- make_sharp_panel()
   fit_tasc <- scm_fit(gdp ~ treated | unit + year, data = panel,
                       method = "tasc")
-  expect_null(donor_outcomes(fit_tasc))
+  legacy_tasc <- fit_tasc
+  legacy_tasc$Y_co_all <- NULL
+  expect_null(donor_outcomes(legacy_tasc))
 
   stag <- make_staggered_panel()
   fit_stag <- scm_fit(gdp ~ treated | unit + year, data = stag,
